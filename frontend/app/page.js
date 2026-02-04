@@ -3,7 +3,7 @@ import Link from 'next/link'
 const suites = [
   {
     name: 'Suíte Real',
-    description: 'Explore o auge do luxo em nossa Suíte Real. Projetada para momentos inesquecíveis, esta acomodação oferece uma banheira de hidromassagem privativa, acabamentos em mármore Carrara e, como cortesia, uma garrafa de champagne para celebrar sua estadia. É o cenário perfeito para uma escapada romântica ou uma celebração especial.',
+    description: 'Explore o auge do luxo em nossa Suíte Real. Projetada para momentos inesquecíveis, esta acomodação oferece uma banheira privativa, acabamentos em mármore Carrara e, como cortesia, uma garrafa de champagne para celebrar sua estadia. É o cenário perfeito para uma escapada romântica ou uma celebração especial.',
     details: [
       'Tamanho Médio: 60m²',
       'Ocupação Máxima: 2 pessoas',
