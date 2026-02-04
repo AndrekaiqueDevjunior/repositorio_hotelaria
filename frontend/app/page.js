@@ -211,13 +211,37 @@ const HeroSection = () => (
       </div>
     </div>
     <div className="relative">
-      <div className="relative h-[360px] md:h-[420px] rounded-3xl overflow-hidden border border-white/20 shadow-2xl">
-        <img
-          src="/images/suites/entrada.jpg"
-          alt="Entrada do Hotel Real"
-          className="absolute inset-0 w-full h-full object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-tr from-[#0b1f38]/80 via-transparent to-transparent" />
+      <div className="relative h-[360px] md:h-[420px] rounded-3xl overflow-hidden border border-white/20 shadow-2xl bg-gradient-to-br from-amber-400/20 via-blue-500/20 to-purple-600/20 backdrop-blur">
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-8">
+          <div className="text-6xl mb-4">💎</div>
+          <h3 className="text-3xl md:text-4xl font-bold text-center mb-4">Sua reserva vale prêmios!</h3>
+          <p className="text-xl text-center text-blue-100 mb-8 max-w-2xl">
+            Pontue a cada 2 diárias e troque por prêmios exclusivos!
+          </p>
+          <div className="flex flex-col md:flex-row gap-4 text-center">
+            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
+              <div className="text-2xl mb-2">🏆</div>
+              <div className="font-semibold">Prêmios Exclusivos</div>
+              <div className="text-sm text-blue-100">Diárias grátis, upgrades e muito mais</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
+              <div className="text-2xl mb-2">⭐</div>
+              <div className="font-semibold">Acumule Pontos</div>
+              <div className="text-sm text-blue-100">A cada 2 diárias você pontua</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
+              <div className="text-2xl mb-2">🎁</div>
+              <div className="font-semibold">Resgate Fácil</div>
+              <div className="text-sm text-blue-100">Troque quando quiser</div>
+            </div>
+          </div>
+          <Link
+            href="/consultar-pontos"
+            className="mt-8 px-8 py-3 rounded-full bg-amber-300 text-[#0b1f38] font-semibold shadow-lg shadow-amber-400/30 transition-all hover:-translate-y-0.5 hover:shadow-amber-400/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+          >
+            Consultar Meus Pontos
+          </Link>
+        </div>
       </div>
     </div>
   </section>
