@@ -94,9 +94,9 @@ const testimonials = [
 
 const benefits = [
   { 
-    title: 'Localização Privilegiada', 
-    desc: 'Situado no bairro Braga, cercado por mercados, restaurantes, lojas e praias.', 
-    icon: '📍' 
+    title: 'Sua reserva vale prêmios! 💎', 
+    desc: 'Pontue a cada 2 diárias e troque por prêmios exclusivos!', 
+    icon: '�' 
   },
   { 
     title: 'Acomodações Amplas', 
@@ -161,7 +161,7 @@ const Header = () => (
       </div>
       <nav className="hidden md:flex items-center gap-6 text-sm text-white/80">
         <a href="#inicio" className="hover:text-white transition-all">Início</a>
-        <a href="#acomodacoes" className="hover:text-white transition-all">Acomodações</a>
+        {/* <a href="#acomodacoes" className="hover:text-white transition-all">Acomodações</a> */}
         <a href="#hotel" className="hover:text-white transition-all">O Hotel</a>
         <Link href="/login" className="flex items-center gap-2 hover:text-white transition-all">
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/10">🔒</span>
@@ -182,7 +182,7 @@ const HeroSection = () => (
         Seu lar longe de casa
       </p>
       <p className="text-lg text-blue-100/80 mt-4 max-w-xl">
-        Oferecemos a combinação perfeita de conforto, praticidade e atendimento. Situado no bairro Braga, próximo a mercados, restaurantes, lojas e praias.
+        Sua reserva vale prêmios! 💎 Pontue a cada 2 diárias e troque por prêmios exclusivos!
       </p>
       <div className="flex flex-wrap gap-4 mt-8">
         <Link
@@ -272,77 +272,77 @@ const PrimaryActions = () => (
   </section>
 )
 
-const SuitesSection = () => (
-  <section id="acomodacoes" className="mt-20">
-    <div className="text-center mb-10">
-      <h3 className="text-3xl md:text-4xl font-semibold text-white">Acomodações</h3>
-      <p className="text-blue-100/80 mt-3 max-w-2xl mx-auto">
-        Ver todas
-      </p>
-    </div>
-    <div className="grid lg:grid-cols-2 gap-8">
-      {suites.map((suite) => (
-        <div
-          key={suite.name}
-          className={`relative rounded-3xl overflow-hidden border ${
-            suite.featured
-              ? 'border-amber-300/80 bg-white/10 shadow-2xl'
-              : 'border-white/10 bg-white/5'
-          } backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:shadow-xl`}
-        >
-          {suite.featured && (
-            <span className="absolute top-4 right-4 bg-amber-300 text-[#0b1f38] text-xs font-bold px-3 py-1 rounded-full z-10">
-              DESTAQUE
-            </span>
-          )}
-          <div className="relative h-64">
-            <img
-              src={suite.image}
-              alt={suite.name}
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-          </div>
-          <div className="p-6 text-white">
-            <h4 className="text-xl font-semibold">{suite.name}</h4>
-            <p className="text-blue-100/80 mt-2 text-sm">{suite.description}</p>
-            <div className="flex flex-wrap gap-2 mt-4 text-xs text-white/80">
-              {suite.details.map((detail) => (
-                <span key={detail} className="px-3 py-1 rounded-full bg-white/10">
-                  {detail}
-                </span>
-              ))}
-            </div>
-            <div className="mt-6 flex gap-3">
-              <Link
-                href="/reservar"
-                aria-label={`Reservar ${suite.name}`}
-                className="flex-1 px-4 py-2 rounded-full bg-amber-300 text-[#0b1f38] text-sm font-semibold text-center transition-all hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
-              >
-                Detalhes
-              </Link>
-              <a
-                href="https://api.whatsapp.com/send/?phone=552226485900&text=Ol%C3%A1%21+Gostaria+de+informa%C3%A7%C3%B5es+sobre+hospedagem.&type=phone_number&app_absent=0"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`WhatsApp para ${suite.name}`}
-                className="flex-1 px-4 py-2 rounded-full bg-white/10 text-white text-sm font-semibold text-center transition-all hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-              >
-                WhatsApp
-              </a>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  </section>
-)
+// const SuitesSection = () => (
+//   <section id="acomodacoes" className="mt-20">
+//     <div className="text-center mb-10">
+//       <h3 className="text-3xl md:text-4xl font-semibold text-white">Acomodações</h3>
+//       <p className="text-blue-100/80 mt-3 max-w-2xl mx-auto">
+//         Ver todas
+//       </p>
+//     </div>
+//     <div className="grid lg:grid-cols-2 gap-8">
+//       {suites.map((suite) => (
+//         <div
+//           key={suite.name}
+//           className={`relative rounded-3xl overflow-hidden border ${
+//             suite.featured
+//               ? 'border-amber-300/80 bg-white/10 shadow-2xl'
+//               : 'border-white/10 bg-white/5'
+//           } backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:shadow-xl`}
+//         >
+//           {suite.featured && (
+//             <span className="absolute top-4 right-4 bg-amber-300 text-[#0b1f38] text-xs font-bold px-3 py-1 rounded-full z-10">
+//               DESTAQUE
+//             </span>
+//           )}
+//           <div className="relative h-64">
+//             <img
+//               src={suite.image}
+//               alt={suite.name}
+//               className="absolute inset-0 w-full h-full object-cover"
+//             />
+//           </div>
+//           <div className="p-6 text-white">
+//             <h4 className="text-xl font-semibold">{suite.name}</h4>
+//             <p className="text-blue-100/80 mt-2 text-sm">{suite.description}</p>
+//             <div className="flex flex-wrap gap-2 mt-4 text-xs text-white/80">
+//               {suite.details.map((detail) => (
+//                 <span key={detail} className="px-3 py-1 rounded-full bg-white/10">
+//                   {detail}
+//                 </span>
+//               ))}
+//             </div>
+//             <div className="mt-6 flex gap-3">
+//               <Link
+//                 href="/reservar"
+//                 aria-label={`Reservar ${suite.name}`}
+//                 className="flex-1 px-4 py-2 rounded-full bg-amber-300 text-[#0b1f38] text-sm font-semibold text-center transition-all hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+//               >
+//                 Detalhes
+//               </Link>
+//               <a
+//                 href="https://api.whatsapp.com/send/?phone=552226485900&text=Ol%C3%A1%21+Gostaria+de+informa%C3%A7%C3%B5es+sobre+hospedagem.&type=phone_number&app_absent=0"
+//                 target="_blank"
+//                 rel="noopener noreferrer"
+//                 aria-label={`WhatsApp para ${suite.name}`}
+//                 className="flex-1 px-4 py-2 rounded-full bg-white/10 text-white text-sm font-semibold text-center transition-all hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+//               >
+//                 WhatsApp
+//               </a>
+//             </div>
+//           </div>
+//         </div>
+//       ))}
+//     </div>
+//   </section>
+// )
 
 const BenefitsSection = () => (
   <section id="hotel" className="mt-20">
     <div className="text-center mb-10">
       <h3 className="text-3xl md:text-4xl font-semibold text-white">Por que escolher o Hotel Real?</h3>
       <p className="text-blue-100/80 mt-3 max-w-2xl mx-auto">
-        Oferecemos a combinação perfeita de conforto, praticidade e atendimento.
+        Sua reserva vale prêmios! 💎 Pontue a cada 2 diárias e troque por prêmios exclusivos!
       </p>
     </div>
     <div className="grid md:grid-cols-3 gap-6">
@@ -463,14 +463,14 @@ const Footer = () => (
             </a>
           </div>
         </div>
-        <div>
+        {/* <div>
           <h4 className="font-semibold text-white mb-4">Acomodações</h4>
           <div className="space-y-2 text-sm">
             <Link href="/reservar" className="block hover:text-amber-300 transition-all">→ Suíte Luxo</Link>
             <Link href="/reservar" className="block hover:text-amber-300 transition-all">→ Suíte Master</Link>
             <Link href="/reservar" className="block hover:text-amber-300 transition-all">→ Suíte Real</Link>
           </div>
-        </div>
+        </div> */}
         <div>
           <h4 className="font-semibold text-white mb-4">O Hotel</h4>
           <div className="space-y-2 text-sm">
@@ -504,7 +504,7 @@ export default function Home() {
         <main id="inicio" className="max-w-6xl mx-auto px-4 pb-20">
           <HeroSection />
           <PrimaryActions />
-          <SuitesSection />
+          {/* <SuitesSection /> */}
           <BenefitsSection />
           <TestimonialsSection />
           <LocationSection />
