@@ -402,6 +402,8 @@ export default function Reservar() {
                                 ? '/images/suites/suite-real.png'
                                 : tipo.tipo === 'MASTER'
                                 ? '/images/suites/suite-master.png'
+                                : tipo.tipo === 'DUPLA'
+                                ? '/images/suites/suite-dupla.png'
                                 : '/images/suites/suite-luxo.png'
                             }
                             alt={info.titulo}
