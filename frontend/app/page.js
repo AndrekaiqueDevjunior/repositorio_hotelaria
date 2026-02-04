@@ -27,7 +27,7 @@ const suites = [
       'Cama: Queen',
       'Ar-condicionado: 1',
       'Wi-Fi',
-      'TV de tela plana: 1',
+      'TV de tela plana 32": 1',
       'Banheiro privativo amplo: 1',
       'Varanda (em algumas unidades)',
       'Frigobar'
