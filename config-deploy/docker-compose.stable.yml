@@ -1,0 +1,221 @@
+# ============================================================
+# docker-compose.stable.yml - Versão Estabilizada
+# Hotel Cabo Frio - Sistema de Gestão Hoteleira
+# ============================================================
+# 
+# INSTRUÇÕES DE USO:
+# 1. Primeira execução: docker-compose -f docker-compose.stable.yml up --build
+# 2. Aguardar banco estabilizar antes de subir outros serviços
+# 3. Após estabilização, pode usar: docker-compose -f docker-compose.stable.yml up -d
+#
+# IMPORTANTE: Não usar restart: always/unless-stopped até sistema estável
+# ============================================================
+
+services:
+  # ============================================================
+  # BANCO DE DADOS - PostgreSQL (DEVE SUBIR PRIMEIRO)
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: hcf_postgres
+    # CRÍTICO: Sem restart até sistema estabilizado
+    # Após validar estabilidade, alterar para: restart: unless-stopped
+    restart: "no"
+    environment:
+      POSTGRES_DB: hotel_cabo_frio
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # Diretório de dados explícito para evitar problemas de permissão WSL2
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # Volume nomeado para persistência
+      - postgres_data:/var/lib/postgresql/data
+      # Scripts de inicialização (opcional)
+      # - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - hotel_network
+    # HEALTHCHECK OBRIGATÓRIO para depends_on funcionar
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hotel_cabo_frio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ============================================================
+  # BACKEND - FastAPI + Python
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hcf_backend
+    # CRÍTICO: Sem restart até sistema estabilizado
+    restart: "no"
+    # Carregar variáveis do arquivo .env do backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Sobrescrever DATABASE_URL para usar container postgres (se necessário)
+      # Comente a linha abaixo se usar Prisma Accelerate remoto
+      # DATABASE_URL: postgresql://postgres:postgres@postgres:5432/hotel_cabo_frio
+      
+      # CORS - URLs permitidas
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
+      
+      # Garantir Python não buffer output (importante para logs)
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # Código fonte montado para hot-reload
+      - ./backend:/app
+      # Volume nomeado para cache (evita conflitos)
+      - backend_cache:/app/.cache
+    ports:
+      - "8000:8000"
+    networks:
+      - hotel_network
+    # DEPENDÊNCIA COM HEALTHCHECK
+    # Descomente se usar PostgreSQL local:
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    # COMANDO SEGURO: Verifica pré-requisitos antes de iniciar
+    command: >
+      sh -c "
+        echo '================================================' &&
+        echo 'Iniciando Backend Hotel Cabo Frio...' &&
+        echo '================================================' &&
+        
+        echo '[1/4] Verificando arquivo .env...' &&
+        if [ -f .env ]; then
+          echo '  ✓ Arquivo .env encontrado' &&
+          export \$(grep -v '^#' .env | xargs) 2>/dev/null || true
+        else
+          echo '  ✗ AVISO: Arquivo .env não encontrado!'
+        fi &&
+        
+        echo '[2/4] Verificando Prisma...' &&
+        if command -v prisma > /dev/null 2>&1; then
+          echo '  ✓ Prisma CLI disponível' &&
+          echo '  → Gerando Prisma Client...' &&
+          prisma generate || echo '  ✗ AVISO: Prisma generate falhou (continuando...)'
+        else
+          echo '  ✗ AVISO: Prisma CLI não instalado'
+        fi &&
+        
+        echo '[3/4] Verificando dependências Python...' &&
+        python -c 'import fastapi; import uvicorn' || {
+          echo '  ✗ ERRO: Dependências Python faltando!' &&
+          exit 1
+        } &&
+        echo '  ✓ Dependências Python OK' &&
+        
+        echo '[4/4] Iniciando servidor Uvicorn...' &&
+        echo '================================================' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    # HEALTHCHECK do container
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================
+  # FRONTEND - Next.js
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hcf_frontend
+    # CRÍTICO: Sem restart até sistema estabilizado
+    restart: "no"
+    environment:
+      # URL da API para chamadas client-side (browser)
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+      # URL do backend para SSR (server-side)
+      BACKEND_URL: "http://backend:8000"
+      NODE_ENV: development
+      # Permitir acesso externo
+      HOSTNAME: "0.0.0.0"
+      # IMPORTANTE: Polling para file watchers em WSL2/Docker
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      # Código fonte montado para hot-reload
+      - ./frontend:/app
+      # VOLUMES NOMEADOS para evitar conflitos
+      # Isso evita que node_modules do host sobrescreva o do container
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    ports:
+      - "3000:3000"
+    networks:
+      - hotel_network
+    # DEPENDÊNCIA COM HEALTHCHECK do backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    # Limitar recursos para evitar OOM em WSL2
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    # COMANDO com verificação
+    command: >
+      sh -c "
+        echo '================================================' &&
+        echo 'Iniciando Frontend Hotel Cabo Frio...' &&
+        echo '================================================' &&
+        
+        echo '[1/2] Verificando node_modules...' &&
+        if [ ! -d 'node_modules' ] || [ ! -f 'node_modules/.package-lock.json' ]; then
+          echo '  → Instalando dependências...' &&
+          npm ci || npm install
+        else
+          echo '  ✓ node_modules já existe'
+        fi &&
+        
+        echo '[2/2] Iniciando Next.js em modo desenvolvimento...' &&
+        echo '================================================' &&
+        npm run dev
+      "
+    # HEALTHCHECK do container
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# ============================================================
+# VOLUMES NOMEADOS (persistentes e gerenciados)
+# ============================================================
+volumes:
+  # Dados do PostgreSQL
+  postgres_data:
+    driver: local
+  # Cache do backend Python
+  backend_cache:
+    driver: local
+  # Node modules do frontend (evita conflitos com volume do host)
+  frontend_node_modules:
+    driver: local
+  # Cache do Next.js
+  frontend_next:
+    driver: local
+
+# ============================================================
+# NETWORK
+# ============================================================
+networks:
+  hotel_network:
+    driver: bridge
+    # Nome explícito para evitar conflitos com outros projetos
+    name: hotel_cabo_frio_network

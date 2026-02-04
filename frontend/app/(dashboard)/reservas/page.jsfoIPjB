@@ -1,0 +1,2841 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { api } from '../../../lib/api'
+import { formatErrorMessage } from '../../../lib/errorHandler'
+import { toast, ToastContainer } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
+import { 
+  StatusReserva,
+  StatusPagamento,
+  STATUS_RESERVA_COLORS,
+  MetodoPagamento,
+  METODO_PAGAMENTO_MAP,
+  isPagamentoAprovado,
+  isPagamentoNegado,
+  HttpStatus
+} from '../../../lib/constants/enums'
+
+export default function Reservas() {
+  const [reservas, setReservas] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [quartos, setQuartos] = useState([])
+  const [showForm, setShowForm] = useState(false)
+  const [showQuartoForm, setShowQuartoForm] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [checkoutLoadingId, setCheckoutLoadingId] = useState(null)
+  const [checkinLoadingId, setCheckinLoadingId] = useState(null)
+  const [cancelLoadingId, setCancelLoadingId] = useState(null)
+  const [activeTab, setActiveTab] = useState('reservas')
+  const [editingQuarto, setEditingQuarto] = useState(null)
+  
+  // Estados para validação de código (anti-fraude)
+  const [codigoValidacao, setCodigoValidacao] = useState('')
+  const [reservaValidada, setReservaValidada] = useState(null)
+  const [validandoCodigo, setValidandoCodigo] = useState(false)
+  
+  // Estados para filtros de reservas
+  const [reservaFilters, setReservaFilters] = useState({
+    search: '',
+    status: '',
+    checkin_inicio: '',
+    checkin_fim: '',
+    limit: 100,  
+    offset: 0
+  })
+  const [totalReservas, setTotalReservas] = useState(0)
+  
+  const [form, setForm] = useState({
+    cliente_id: '',
+    quarto_numero: '',
+    tipo_suite: 'LUXO',
+    data_entrada: '',
+    data_saida: '',
+    valor_diaria: '',
+    num_diarias: 1,
+    valor_total: ''
+  })
+  const [quartosDisponiveis, setQuartosDisponiveis] = useState([])
+  const [loadingQuartos, setLoadingQuartos] = useState(false)
+  const [quartoForm, setQuartoForm] = useState({
+    numero: '',
+    tipo_suite: 'LUXO',
+    status: 'LIVRE',
+  })
+  
+  // Estados para modais de check-in e check-out
+  const [showCheckinModal, setShowCheckinModal] = useState(false)
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false)
+  const [selectedReserva, setSelectedReserva] = useState(null)
+  const [showReservaDetailsModal, setShowReservaDetailsModal] = useState(false)
+  const [reservaDetalhes, setReservaDetalhes] = useState(null)
+  const [showQuartoHistoricoModal, setShowQuartoHistoricoModal] = useState(false)
+  const [quartoHistorico, setQuartoHistorico] = useState(null)
+  const [checkinForm, setCheckinForm] = useState({
+    num_hospedes: 1,
+    num_criancas: 0,
+    placa_veiculo: '',
+    observacoes: ''
+  })
+  const [checkinModalTab, setCheckinModalTab] = useState('dados') // 'dados' ou 'voucher'
+  const [voucherData, setVoucherData] = useState(null)
+  const [loadingVoucher, setLoadingVoucher] = useState(false)
+  const [checkoutForm, setCheckoutForm] = useState({
+    consumo_frigobar: 0,
+    servicos_extras: 0,
+    avaliacao: 5,
+    comentario_avaliacao: ''
+  })
+  
+  // Estados para modal de pagamento
+  const [showPagamentoModal, setShowPagamentoModal] = useState(false)
+  const [pagamentoLoading, setPagamentoLoading] = useState(false)
+  const [pagamentoForm, setPagamentoForm] = useState({
+    metodo: MetodoPagamento.CREDITO,
+    parcelas: 1,
+    cartao_numero: '',
+    cartao_validade: '',
+    cartao_cvv: '',
+    cartao_nome: ''
+  })
+  const [pagamentosReserva, setPagamentosReserva] = useState([])
+  const [pixQrCode, setPixQrCode] = useState(null)
+  const [pixPagamentoId, setPixPagamentoId] = useState(null)
+  const [pixPolling, setPixPolling] = useState(false)
+  // PAG-001 FIX: Chave de idempotência persistente por sessão de pagamento
+  const [idempotencyKey, setIdempotencyKey] = useState(null)
+
+  useEffect(() => {
+    loadReservas()
+    loadClientes()
+    loadQuartos()
+  }, [reservaFilters])
+
+  // RES-002 FIX: Função melhorada para validar se check-in pode ser realizado
+  const podeRealizarCheckin = (reserva) => {
+    // Estados que bloqueiam check-in
+    if ([StatusReserva.HOSPEDADO, StatusReserva.CHECKED_OUT, StatusReserva.CANCELADO].includes(reserva.status)) {
+      return false;
+    }
+    
+    // RES-002 FIX: Verificar pagamentos independente do status
+    const temPagamentoAprovado = reserva.pagamentos?.some(
+      p => isPagamentoAprovado(p.status)
+    );
+    
+    // RES-002 FIX: Só permite check-in se tem pagamento + status CONFIRMADA
+    return reserva.status === StatusReserva.CONFIRMADA && temPagamentoAprovado;
+  };
+
+  // RES-002 FIX: Função melhorada para mensagens de tooltip do check-in
+  const getCheckinTooltip = (reserva) => {
+    if (reserva.status === StatusReserva.HOSPEDADO) {
+      return '✓ Hóspede já fez check-in - disponível para check-out';
+    }
+    if (reserva.status === StatusReserva.CHECKED_OUT) {
+      return '✓ Reserva finalizada - check-out concluído';
+    }
+    if (reserva.status === StatusReserva.CANCELADO) {
+      return '✗ Reserva cancelada - check-in não permitido';
+    }
+    if (reserva.status === StatusReserva.PENDENTE) {
+      return '⏳ PENDENTE: Realize o pagamento primeiro para confirmar a reserva';
+    }
+    if (reserva.status === StatusReserva.CONFIRMADA) {
+      const temPagamentoAprovado = reserva.pagamentos?.some(
+        p => isPagamentoAprovado(p.status)
+      );
+      
+      if (temPagamentoAprovado) {
+        return '✅ PRONTO PARA CHECK-IN: Pagamento confirmado ✓';
+      } else {
+        // RES-002 FIX: Mensagem mais específica sobre o problema de pagamento
+        const pagamentosPendentes = reserva.pagamentos?.filter(p => p.status === StatusPagamento.PENDENTE) || [];
+        const pagamentosNegados = reserva.pagamentos?.filter(p => isPagamentoNegado(p.status)) || [];
+        
+        if (pagamentosNegados.length > 0) {
+          return '❌ BLOQUEADO: Pagamento recusado - tente novo cartão';
+        }
+        if (pagamentosPendentes.length > 0) {
+          return '⏳ BLOQUEADO: Pagamento em processamento - aguarde confirmação';
+        }
+        return '💳 BLOQUEADO: Nenhum pagamento válido encontrado';
+      }
+    }
+    return 'Status desconhecido';
+  };
+
+  // Buscar quartos disponíveis quando datas mudarem
+  useEffect(() => {
+    if (form.data_entrada && form.data_saida) {
+      loadQuartosDisponiveis()
+    } else {
+      setQuartosDisponiveis([])
+    }
+  }, [form.data_entrada, form.data_saida, form.tipo_suite])
+
+  const loadReservas = async () => {
+    console.log('🔄 [DEBUG] Carregando reservas com filtros:', reservaFilters)
+    
+    try {
+      setLoading(true)
+      
+      // Construir query params com filtros
+      const params = new URLSearchParams()
+      if (reservaFilters.search) params.append('search', reservaFilters.search)
+      if (reservaFilters.status) params.append('status', reservaFilters.status)
+      if (reservaFilters.checkin_inicio) params.append('checkin_inicio', reservaFilters.checkin_inicio)
+      if (reservaFilters.checkin_fim) params.append('checkin_fim', reservaFilters.checkin_fim)
+      params.append('limit', reservaFilters.limit)
+      params.append('offset', reservaFilters.offset)
+      params.append('_t', new Date().getTime())
+      
+      const url = `/reservas?${params.toString()}`
+      
+      const res = await api.get(url)
+      
+      const reservas = res.data.reservas || []
+      const total = res.data.total || 0
+      
+      setReservas(reservas)
+      setTotalReservas(total)
+      
+      if (reservas.length > 0) {
+        toast.success(`✅ ${reservas.length} reservas carregadas (${total} total)`)
+      } else {
+        toast.warning('⚠️ Nenhuma reserva encontrada')
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro completo:', error)
+      
+      const errorMsg = formatErrorMessage(error)
+      toast.error(`Erro: ${errorMsg}`)
+      setReservas([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadQuartosDisponiveis = async () => {
+    if (!form.data_entrada || !form.data_saida) {
+      setQuartosDisponiveis([])
+      return
+    }
+
+    try {
+      setLoadingQuartos(true)
+      
+      // Converter datas para ISO 8601
+      const checkin = new Date(form.data_entrada + 'T15:00:00').toISOString()
+      const checkout = new Date(form.data_saida + 'T12:00:00').toISOString()
+      
+      console.log('🔍 Buscando quartos disponíveis:', {
+        checkin,
+        checkout,
+        tipo_suite: form.tipo_suite,
+        data_entrada: form.data_entrada,
+        data_saida: form.data_saida
+      })
+      
+      const res = await api.get('/quartos/disponiveis/periodo', {
+        params: {
+          checkin,
+          checkout,
+          tipo_suite: form.tipo_suite
+        }
+      })
+      
+      console.log('✅ Resposta da API:', res.data)
+      console.log('📊 Total de quartos recebidos:', res.data?.length || 0)
+      console.log('🏨 Quartos detalhados:', res.data?.map(q => `${q.numero} - ${q.tipo_suite} - ${q.status}`))
+      
+      // Verificar se quarto 102 está na resposta
+      const quarto102 = res.data?.find(q => q.numero === '102')
+      console.log('🔍 Quarto 102 encontrado:', quarto102 ? 'SIM' : 'NÃO', quarto102)
+      
+      // FORÇAR atualização do estado para garantir React re-render
+      setQuartosDisponiveis([])
+      setTimeout(() => {
+        setQuartosDisponiveis(res.data || [])
+      }, 100)
+      
+      if (res.data.length === 0) {
+        toast.warning(`⚠️ Nenhum quarto ${form.tipo_suite} disponível neste período`)
+      } else {
+        toast.success(`✅ Encontrados ${res.data.length} quartos ${form.tipo_suite} disponíveis`)
+      }
+    } catch (error) {
+      console.error('❌ Erro ao buscar quartos disponíveis:', error)
+      console.error('📝 Detalhes do erro:', error.response?.data || error.message)
+      toast.error('Erro ao buscar quartos disponíveis')
+      setQuartosDisponiveis([])
+    } finally {
+      setLoadingQuartos(false)
+    }
+  }
+
+  // Função para refresh manual dos quartos
+  const refreshQuartosDisponiveis = () => {
+    console.log('🔄 Forçando refresh dos quartos disponíveis...')
+    loadQuartosDisponiveis()
+  }
+
+  const handleReservaFilterChange = (field, value) => {
+    setReservaFilters(prev => ({
+      ...prev,
+      [field]: value,
+      offset: 0
+    }))
+  }
+
+  const handleReservaSearch = () => {
+    loadReservas()
+  }
+
+  const handleClearReservaFilters = () => {
+    setReservaFilters({
+      search: '',
+      status: '',
+      checkin_inicio: '',
+      checkin_fim: '',
+      limit: 20,
+      offset: 0
+    })
+  }
+
+  const handleExportReservasCSV = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (reservaFilters.search) params.append('search', reservaFilters.search)
+      if (reservaFilters.status) params.append('status', reservaFilters.status)
+      if (reservaFilters.checkin_inicio) params.append('checkin_inicio', reservaFilters.checkin_inicio)
+      if (reservaFilters.checkin_fim) params.append('checkin_fim', reservaFilters.checkin_fim)
+      
+      const url = `/reservas/export/csv?${params.toString()}`
+      window.open(url, '_blank')
+      toast.success('📥 Exportando CSV...')
+    } catch (error) {
+      toast.error('Erro ao exportar CSV')
+    }
+  }
+
+  const handleExportReservasPDF = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (reservaFilters.search) params.append('search', reservaFilters.search)
+      if (reservaFilters.status) params.append('status', reservaFilters.status)
+      if (reservaFilters.checkin_inicio) params.append('checkin_inicio', reservaFilters.checkin_inicio)
+      if (reservaFilters.checkin_fim) params.append('checkin_fim', reservaFilters.checkin_fim)
+      
+      const url = `/reservas/export/pdf?${params.toString()}`
+      window.open(url, '_blank')
+      toast.success('📥 Exportando PDF...')
+    } catch (error) {
+      toast.error('Erro ao exportar PDF')
+    }
+  }
+
+  const handleReservaPreviousPage = () => {
+    if (reservaFilters.offset > 0) {
+      setReservaFilters(prev => ({
+        ...prev,
+        offset: Math.max(0, prev.offset - prev.limit)
+      }))
+    }
+  }
+
+  const handleReservaNextPage = () => {
+    if (reservaFilters.offset + reservaFilters.limit < totalReservas) {
+      setReservaFilters(prev => ({
+        ...prev,
+        offset: prev.offset + prev.limit
+      }))
+    }
+  }
+
+  const validarCodigoReserva = async () => {
+    if (!codigoValidacao.trim()) {
+      toast.warning('Digite o código da reserva')
+      return
+    }
+
+    setValidandoCodigo(true)
+    setReservaValidada(null)
+
+    try {
+      const res = await api.get(`/public/reservas/${codigoValidacao.trim().toUpperCase()}`)
+      
+      if (res.data.success && res.data.reserva) {
+        setReservaValidada(res.data.reserva)
+        
+        // Alertas baseados no status
+        if (res.data.reserva.status === StatusReserva.CANCELADO) {
+          toast.error('⚠️ ATENÇÃO: Esta reserva foi CANCELADA!')
+        } else if (res.data.reserva.status === StatusReserva.CHECKED_OUT) {
+          toast.info('ℹ️ Esta reserva já foi finalizada (check-out realizado)')
+        } else if (reservaValidada.status === StatusReserva.HOSPEDADO) {
+          toast.success('✅ Reserva VÁLIDA - Hóspede atualmente no hotel')
+        } else {
+          toast.success('✅ Reserva VÁLIDA - Aguardando check-in')
+        }
+      }
+    } catch (error) {
+      if (error.response?.status === HttpStatus.NOT_FOUND) {
+        toast.error('❌ CÓDIGO INVÁLIDO - Reserva não encontrada! Possível fraude.')
+        setReservaValidada({ fraude: true })
+      } else {
+        toast.error('Erro ao validar código')
+      }
+    } finally {
+      setValidandoCodigo(false)
+    }
+  }
+
+  const loadClientes = async () => {
+    try {
+      const res = await api.get('/clientes')
+      setClientes(res.data.clientes || [])
+    } catch (error) {
+      console.error('Erro ao carregar clientes:', error)
+      const errorMsg = formatErrorMessage(error)
+      toast.error(`Erro: ${errorMsg}`)
+      setClientes([])
+    }
+  }
+
+  const loadQuartos = async () => {
+    console.log('🔄 [DEBUG] Carregando quartos...')
+    
+    try {
+      const res = await api.get('/quartos')
+      
+      console.log('📦 [DEBUG] Resposta quartos:', res.data)
+      
+      // A API retorna uma lista diretamente ou um objeto com quartos
+      const quartos = Array.isArray(res.data) ? res.data : (res.data.quartos || [])
+      setQuartos(quartos)
+      
+      console.log('✅ [DEBUG] Estado atualizado com', quartos.length, 'quartos')
+      
+      if (quartos.length > 0) {
+        toast.success(`✅ ${quartos.length} quartos carregados`)
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro ao carregar quartos:', error)
+      console.error('❌ [DEBUG] error.response:', error.response)
+      const errorMsg = formatErrorMessage(error)
+      toast.error(`Erro: ${errorMsg}`)
+      setQuartos([])
+    }
+  }
+
+  // ============= FUNÇÕES DE PAGAMENTO =============
+  
+  // Abrir modal de pagamento
+  const openPagamentoModal = async (reserva) => {
+    setSelectedReserva(reserva)
+    setPagamentoForm({
+      metodo: MetodoPagamento.CREDITO,
+      parcelas: 1,
+      cartao_numero: '',
+      cartao_validade: '',
+      cartao_cvv: '',
+      cartao_nome: ''
+    })
+    setPixQrCode(null)
+    setPixPagamentoId(null)
+    
+    // PAG-001 FIX: Gerar chave única e persistente para esta sessão de pagamento
+    // Baseada em: reserva_id + timestamp + valor_total (garantindo unicidade)
+    const sessionKey = `pay-${reserva.id}-${Date.now()}-${Math.round(reserva.valor_total * 100)}`
+    setIdempotencyKey(sessionKey)
+    
+    console.log('💳 [PAG-001] Chave de idempotência gerada:', sessionKey)
+    
+    // Carregar pagamentos da reserva
+    try {
+      const res = await api.get(`/pagamentos/reserva/${reserva.id}`)
+      if (res.data.success) {
+        setPagamentosReserva(res.data.pagamentos || [])
+      }
+    } catch (error) {
+      console.error('Erro ao carregar pagamentos:', error)
+      setPagamentosReserva([])
+    }
+    
+    setShowPagamentoModal(true)
+  }
+  
+  // Processar pagamento
+  const handlePagamento = async () => {
+    if (!selectedReserva) return
+    
+    // Validações
+    if (pagamentoForm.metodo === MetodoPagamento.CREDITO || pagamentoForm.metodo === MetodoPagamento.DEBITO) {
+      if (!pagamentoForm.cartao_numero || !pagamentoForm.cartao_validade || !pagamentoForm.cartao_cvv || !pagamentoForm.cartao_nome) {
+        toast.warning('⚠️ Preencha todos os dados do cartão')
+        return
+      }
+    }
+    
+    // PAG-001 FIX: Verificar se temos chave de idempotência
+    if (!idempotencyKey) {
+      toast.error('❌ Erro interno: Chave de idempotência não encontrada')
+      console.error('[PAG-001] Idempotency key não foi gerada!')
+      return
+    }
+    
+    setPagamentoLoading(true)
+    
+    const valorTotal = Number(selectedReserva.valor_total || 0)
+    
+    console.log('💳 [DEBUG] Processando pagamento:', {
+      reserva_id: selectedReserva.id,
+      valor: valorTotal,
+      metodo: pagamentoForm.metodo,
+      parcelas: pagamentoForm.parcelas,
+      idempotency_key: idempotencyKey
+    })
+    
+    try {
+      const payload = {
+        reserva_id: selectedReserva.id,
+        valor: valorTotal,
+        metodo: pagamentoForm.metodo,
+        parcelas: pagamentoForm.parcelas,
+        cartao_numero: pagamentoForm.cartao_numero,
+        cartao_validade: pagamentoForm.cartao_validade,
+        cartao_cvv: pagamentoForm.cartao_cvv,
+        cartao_nome: pagamentoForm.cartao_nome
+      }
+      
+      // P0-003: Enviar X-Idempotency-Key no header
+      const res = await api.post('/pagamentos', payload, {
+        headers: {
+          'X-Idempotency-Key': idempotencyKey
+        }
+      })
+      
+      console.log('✅ [DEBUG] Pagamento processado:', res.data)
+      
+      // Backend retorna o objeto do pagamento diretamente
+      if (res.data && res.data.id) {
+        if (pagamentoForm.metodo === MetodoPagamento.PIX && res.data.qr_code) {
+          // Mostrar QR Code do PIX
+          setPixQrCode(res.data.qr_code)
+          setPixPagamentoId(res.data.id)
+          toast.info('📱 PIX gerado! Escaneie o QR Code para pagar')
+          
+          // Iniciar polling para verificar pagamento
+          startPixPolling(res.data.id)
+        } else if (isPagamentoAprovado(res.data.status)) {
+          toast.success('✅ Pagamento aprovado com sucesso!')
+          setShowPagamentoModal(false)
+          setSelectedReserva(null)
+          await loadReservas()
+        } else if (res.data.status === StatusPagamento.PROCESSANDO) {
+          toast.info('⏳ Pagamento em processamento...')
+          setShowPagamentoModal(false)
+          setSelectedReserva(null)
+          await loadReservas()
+        } else if (isPagamentoNegado(res.data.status)) {
+          toast.error('❌ Pagamento recusado. Tente outro cartão.')
+        }
+        
+        // Atualizar lista de pagamentos
+        const pagRes = await api.get(`/pagamentos/reserva/${selectedReserva.id}`)
+        if (pagRes.data) {
+          setPagamentosReserva(Array.isArray(pagRes.data) ? pagRes.data : [])
+        }
+      } else {
+        toast.error(`Erro: ${res.data?.error || 'Falha no pagamento'}`)
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro no pagamento:', error)
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setPagamentoLoading(false)
+    }
+  }
+  
+  // Polling para verificar status do PIX
+  const startPixPolling = (pagamentoId) => {
+    setPixPolling(true)
+    
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await api.get(`/pagamentos/${pagamentoId}/status`)
+        
+        if (res.data.paid) {
+          // PIX foi pago!
+          clearInterval(intervalId)
+          setPixPolling(false)
+          setPixQrCode(null)
+          setPixPagamentoId(null)
+          toast.success('✅ PIX confirmado! Pagamento recebido com sucesso!')
+          
+          // Atualizar reservas
+          await loadReservas()
+          
+          // Fechar modal após 2 segundos
+          setTimeout(() => {
+            setShowPagamentoModal(false)
+            setSelectedReserva(null)
+          }, 2000)
+        }
+      } catch (error) {
+        console.error('Erro ao verificar status PIX:', error)
+      }
+    }, 3000) // Verificar a cada 3 segundos
+    
+    // Parar polling após 5 minutos
+    setTimeout(() => {
+      clearInterval(intervalId)
+      setPixPolling(false)
+    }, 300000)
+  }
+
+  const openCheckinModal = async (reserva) => {
+    setSelectedReserva(reserva)
+    setCheckinForm({
+      num_hospedes: 1,
+      num_criancas: 0,
+      placa_veiculo: '',
+      observacoes: ''
+    })
+    setCheckinModalTab('dados')
+    setVoucherData(null)
+    setShowCheckinModal(true)
+    
+    // Buscar voucher da reserva
+    if (reserva.status === StatusReserva.CONFIRMADA || reserva.status === StatusReserva.HOSPEDADO) {
+      try {
+        setLoadingVoucher(true)
+        const res = await api.get(`/vouchers/reserva/${reserva.id}`)
+        if (res.data && res.data.data) {
+          setVoucherData(res.data.data)
+        }
+      } catch (error) {
+        console.log('Voucher não encontrado:', error)
+      } finally {
+        setLoadingVoucher(false)
+      }
+    }
+  }
+  
+  const handleCheckin = async () => {
+    if (!selectedReserva) return
+    
+    try {
+      setCheckinLoadingId(selectedReserva.id)
+      
+      console.log('📤 [DEBUG] Realizando check-in:', {
+        reserva_id: selectedReserva.id,
+        ...checkinForm
+      })
+      
+      const res = await api.post(`/reservas/${selectedReserva.id}/checkin`, {
+        num_hospedes: checkinForm.num_hospedes,
+        num_criancas: checkinForm.num_criancas,
+        placa_veiculo: checkinForm.placa_veiculo,
+        observacoes: checkinForm.observacoes
+      })
+      
+      if (res.data) {
+        console.log('✅ [DEBUG] Check-in realizado:', res.data)
+        await loadReservas()
+        await loadQuartos()  // Atualizar status dos quartos
+        toast.success('✅ Check-in realizado com sucesso!')
+        setShowCheckinModal(false)
+        setSelectedReserva(null)
+      } else {
+        toast.error('Erro ao fazer check-in')
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro ao fazer check-in:', error)
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setCheckinLoadingId(null)
+    }
+  }
+
+  const openCheckoutModal = (reserva) => {
+    setSelectedReserva(reserva)
+    setCheckoutForm({
+      consumo_frigobar: 0,
+      servicos_extras: 0,
+      avaliacao: 5,
+      comentario_avaliacao: ''
+    })
+    setShowCheckoutModal(true)
+  }
+  
+  const handleCheckout = async () => {
+    if (!selectedReserva) return
+    
+    try {
+      setCheckoutLoadingId(selectedReserva.id)
+      
+      console.log('📤 [DEBUG] Realizando check-out:', {
+        reserva_id: selectedReserva.id,
+        ...checkoutForm
+      })
+      
+      const res = await api.post(`/reservas/${selectedReserva.id}/checkout`, {
+        consumo_frigobar: checkoutForm.consumo_frigobar,
+        servicos_extras: checkoutForm.servicos_extras,
+        avaliacao: checkoutForm.avaliacao,
+        comentario_avaliacao: checkoutForm.comentario_avaliacao
+      })
+      
+      if (res.data) {
+        console.log('✅ [DEBUG] Check-out realizado:', res.data)
+        
+        // Mostrar resumo dos pontos ganhos
+        if (res.data.pontos_ganhos > 0) {
+          toast.success(`✅ Check-out realizado! ${res.data.pontos_ganhos} pontos creditados!`, {
+            autoClose: 5000
+          })
+        } else {
+          toast.success('✅ Check-out realizado com sucesso!')
+        }
+        
+        await loadReservas()
+        await loadQuartos()  // Atualizar status dos quartos
+        setShowCheckoutModal(false)
+        setSelectedReserva(null)
+      } else {
+        toast.error('Erro ao fazer check-out')
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro ao fazer check-out:', error)
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setCheckoutLoadingId(null)
+    }
+  }
+
+  const handleCancelar = async (reservaId) => {
+    if (!confirm('⚠️ Tem certeza que deseja cancelar esta reserva?')) {
+      return
+    }
+    try {
+      setCancelLoadingId(reservaId)
+      const res = await api.patch(`/reservas/${reservaId}/cancelar`)
+      if (res.data && res.data.id) {
+        await loadReservas()
+        toast.success('✅ Reserva cancelada com sucesso!')
+      } else {
+        toast.error('Erro ao cancelar reserva')
+      }
+    } catch (error) {
+      console.error('Erro ao cancelar reserva:', error)
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setCancelLoadingId(null)
+    }
+  }
+
+  const updateFormField = (field, value) => {
+    setForm((prev) => {
+      const updated = { ...prev, [field]: value }
+
+      if (updated.data_entrada && updated.data_saida) {
+        const start = new Date(updated.data_entrada)
+        const end = new Date(updated.data_saida)
+        const diffMs = end - start
+        const oneDay = 1000 * 60 * 60 * 24
+        const numDiarias = diffMs > 0 ? Math.ceil(diffMs / oneDay) : 0
+        updated.num_diarias = numDiarias
+
+        const diariaNumber = parseFloat(updated.valor_diaria || 0)
+        if (numDiarias > 0 && diariaNumber > 0) {
+          updated.valor_total = (numDiarias * diariaNumber).toFixed(2)
+        } else {
+          updated.valor_total = ''
+        }
+      }
+
+      return updated
+    })
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+
+    if (!form.cliente_id || !form.quarto_numero || !form.data_entrada || !form.data_saida || !form.valor_diaria) {
+      toast.warning('⚠️ Preencha todos os campos obrigatórios.')
+      return
+    }
+
+    if (!form.num_diarias || form.num_diarias <= 0) {
+      toast.warning('⚠️ As datas informadas são inválidas.')
+      return
+    }
+
+    const valorDiariaNumber = parseFloat(form.valor_diaria)
+    if (isNaN(valorDiariaNumber) || valorDiariaNumber <= 0) {
+      toast.warning('⚠️ Informe um valor de diária válido.')
+      return
+    }
+
+    // Validar datas
+    const checkinPrevisto = new Date(`${form.data_entrada}T15:00:00`)
+    const checkoutPrevisto = new Date(`${form.data_saida}T12:00:00`)
+    
+    if (checkoutPrevisto <= checkinPrevisto) {
+      toast.warning('⚠️ Data de saída deve ser posterior à data de entrada.')
+      return
+    }
+
+    setLoading(true)
+    
+    // Payload compatível com backend schema
+    const payload = {
+      cliente_id: Number(form.cliente_id),
+      quarto_numero: form.quarto_numero,
+      tipo_suite: form.tipo_suite,
+      checkin_previsto: checkinPrevisto.toISOString(),
+      checkout_previsto: checkoutPrevisto.toISOString(),
+      valor_diaria: valorDiariaNumber,
+      num_diarias: form.num_diarias,
+    }
+    
+    console.log('📤 [DEBUG] Criando reserva:', payload)
+    console.log('🔍 [DEBUG] Datas formatadas:', {
+      checkin: checkinPrevisto.toISOString(),
+      checkout: checkoutPrevisto.toISOString(),
+      checkin_local: checkinPrevisto.toLocaleString('pt-BR'),
+      checkout_local: checkoutPrevisto.toLocaleString('pt-BR')
+    })
+    
+    try {
+      const res = await api.post('/reservas', payload)
+      
+      console.log('✅ [DEBUG] Resposta completa:', res)
+      console.log('✅ [DEBUG] Reserva criada:', res.data)
+      
+      if (res.data) {
+        toast.success(`✅ Reserva ${res.data.codigo_reserva || 'criada'} com sucesso!`)
+        await loadReservas()
+        setShowForm(false)
+        setForm({
+          cliente_id: '',
+          quarto_numero: '',
+          tipo_suite: 'LUXO',
+          data_entrada: '',
+          data_saida: '',
+          valor_diaria: '',
+          num_diarias: 1,
+          valor_total: ''
+        })
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro completo:', error)
+      console.error('❌ [DEBUG] Response:', error.response?.data)
+      
+      let errorMessage = 'Erro ao criar reserva'
+      
+      if (error.response?.status === HttpStatus.CONFLICT) {
+        errorMessage = '❌ Quarto não disponível para este período. Tente outro quarto.'
+      } else if (error.response?.status === HttpStatus.BAD_REQUEST) {
+        const detail = error.response.data?.detail
+        if (detail && Array.isArray(detail)) {
+          errorMessage = `❌ ${detail.map(d => d.msg || d).join(', ')}`
+        } else if (detail) {
+          errorMessage = `❌ ${detail}`
+        }
+      } else if (error.response?.status === HttpStatus.UNAUTHORIZED) {
+        errorMessage = '❌ Sessão expirada. Faça login novamente.'
+      } else if (error.response?.status === HttpStatus.FORBIDDEN) {
+        errorMessage = '❌ Sem permissão para criar reservas.'
+      } else if (error.response?.status === HttpStatus.UNPROCESSABLE_ENTITY) {
+        errorMessage = '❌ Dados inválidos. Verifique as informações.'
+      }
+      
+      toast.error(errorMessage)
+      // Limpar quartos disponíveis em caso de erro de disponibilidade
+      if (error.response?.status === HttpStatus.CONFLICT) {
+        setQuartosDisponiveis([])
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSubmitQuarto = async (e) => {
+    e.preventDefault()
+
+    if (!quartoForm.numero) {
+      toast.warning('⚠️ Informe o número do quarto.')
+      return
+    }
+
+    setLoading(true)
+    
+    const payload = {
+      numero: quartoForm.numero,
+      tipo_suite: quartoForm.tipo_suite,
+      status: quartoForm.status,
+    }
+    
+    console.log('📤 [DEBUG] Salvando quarto:', payload)
+    console.log('📤 [DEBUG] Editando?', editingQuarto ? `ID ${editingQuarto.id}` : 'Novo')
+
+    try {
+      let res
+      if (editingQuarto) {
+        res = await api.put(`/quartos/${editingQuarto.numero}`, payload)
+        console.log('✅ [DEBUG] Quarto atualizado:', res.data)
+        toast.success('✅ Quarto atualizado com sucesso!')
+      } else {
+        res = await api.post('/quartos', payload)
+        console.log('✅ [DEBUG] Quarto criado:', res.data)
+        toast.success('✅ Quarto criado com sucesso!')
+      }
+
+      await loadQuartos()
+      setShowQuartoForm(false)
+      setEditingQuarto(null)
+      setQuartoForm({ numero: '', tipo_suite: 'LUXO', status: 'LIVRE' })
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro ao salvar quarto:', error)
+      console.error('❌ [DEBUG] error.response:', error.response)
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startCreateQuarto = () => {
+    setEditingQuarto(null)
+    setQuartoForm({ numero: '', tipo_suite: 'LUXO', status: 'LIVRE' })
+    setShowQuartoForm(true)
+  }
+
+  const startEditQuarto = (quarto) => {
+    setEditingQuarto(quarto)
+    setQuartoForm({
+      numero: quarto.numero,
+      tipo_suite: quarto.tipo_suite,
+      status: quarto.status || 'LIVRE',
+    })
+    setShowQuartoForm(true)
+  }
+  
+  const handleDeleteQuarto = async (quartoNumero) => {
+    if (!confirm('⚠️ Tem certeza que deseja excluir este quarto?')) {
+      return
+    }
+    
+    console.log('🗑️ [DEBUG] Excluindo quarto:', quartoNumero)
+    
+    try {
+      setLoading(true)
+      await api.delete(`/quartos/${quartoNumero}`)
+      console.log('✅ [DEBUG] Quarto excluído com sucesso')
+      toast.success('✅ Quarto excluído com sucesso!')
+      await loadQuartos()
+    } catch (error) {
+      console.error('❌ [DEBUG] Erro ao excluir quarto:', error)
+      console.error('❌ [DEBUG] error.response:', error.response)
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleViewQuartoHistorico = async (quartoNumero) => {
+    try {
+      setLoading(true)
+      const res = await api.get(`/quartos/${quartoNumero}/historico`)
+      setQuartoHistorico(res.data)
+      setShowQuartoHistoricoModal(true)
+      toast.success('✅ Histórico carregado!')
+    } catch (error) {
+      const msg = formatErrorMessage(error)
+      toast.error(`Erro: ${msg}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleViewReservaDetails = async (reserva) => {
+    setLoading(true)
+    try {
+      // Carregar detalhes completos da reserva
+      const res = await api.get(`/reservas/${reserva.id}`)
+      
+      // Carregar pagamentos da reserva
+      let pagamentos = []
+      try {
+        const pagRes = await api.get(`/pagamentos/reserva/${reserva.id}`)
+        pagamentos = pagRes.data || []
+      } catch (err) {
+        console.log('Sem pagamentos para esta reserva')
+      }
+      
+      setReservaDetalhes({
+        ...res.data,
+        pagamentos: pagamentos
+      })
+      setShowReservaDetailsModal(true)
+    } catch (error) {
+      console.error('❌ Erro ao carregar detalhes:', error)
+      toast.error('Erro ao carregar detalhes da reserva')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getStatusColor = (status) => {
+    return STATUS_RESERVA_COLORS[status] || 'text-gray-600 bg-gray-100'
+  }
+
+  // totalReservas já é um estado (linha 29), não redefinir aqui
+  const totalPendentes = reservas.filter((r) => r.status === StatusReserva.PENDENTE).length
+  const totalHospedadas = reservas.filter((r) => r.status === StatusReserva.HOSPEDADO).length
+  const totalCheckouts = reservas.filter((r) => r.status === StatusReserva.CHECKED_OUT).length
+  const totalCanceladas = reservas.filter((r) => r.status === StatusReserva.CANCELADO).length
+  const valorTotalPrevisto = reservas.reduce((acc, r) => acc + Number(r.valor_total || 0), 0)
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-3xl font-bold text-real-blue">Reservas</h1>
+      </div>
+
+      {/* Validador de Código - Anti-Fraude */}
+      <div className="bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 p-6 rounded-lg shadow-lg mb-6">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-3xl">🔒</span>
+          <div>
+            <h2 className="text-xl font-bold text-red-800">Validador de Código de Reserva</h2>
+            <p className="text-sm text-red-600">Verifique a autenticidade da reserva antes do check-in</p>
+          </div>
+        </div>
+        
+        <div className="flex gap-3 mb-4">
+          <input
+            type="text"
+            placeholder="Digite o código da reserva (ex: ABC12345)"
+            value={codigoValidacao}
+            onChange={(e) => setCodigoValidacao(e.target.value.toUpperCase())}
+            onKeyPress={(e) => e.key === 'Enter' && validarCodigoReserva()}
+            className="flex-1 p-3 border-2 border-red-300 rounded-lg focus:border-red-500 focus:outline-none text-lg font-mono"
+            maxLength={20}
+          />
+          <button
+            onClick={validarCodigoReserva}
+            disabled={validandoCodigo}
+            className="px-6 py-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {validandoCodigo ? '⏳ Validando...' : '🔍 Validar'}
+          </button>
+        </div>
+
+        {/* Resultado da Validação */}
+        {reservaValidada && (
+          <div className={`p-4 rounded-lg border-2 ${
+            reservaValidada.fraude 
+              ? 'bg-red-100 border-red-500' 
+              : reservaValidada.status === StatusReserva.CANCELADO
+              ? 'bg-red-100 border-red-500'
+              : reservaValidada.status === StatusReserva.CHECKED_OUT
+              ? 'bg-blue-100 border-blue-500'
+              : 'bg-green-100 border-green-500'
+          }`}>
+            {reservaValidada.fraude ? (
+              <div className="text-center">
+                <p className="text-2xl mb-2">⚠️</p>
+                <p className="text-xl font-bold text-red-800">CÓDIGO INVÁLIDO!</p>
+                <p className="text-red-700">Esta reserva NÃO EXISTE no sistema.</p>
+                <p className="text-sm text-red-600 mt-2">⚠️ Possível tentativa de fraude - Acione a segurança!</p>
+              </div>
+            ) : (
+              <div>
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <p className="text-lg font-bold text-gray-800">{reservaValidada.cliente_nome}</p>
+                    <p className="text-sm text-gray-600">Código: {reservaValidada.codigo}</p>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                    reservaValidada.status === 'CANCELADO' ? 'bg-red-500 text-white' :
+                    reservaValidada.status === 'CHECKED_OUT' ? 'bg-blue-500 text-white' :
+                    reservaValidada.status === 'HOSPEDADO' ? 'bg-green-500 text-white' :
+                    'bg-yellow-500 text-white'
+                  }`}>
+                    {reservaValidada.status}
+                  </span>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-gray-600">Quarto:</p>
+                    <p className="font-semibold">{reservaValidada.tipo_suite} - {reservaValidada.quarto_numero}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Check-in:</p>
+                    <p className="font-semibold">{new Date(reservaValidada.checkin_previsto).toLocaleDateString('pt-BR')}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Check-out:</p>
+                    <p className="font-semibold">{new Date(reservaValidada.checkout_previsto).toLocaleDateString('pt-BR')}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Valor Total:</p>
+                    <p className="font-semibold text-green-700">R$ {reservaValidada.valor_total?.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                {reservaValidada.status === StatusReserva.CANCELADO && (
+                  <div className="mt-3 p-2 bg-red-200 rounded text-center">
+                    <p className="text-red-800 font-bold">⚠️ RESERVA CANCELADA - NÃO REALIZAR CHECK-IN</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="card p-4">
+          <p className="text-sm text-gray-500">Total de reservas</p>
+          <p className="text-2xl font-bold text-real-blue">{totalReservas}</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm text-gray-500">Pendentes / Hospedadas</p>
+          <p className="text-xl font-semibold text-yellow-700">{totalPendentes} pendentes</p>
+          <p className="text-sm text-green-700">{totalHospedadas} hospedadas</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm text-gray-500">Check-outs / Canceladas</p>
+          <p className="text-xl font-semibold text-gray-700">{totalCheckouts} check-outs</p>
+          <p className="text-sm text-red-700">{totalCanceladas} canceladas</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm text-gray-500">Valor previsto total</p>
+          <p className="text-2xl font-bold text-real-blue">
+            {valorTotalPrevisto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex border-b mb-6 space-x-4">
+        <button
+          onClick={() => setActiveTab('reservas')}
+          className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium ${
+            activeTab === 'reservas'
+              ? 'border-real-gold text-real-blue'
+              : 'border-transparent text-gray-500 hover:text-real-blue'
+          }`}
+        >
+          📋 Reservas Ativas
+        </button>
+        <button
+          onClick={() => setActiveTab('excluidas')}
+          className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium ${
+            activeTab === 'excluidas'
+              ? 'border-real-gold text-real-blue'
+              : 'border-transparent text-gray-500 hover:text-real-blue'
+          }`}
+        >
+          🗑️ Excluídas
+        </button>
+        <button
+          onClick={() => setActiveTab('quartos')}
+          className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium ${
+            activeTab === 'quartos'
+              ? 'border-real-gold text-real-blue'
+              : 'border-transparent text-gray-500 hover:text-real-blue'
+          }`}
+        >
+          🏨 Quartos
+        </button>
+      </div>
+
+      {activeTab === 'reservas' && (
+        <>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-semibold text-real-blue">Reservas</h2>
+            <div className="flex gap-2">
+              <button
+                onClick={handleExportReservasCSV}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2"
+                title="Exportar para CSV"
+              >
+                📊 CSV
+              </button>
+              <button
+                onClick={handleExportReservasPDF}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center gap-2"
+                title="Exportar para PDF"
+              >
+                📄 PDF
+              </button>
+              <button
+                onClick={() => setShowForm(!showForm)}
+                className="bg-real-blue text-white px-4 py-2 rounded hover:bg-blue-800"
+              >
+                Nova Reserva
+              </button>
+            </div>
+          </div>
+
+          {/* Filtros e Busca de Reservas */}
+          <div className="bg-white p-4 rounded-lg shadow mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="md:col-span-1">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  🔍 Buscar
+                </label>
+                <input
+                  type="text"
+                  placeholder="Cliente ou quarto..."
+                  value={reservaFilters.search}
+                  onChange={(e) => handleReservaFilterChange('search', e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleReservaSearch()}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Status
+                </label>
+                <select
+                  value={reservaFilters.status}
+                  onChange={(e) => handleReservaFilterChange('status', e.target.value)}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Todos</option>
+                  <option value="PENDENTE">Pendente</option>
+                  <option value="CONFIRMADA">Confirmada</option>
+                  <option value="HOSPEDADO">Hospedado</option>
+                  <option value="CHECKED_OUT">Finalizada</option>
+                  <option value="CANCELADO">Cancelada</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Check-in de
+                </label>
+                <input
+                  type="date"
+                  value={reservaFilters.checkin_inicio}
+                  onChange={(e) => handleReservaFilterChange('checkin_inicio', e.target.value)}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Check-in até
+                </label>
+                <input
+                  type="date"
+                  value={reservaFilters.checkin_fim}
+                  onChange={(e) => handleReservaFilterChange('checkin_fim', e.target.value)}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-between items-center">
+              <div className="flex gap-2">
+                <button
+                  onClick={handleReservaSearch}
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                >
+                  Buscar
+                </button>
+                <button
+                  onClick={handleClearReservaFilters}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                  title="Limpar filtros"
+                >
+                  ✕ Limpar
+                </button>
+              </div>
+
+              {/* Paginação Info */}
+              <div className="text-sm text-gray-600 flex items-center gap-2">
+                <span>
+                  {reservaFilters.offset + 1} - {Math.min(reservaFilters.offset + reservaFilters.limit, totalReservas)} de {totalReservas}
+                </span>
+                <button
+                  onClick={handleReservaPreviousPage}
+                  disabled={reservaFilters.offset === 0}
+                  className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  ←
+                </button>
+                <button
+                  onClick={handleReservaNextPage}
+                  disabled={reservaFilters.offset + reservaFilters.limit >= totalReservas}
+                  className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  →
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {showForm && (
+            <div className="bg-white p-6 rounded-lg shadow mb-6">
+              <h2 className="text-xl font-bold mb-4">Nova Reserva</h2>
+              <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+                <select
+                  value={form.cliente_id}
+                  onChange={(e) => updateFormField('cliente_id', e.target.value)}
+                  className="p-2 border rounded"
+                  required
+                >
+                  <option value="">Selecione o Cliente</option>
+                  {clientes.map((cliente) => (
+                    <option key={cliente.id} value={cliente.id}>
+                      {cliente.nome_completo}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={form.quarto_numero}
+                  onChange={(e) => updateFormField('quarto_numero', e.target.value)}
+                  className="p-2 border rounded"
+                  required
+                  disabled={!form.data_entrada || !form.data_saida || loadingQuartos}
+                >
+                  <option value="">
+                    {loadingQuartos ? '🔄 Buscando quartos...' : 
+                     !form.data_entrada || !form.data_saida ? '📅 Selecione as datas primeiro' :
+                     quartosDisponiveis.length === 0 ? '❌ Nenhum quarto disponível' :
+                     'Selecione o Quarto'}
+                  </option>
+                  {quartosDisponiveis.map((quarto) => (
+                    <option key={quarto.numero} value={quarto.numero}>
+                      {quarto.status === 'LIVRE' ? '✅' : '🏠'} {quarto.numero} - {quarto.tipo_suite} ({quarto.status})
+                    </option>
+                  ))}
+                </select>
+                
+                {/* Debug info */}
+                {process.env.NODE_ENV === 'development' && quartosDisponiveis.length > 0 && (
+                  <div className="text-xs text-gray-500 mt-1 p-2 bg-gray-100 rounded">
+                    <div>🔍 Debug: {quartosDisponiveis.length} quartos encontrados</div>
+                    <div>📋 Lista: {quartosDisponiveis.map(q => q.numero).join(', ')}</div>
+                    {quartosDisponiveis.find(q => q.numero === '102') && (
+                      <div className="text-green-600">✅ Quarto 102 encontrado!</div>
+                    )}
+                    <button 
+                      type="button" 
+                      onClick={refreshQuartosDisponiveis}
+                      className="mt-1 px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
+                    >
+                      🔄 Refresh Quartos
+                    </button>
+                  </div>
+                )}
+
+                <select
+                  value={form.tipo_suite}
+                  onChange={(e) => updateFormField('tipo_suite', e.target.value)}
+                  className="p-2 border rounded"
+                  required
+                >
+                  <option value="LUXO">Luxo</option>
+                  <option value="MASTER">Master</option>
+                  <option value="REAL">Real</option>
+                </select>
+
+                <input
+                  type="date"
+                  placeholder="Data Entrada"
+                  value={form.data_entrada}
+                  onChange={(e) => updateFormField('data_entrada', e.target.value)}
+                  className="p-2 border rounded"
+                  required
+                />
+
+                <input
+                  type="date"
+                  placeholder="Data Saída"
+                  value={form.data_saida}
+                  onChange={(e) => updateFormField('data_saida', e.target.value)}
+                  className="p-2 border rounded"
+                  required
+                />
+
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Valor da Diária"
+                  value={form.valor_diaria}
+                  onChange={(e) => updateFormField('valor_diaria', e.target.value)}
+                  className="p-2 border rounded"
+                  required
+                />
+
+                <input
+                  type="text"
+                  placeholder="Valor Total (calculado)"
+                  value={form.valor_total ? `R$ ${form.valor_total}` : ''}
+                  readOnly
+                  className="p-2 border rounded bg-gray-100"
+                />
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-real-gold text-real-blue p-2 rounded hover:bg-yellow-500 disabled:opacity-50"
+                >
+                  {loading ? 'Criando...' : 'Criar Reserva'}
+                </button>
+              </form>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-real-blue text-white">
+                <tr>
+                  <th className="p-3 text-left">Código</th>
+                  <th className="p-3 text-left">Cliente</th>
+                  <th className="p-3 text-left">Quarto</th>
+                  <th className="p-3 text-left">Tipo Suíte</th>
+                  <th className="p-3 text-left">Check-in</th>
+                  <th className="p-3 text-left">Check-out</th>
+                  <th className="p-3 text-left">Diárias</th>
+                  <th className="p-3 text-left">Valor Total</th>
+                  <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-left">Pagamento</th>
+                  <th className="p-3 text-left">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reservas.length === 0 ? (
+                  <tr>
+                    <td colSpan="11" className="p-6 text-center text-gray-500">
+                      Nenhuma reserva encontrada
+                    </td>
+                  </tr>
+                ) : (
+                  reservas.map((reserva) => {
+                    const pagamentosAprovados = reserva.pagamentos?.filter(p => isPagamentoAprovado(p.status)) || [];
+                    const temPagamento = pagamentosAprovados.length > 0;
+                    const valorPago = pagamentosAprovados.reduce((acc, p) => acc + (p.valor || 0), 0);
+                    
+                    return (
+                    <tr key={reserva.id} className="border-b hover:bg-gray-50">
+                      <td className="p-3 text-xs font-mono text-gray-600">
+                        {reserva.codigo_reserva || `#${reserva.id}`}
+                      </td>
+                      <td className="p-3 font-medium">{reserva.cliente_nome}</td>
+                      <td className="p-3 text-center">
+                        <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded font-semibold">
+                          {reserva.quarto_numero}
+                        </span>
+                      </td>
+                      <td className="p-3">{reserva.tipo_suite}</td>
+                      <td className="p-3 text-sm">
+                        {reserva.checkin_previsto ? new Date(reserva.checkin_previsto).toLocaleDateString('pt-BR') : '-'}
+                      </td>
+                      <td className="p-3 text-sm">
+                        {reserva.checkout_previsto ? new Date(reserva.checkout_previsto).toLocaleDateString('pt-BR') : '-'}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="text-sm font-semibold">{reserva.num_diarias || 0}</span>
+                      </td>
+                      <td className="p-3 font-semibold text-green-700">
+                        R$ {Number(reserva.valor_total || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${getStatusColor(reserva.status)}`}>
+                          {reserva.status}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        {temPagamento ? (
+                          <div className="text-xs">
+                            <span className="px-2 py-1 bg-green-100 text-green-800 rounded font-semibold block mb-1">
+                              ✔ PAGO
+                            </span>
+                            <span className="text-gray-600">R$ {valorPago.toFixed(2)}</span>
+                          </div>
+                        ) : (
+                          <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs font-semibold">
+                            PENDENTE
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 space-x-2">
+                        <button
+                          onClick={() => handleViewReservaDetails(reserva)}
+                          className="text-sm px-3 py-1 rounded bg-blue-500 text-white hover:bg-blue-600"
+                          title="Ver detalhes completos"
+                        >
+                          👁️ Detalhes
+                        </button>
+                        <button
+                          onClick={() => openPagamentoModal(reserva)}
+                          disabled={reserva.status === 'CANCELADO' || reserva.status === 'CHECKED_OUT'}
+                          className="text-sm px-3 py-1 rounded bg-green-600 text-white disabled:opacity-50 hover:bg-green-700"
+                          title="Processar pagamento"
+                        >
+                          💳 Pagar
+                        </button>
+                        <button
+                          onClick={() => openCheckinModal(reserva)}
+                          disabled={
+                            checkinLoadingId === reserva.id || 
+                            !podeRealizarCheckin(reserva)
+                          }
+                          title={getCheckinTooltip(reserva)}
+                          className="text-sm px-3 py-1 rounded bg-real-gold text-real-blue disabled:opacity-50"
+                        >
+                          {checkinLoadingId === reserva.id ? 'Processando...' : 'Check-in'}
+                        </button>
+                        <button
+                          onClick={() => openCheckoutModal(reserva)}
+                          disabled={
+                            checkoutLoadingId === reserva.id || 
+                            reserva.status !== 'HOSPEDADO'
+                          }
+                          title={
+                            reserva.status === 'HOSPEDADO'
+                              ? '✅ Checkout disponível'
+                              : reserva.status === 'CONFIRMADA' 
+                              ? '⏳ Check-in necessário antes do check-out' 
+                              : reserva.status === 'PENDENTE'
+                              ? '⚠️ Pagamento necessário antes do check-out'
+                              : reserva.status === 'CHECKED_OUT'
+                              ? '✓ Checkout já realizado'
+                              : 'Realizar check-out'
+                          }
+                          className="text-sm px-3 py-1 rounded bg-real-blue text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-800"
+                        >
+                          {checkoutLoadingId === reserva.id ? 'Processando...' : 'Checkout'}
+                        </button>
+                        <button
+                          onClick={() => handleCancelar(reserva.id)}
+                          disabled={cancelLoadingId === reserva.id || !['PENDENTE', 'CONFIRMADA', 'HOSPEDADO'].includes(reserva.status)}
+                          className="text-sm px-3 py-1 rounded bg-red-600 text-white disabled:opacity-50 hover:bg-red-700"
+                        >
+                          {cancelLoadingId === reserva.id ? 'Cancelando...' : 'Cancelar'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'excluidas' && (
+        <>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-semibold text-red-700">🗑️ Reservas Excluídas / Finalizadas</h2>
+            <div className="text-sm text-gray-600">
+              Total: {reservas.filter(r => r.status === 'CANCELADO' || r.status === 'CHECKED_OUT').length}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-red-600 text-white">
+                <tr>
+                  <th className="p-3 text-left">Cliente</th>
+                  <th className="p-3 text-left">Tipo Suíte</th>
+                  <th className="p-3 text-left">Check-in</th>
+                  <th className="p-3 text-left">Check-out</th>
+                  <th className="p-3 text-left">Valor</th>
+                  <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-left">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reservas.filter(r => r.status === 'CANCELADO' || r.status === 'CHECKED_OUT').length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="p-6 text-center text-gray-500">
+                      Nenhuma reserva excluída ou finalizada
+                    </td>
+                  </tr>
+                ) : (
+                  reservas
+                    .filter(r => r.status === 'CANCELADO' || r.status === 'CHECKED_OUT')
+                    .map((reserva) => (
+                      <tr key={reserva.id} className="border-b hover:bg-gray-50">
+                        <td className="p-3">{reserva.cliente_nome}</td>
+                        <td className="p-3">{reserva.tipo_suite}</td>
+                        <td className="p-3">
+                          {reserva.checkin_previsto ? new Date(reserva.checkin_previsto).toLocaleDateString('pt-BR') : '-'}
+                        </td>
+                        <td className="p-3">
+                          {reserva.checkout_previsto ? new Date(reserva.checkout_previsto).toLocaleDateString('pt-BR') : '-'}
+                        </td>
+                        <td className="p-3">
+                          R$ {Number(reserva.valor_total || 0).toFixed(2)}
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-1 rounded text-xs font-semibold ${getStatusColor(reserva.status)}`}>
+                            {reserva.status}
+                          </span>
+                        </td>
+                        <td className="p-3 space-x-2">
+                          <button
+                            onClick={() => handleViewReservaDetails(reserva)}
+                            className="text-sm px-3 py-1 rounded bg-blue-500 text-white hover:bg-blue-600"
+                            title="Ver detalhes completos"
+                          >
+                            👁️ Detalhes
+                          </button>
+                          {reserva.status === 'CHECKED_OUT' && (
+                            <span className="text-xs text-gray-500 italic">
+                              Finalizada
+                            </span>
+                          )}
+                          {reserva.status === 'CANCELADO' && (
+                            <span className="text-xs text-red-600 italic font-semibold">
+                              Cancelada
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'quartos' && (
+        <>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-semibold text-real-blue">Quartos</h2>
+            <button
+              onClick={startCreateQuarto}
+              className="bg-real-blue text-white px-4 py-2 rounded hover:bg-blue-800"
+            >
+              Novo Quarto
+            </button>
+          </div>
+
+          {showQuartoForm && (
+            <div className="bg-white p-6 rounded-lg shadow mb-6">
+              <form onSubmit={handleSubmitQuarto} className="grid grid-cols-2 gap-4">
+                <input
+                  placeholder="Número do Quarto"
+                  value={quartoForm.numero}
+                  onChange={(e) => setQuartoForm({ ...quartoForm, numero: e.target.value })}
+                  className="p-2 border rounded"
+                  required
+                />
+                <select
+                  value={quartoForm.tipo_suite}
+                  onChange={(e) => setQuartoForm({ ...quartoForm, tipo_suite: e.target.value })}
+                  className="p-2 border rounded"
+                >
+                  <option value="LUXO">Luxo</option>
+                  <option value="MASTER">Master</option>
+                  <option value="REAL">Real</option>
+                </select>
+                <select
+                  value={quartoForm.status}
+                  onChange={(e) => setQuartoForm({ ...quartoForm, status: e.target.value })}
+                  className="p-2 border rounded"
+                >
+                  <option value="LIVRE">Livre</option>
+                  <option value="OCUPADO">Ocupado</option>
+                  <option value="MANUTENCAO">Manutenção</option>
+                  <option value="BLOQUEADO">Bloqueado</option>
+                </select>
+                <div />
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="col-span-2 bg-real-gold text-real-blue p-2 rounded hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? '⏳ Salvando...' : (editingQuarto ? 'Salvar alterações' : 'Criar Quarto')}
+                </button>
+              </form>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-real-blue text-white">
+                <tr>
+                  <th className="p-3 text-left">Número</th>
+                  <th className="p-3 text-left">Tipo Suíte</th>
+                  <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-left">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quartos.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="p-6 text-center text-gray-500">
+                      Nenhum quarto cadastrado
+                    </td>
+                  </tr>
+                ) : (
+                  quartos.map((quarto) => (
+                    <tr key={quarto.id} className="border-b hover:bg-gray-50">
+                      <td className="p-3">{quarto.numero}</td>
+                      <td className="p-3">{quarto.tipo_suite}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                          quarto.status === 'LIVRE' ? 'bg-green-100 text-green-800' :
+                          quarto.status === 'OCUPADO' ? 'bg-red-100 text-red-800' :
+                          quarto.status === 'MANUTENCAO' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {quarto.status}
+                        </span>
+                      </td>
+                      <td className="p-3 space-x-2">
+                        <button
+                          onClick={() => handleViewQuartoHistorico(quarto.numero)}
+                          className="text-sm px-3 py-1 rounded bg-purple-600 text-white hover:bg-purple-700"
+                          title="Ver histórico de ocupação"
+                        >
+                          📊 Histórico
+                        </button>
+                        <button
+                          onClick={() => startEditQuarto(quarto)}
+                          className="text-sm px-3 py-1 rounded bg-real-blue text-white hover:bg-blue-800"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDeleteQuarto(quarto.numero)}
+                          disabled={loading || quarto.status === 'OCUPADO'}
+                          className="text-sm px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title={quarto.status === 'OCUPADO' ? 'Não é possível excluir quarto ocupado' : 'Excluir quarto'}
+                        >
+                          Excluir
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      
+      {/* ============= MODAL DE PAGAMENTO (CIELO) ============= */}
+      {showPagamentoModal && selectedReserva && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-4 rounded-t-lg">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                💳 Pagamento - Cielo
+              </h2>
+              <p className="text-sm opacity-80">Reserva #{selectedReserva.id} - {selectedReserva.cliente_nome}</p>
+            </div>
+            
+            {/* Resumo da Reserva */}
+            <div className="p-4 border-b bg-gray-50">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm text-gray-500">Valor da Reserva</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    R$ {Number(selectedReserva.valor_total || 0).toFixed(2)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-gray-500">Quarto {selectedReserva.quarto_numero}</p>
+                  <p className="text-sm">{selectedReserva.num_diarias || 0} diária(s)</p>
+                </div>
+              </div>
+              
+              {/* Pagamentos já realizados */}
+              {pagamentosReserva.length > 0 && (
+                <div className="mt-3 pt-3 border-t">
+                  <p className="text-sm text-gray-600 mb-2">Pagamentos realizados:</p>
+                  {pagamentosReserva.map((pag) => (
+                    <div key={pag.id} className="flex justify-between text-sm py-1">
+                      <span className={`${pag.status === 'APROVADO' ? 'text-green-600' : pag.status === 'AGUARDANDO' ? 'text-yellow-600' : 'text-red-600'}`}>
+                        {pag.metodo === 'pix' ? '📱 PIX' : '💳 Cartão'} - {pag.status}
+                      </span>
+                      <span>R$ {pag.valor.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* QR Code PIX */}
+            {pixQrCode && (
+              <div className="p-6 border-b bg-gradient-to-br from-green-50 to-blue-50">
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-2">📱 Pagamento via PIX</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Escaneie o QR Code abaixo com o app do seu banco
+                  </p>
+                  
+                  {/* QR Code */}
+                  <div className="bg-white p-6 inline-block rounded-lg shadow-lg border-2 border-green-200">
+                    <div className="w-64 h-64 flex items-center justify-center bg-gray-50 rounded">
+                      <div className="text-center p-4">
+                        <div className="text-xs font-mono break-all bg-white p-3 rounded border">
+                          {pixQrCode}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">Código PIX Copia e Cola</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Status */}
+                  <div className="mt-4">
+                    {pixPolling ? (
+                      <div className="flex items-center justify-center gap-2 text-blue-600">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                        <span className="text-sm font-medium">Aguardando pagamento...</span>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">Sistema detectará o pagamento automaticamente</p>
+                    )}
+                  </div>
+                  
+                  {/* Botão de confirmação manual (sandbox) */}
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <p className="text-xs text-gray-500 mb-2">Modo teste (sandbox):</p>
+                    <button
+                      onClick={() => pixPagamentoId && handleConfirmarPix(pixPagamentoId)}
+                      disabled={pagamentoLoading}
+                      className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium transition-all"
+                    >
+                      {pagamentoLoading ? '⏳ Confirmando...' : '✅ Simular Pagamento (Teste)'}
+                    </button>
+                  </div>
+                  
+                  {/* Informações adicionais */}
+                  <div className="mt-4 text-xs text-gray-500">
+                    <p>💡 O QR Code expira em 15 minutos</p>
+                    <p>🔒 Pagamento seguro via Cielo</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Formulário de Pagamento */}
+            {!pixQrCode && (
+              <div className="p-4 space-y-4">
+                {/* Método de Pagamento */}
+                <div>
+                  <label className="block text-sm text-gray-600 mb-2">Forma de Pagamento</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPagamentoForm({ ...pagamentoForm, metodo: 'credit_card' })}
+                      className={`p-3 border rounded text-center transition-all ${
+                        pagamentoForm.metodo === 'credit_card' 
+                          ? 'border-blue-500 bg-blue-50 text-blue-700' 
+                          : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-2xl">💳</div>
+                      <div className="text-xs">Crédito</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPagamentoForm({ ...pagamentoForm, metodo: 'debit_card' })}
+                      className={`p-3 border rounded text-center transition-all ${
+                        pagamentoForm.metodo === 'debit_card' 
+                          ? 'border-blue-500 bg-blue-50 text-blue-700' 
+                          : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-2xl">💳</div>
+                      <div className="text-xs">Débito</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPagamentoForm({ ...pagamentoForm, metodo: 'pix' })}
+                      className={`p-3 border rounded text-center transition-all ${
+                        pagamentoForm.metodo === 'pix' 
+                          ? 'border-green-500 bg-green-50 text-green-700' 
+                          : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-2xl">📱</div>
+                      <div className="text-xs">PIX</div>
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Campos do Cartão */}
+                {(pagamentoForm.metodo === 'credit_card' || pagamentoForm.metodo === 'debit_card') && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Número do Cartão</label>
+                      <input
+                        type="text"
+                        placeholder="0000 0000 0000 0000"
+                        value={pagamentoForm.cartao_numero}
+                        onChange={(e) => setPagamentoForm({ ...pagamentoForm, cartao_numero: e.target.value.replace(/\D/g, '').substring(0, 16) })}
+                        className="w-full p-2 border rounded"
+                        maxLength={16}
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-1">Validade</label>
+                        <input
+                          type="text"
+                          placeholder="MM/AA"
+                          value={pagamentoForm.cartao_validade}
+                          onChange={(e) => {
+                            let val = e.target.value.replace(/\D/g, '').substring(0, 4)
+                            if (val.length >= 2) val = val.substring(0, 2) + '/' + val.substring(2)
+                            setPagamentoForm({ ...pagamentoForm, cartao_validade: val })
+                          }}
+                          className="w-full p-2 border rounded"
+                          maxLength={5}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-1">CVV</label>
+                        <input
+                          type="text"
+                          placeholder="123"
+                          value={pagamentoForm.cartao_cvv}
+                          onChange={(e) => setPagamentoForm({ ...pagamentoForm, cartao_cvv: e.target.value.replace(/\D/g, '').substring(0, 4) })}
+                          className="w-full p-2 border rounded"
+                          maxLength={4}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Nome no Cartão</label>
+                      <input
+                        type="text"
+                        placeholder="NOME COMO ESTÁ NO CARTÃO"
+                        value={pagamentoForm.cartao_nome}
+                        onChange={(e) => setPagamentoForm({ ...pagamentoForm, cartao_nome: e.target.value.toUpperCase() })}
+                        className="w-full p-2 border rounded uppercase"
+                      />
+                    </div>
+                    
+                    {pagamentoForm.metodo === 'credit_card' && (
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-1">Parcelas</label>
+                        <select
+                          value={pagamentoForm.parcelas}
+                          onChange={(e) => setPagamentoForm({ ...pagamentoForm, parcelas: parseInt(e.target.value) })}
+                          className="w-full p-2 border rounded"
+                        >
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
+                            <option key={n} value={n}>
+                              {n}x de R$ {(Number(selectedReserva.valor_total || 0) / n).toFixed(2)}
+                              {n === 1 ? ' (à vista)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* Info PIX */}
+                {pagamentoForm.metodo === 'pix' && (
+                  <div className="bg-green-50 p-4 rounded border border-green-200">
+                    <p className="text-green-800 text-sm">
+                      📱 Ao confirmar, será gerado um QR Code para pagamento via PIX.
+                      <br />
+                      O pagamento será confirmado automaticamente após a transferência.
+                    </p>
+                  </div>
+                )}
+                
+                {/* Bandeiras aceitas */}
+                <div className="text-center text-xs text-gray-400 pt-2 border-t">
+                  Bandeiras aceitas: Visa, Mastercard, Elo, American Express, Hipercard
+                  <br />
+                  <span className="text-blue-600">Powered by Cielo</span>
+                </div>
+              </div>
+            )}
+            
+            {/* Footer */}
+            <div className="p-4 border-t bg-gray-50 flex justify-between items-center">
+              <button
+                onClick={() => {
+                  setShowPagamentoModal(false)
+                  setSelectedReserva(null)
+                  setPixQrCode(null)
+                }}
+                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100"
+              >
+                {pixQrCode ? 'Fechar' : 'Cancelar'}
+              </button>
+              
+              {!pixQrCode && (
+                <button
+                  onClick={handlePagamento}
+                  disabled={pagamentoLoading}
+                  className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-semibold"
+                >
+                  {pagamentoLoading ? '⏳ Processando...' : `💳 Pagar R$ ${Number(selectedReserva.valor_total || 0).toFixed(2)}`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============= MODAL DE CHECK-IN COM ABAS ============= */}
+      {showCheckinModal && selectedReserva && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-green-600 to-green-800 text-white p-4 rounded-t-lg">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                🏨 Check-in - Chegada
+              </h2>
+              <p className="text-sm opacity-80">Reserva #{selectedReserva.id} - {selectedReserva.cliente_nome}</p>
+            </div>
+            
+            {/* Abas */}
+            <div className="flex border-b">
+              <button
+                onClick={() => setCheckinModalTab('dados')}
+                className={`flex-1 px-4 py-3 font-medium transition-colors ${
+                  checkinModalTab === 'dados'
+                    ? 'bg-white text-green-600 border-b-2 border-green-600'
+                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                📋 Dados do Check-in
+              </button>
+              <button
+                onClick={() => setCheckinModalTab('voucher')}
+                className={`flex-1 px-4 py-3 font-medium transition-colors ${
+                  checkinModalTab === 'voucher'
+                    ? 'bg-white text-green-600 border-b-2 border-green-600'
+                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                📄 Voucher
+              </button>
+            </div>
+            
+            {/* Conteúdo da Aba: Dados */}
+            {checkinModalTab === 'dados' && (
+              <>
+                {/* Detalhes da Reserva */}
+                <div className="p-4 border-b bg-gray-50">
+                  <h3 className="font-semibold text-gray-700 mb-2">📋 Detalhes da Reserva</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span className="text-gray-500">Código:</span>
+                      <span className="ml-2 font-medium">{selectedReserva.codigo_reserva || `#${selectedReserva.id}`}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Status:</span>
+                      <span className="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded text-xs">{selectedReserva.status}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Cliente:</span>
+                      <span className="ml-2 font-medium">{selectedReserva.cliente_nome}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Quarto:</span>
+                      <span className="ml-2 font-medium">{selectedReserva.quarto_numero} ({selectedReserva.tipo_suite})</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Check-in previsto:</span>
+                      <span className="ml-2">{selectedReserva.checkin_previsto ? new Date(selectedReserva.checkin_previsto).toLocaleDateString('pt-BR') : '-'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Check-out previsto:</span>
+                      <span className="ml-2">{selectedReserva.checkout_previsto ? new Date(selectedReserva.checkout_previsto).toLocaleDateString('pt-BR') : '-'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Diárias:</span>
+                      <span className="ml-2">{selectedReserva.num_diarias || '-'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Valor Total:</span>
+                      <span className="ml-2 font-bold text-green-600">R$ {Number(selectedReserva.valor_total || 0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Formulário */}
+                <div className="p-4 space-y-4">
+                  <h3 className="font-semibold text-gray-700">👥 Informações de Hospedagem</h3>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Nº de Adultos</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={checkinForm.num_hospedes}
+                        onChange={(e) => setCheckinForm({ ...checkinForm, num_hospedes: parseInt(e.target.value) || 1 })}
+                        className="w-full p-2 border rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Nº de Crianças</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        value={checkinForm.num_criancas}
+                        onChange={(e) => setCheckinForm({ ...checkinForm, num_criancas: parseInt(e.target.value) || 0 })}
+                        className="w-full p-2 border rounded"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">🚗 Placa do Veículo (opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="ABC-1234"
+                      value={checkinForm.placa_veiculo}
+                      onChange={(e) => setCheckinForm({ ...checkinForm, placa_veiculo: e.target.value.toUpperCase() })}
+                      className="w-full p-2 border rounded"
+                      maxLength={8}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">📝 Observações</label>
+                    <textarea
+                      placeholder="Preferências, restrições alimentares, solicitações especiais..."
+                      value={checkinForm.observacoes}
+                      onChange={(e) => setCheckinForm({ ...checkinForm, observacoes: e.target.value })}
+                      className="w-full p-2 border rounded resize-none"
+                      rows={3}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            
+            {/* Conteúdo da Aba: Voucher */}
+            {checkinModalTab === 'voucher' && (
+              <div className="p-6">
+                {loadingVoucher ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Carregando voucher...</p>
+                  </div>
+                ) : voucherData ? (
+                  <div className="space-y-4">
+                    {/* Cabeçalho do Hotel */}
+                    <div className="text-center border-b pb-4">
+                      <h3 className="text-2xl font-bold text-blue-900">Hotel Real Cabo Frio</h3>
+                      <p className="text-sm text-gray-600">Av. Exemplo, 123 - Cabo Frio, RJ</p>
+                      <p className="text-sm text-gray-600">Tel: (22) 1234-5678 | contato@hotelreal.com.br</p>
+                    </div>
+                    
+                    {/* Código do Voucher */}
+                    <div className="bg-gradient-to-r from-yellow-50 to-yellow-100 border-2 border-yellow-400 rounded-lg p-6 text-center">
+                      <p className="text-sm text-gray-600 mb-1">Voucher de Confirmação</p>
+                      <p className="text-4xl font-bold text-blue-900 mb-2">{voucherData.codigo}</p>
+                      <p className="text-xs text-gray-500">
+                        Emitido em: {new Date(voucherData.dataEmissao).toLocaleString('pt-BR')}
+                      </p>
+                    </div>
+                    
+                    {/* Status */}
+                    <div className="flex justify-center">
+                      <span className={`px-4 py-2 rounded-full text-sm font-bold ${
+                        voucherData.status === 'EMITIDO' ? 'bg-green-100 text-green-800' :
+                        voucherData.status === 'CHECKIN_REALIZADO' ? 'bg-blue-100 text-blue-800' :
+                        voucherData.status === 'FINALIZADO' ? 'bg-gray-100 text-gray-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {voucherData.status}
+                      </span>
+                    </div>
+                    
+                    {/* Informações da Reserva */}
+                    <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                      <div>
+                        <p className="text-sm text-gray-600">Reserva feita por:</p>
+                        <p className="font-semibold">{voucherData.reserva.clienteNome}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Tipo de Suíte:</p>
+                        <p className="font-semibold">{voucherData.reserva.tipoSuite}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Check-in:</p>
+                        <p className="font-semibold">
+                          {new Date(voucherData.reserva.checkinPrevisto).toLocaleString('pt-BR')}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Check-out:</p>
+                        <p className="font-semibold">
+                          {new Date(voucherData.reserva.checkoutPrevisto).toLocaleString('pt-BR')}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Quarto:</p>
+                        <p className="font-semibold">{voucherData.reserva.quartoNumero}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Valor Total:</p>
+                        <p className="font-semibold text-green-600">
+                          R$ {Number(voucherData.reserva.valorTotal || 0).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {/* Hóspede */}
+                    {voucherData.reserva.cliente && (
+                      <div className="border-t pt-4">
+                        <h4 className="font-semibold text-gray-700 mb-2">👤 Dados do Hóspede</h4>
+                        <div className="bg-gray-50 p-3 rounded space-y-1 text-sm">
+                          <p><span className="text-gray-600">Nome:</span> <span className="font-medium">{voucherData.reserva.cliente.nomeCompleto}</span></p>
+                          <p><span className="text-gray-600">Email:</span> {voucherData.reserva.cliente.email}</p>
+                          <p><span className="text-gray-600">Telefone:</span> {voucherData.reserva.cliente.telefone}</p>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Check-in/Check-out Status */}
+                    <div className="border-t pt-4 space-y-3">
+                      <div className="bg-gray-50 p-3 rounded">
+                        <p className="text-sm font-semibold text-gray-700">Check-in:</p>
+                        {voucherData.checkinRealizadoEm ? (
+                          <p className="text-sm text-green-600">
+                            ✓ Realizado em {new Date(voucherData.checkinRealizadoEm).toLocaleString('pt-BR')}
+                          </p>
+                        ) : (
+                          <p className="text-sm text-gray-500">⏳ Aguardando check-in</p>
+                        )}
+                      </div>
+                      
+                      <div className="bg-gray-50 p-3 rounded">
+                        <p className="text-sm font-semibold text-gray-700">Check-out:</p>
+                        {voucherData.checkoutRealizadoEm ? (
+                          <p className="text-sm text-green-600">
+                            ✓ Realizado em {new Date(voucherData.checkoutRealizadoEm).toLocaleString('pt-BR')}
+                          </p>
+                        ) : (
+                          <p className="text-sm text-gray-500">⏳ Aguardando check-out</p>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Botões de Ação */}
+                    <div className="flex justify-center gap-3 pt-4">
+                      <button
+                        onClick={() => window.open(`/voucher/view`, '_blank')}
+                        className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                      >
+                        📄 Ver Voucher Completo
+                      </button>
+                      <button
+                        onClick={() => window.print()}
+                        className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                      >
+                        🖨️ Imprimir
+                      </button>
+                    </div>
+                    
+                    {/* Instruções */}
+                    <div className="bg-blue-50 border border-blue-200 rounded p-4 text-sm mt-4">
+                      <p className="font-semibold text-blue-900 mb-2">📋 Instruções:</p>
+                      <ul className="list-disc list-inside space-y-1 text-gray-700">
+                        <li>Apresente este voucher na recepção do hotel</li>
+                        <li>Leve um documento de identidade com foto</li>
+                        <li>Check-in a partir das 14h</li>
+                        <li>Check-out até às 12h</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="text-6xl mb-4">📄</div>
+                    <p className="text-gray-600 mb-2">Voucher não disponível</p>
+                    <p className="text-sm text-gray-500">
+                      O voucher será gerado automaticamente após a confirmação do pagamento.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Footer */}
+            <div className="p-4 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCheckinModal(false)
+                  setSelectedReserva(null)
+                  setCheckinModalTab('dados')
+                  setVoucherData(null)
+                }}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+              >
+                Cancelar
+              </button>
+              {checkinModalTab === 'dados' && (
+                <button
+                  onClick={handleCheckin}
+                  disabled={checkinLoadingId === selectedReserva?.id}
+                  className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                  {checkinLoadingId === selectedReserva?.id ? 'Processando...' : '✓ Confirmar Check-in'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* ============= MODAL DE CHECK-OUT ============= */}
+      {showCheckoutModal && selectedReserva && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="bg-real-blue text-white p-4 rounded-t-lg">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                🚪 Check-out
+              </h2>
+              <p className="text-sm opacity-80">Confirme os dados para finalizar a hospedagem</p>
+            </div>
+            
+            {/* Resumo da Estadia */}
+            <div className="p-4 border-b bg-gray-50">
+              <h3 className="font-semibold text-gray-700 mb-2">📋 Resumo da Estadia</h3>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-gray-500">Código:</span>
+                  <span className="ml-2 font-medium">{selectedReserva.codigo_reserva || `#${selectedReserva.id}`}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Status:</span>
+                  <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-800 rounded text-xs">{selectedReserva.status}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Cliente:</span>
+                  <span className="ml-2 font-medium">{selectedReserva.cliente_nome}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Quarto:</span>
+                  <span className="ml-2 font-medium">{selectedReserva.quarto_numero} ({selectedReserva.tipo_suite})</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Check-in:</span>
+                  <span className="ml-2">{selectedReserva.checkin_real ? new Date(selectedReserva.checkin_real).toLocaleString('pt-BR') : selectedReserva.checkin_previsto ? new Date(selectedReserva.checkin_previsto).toLocaleDateString('pt-BR') : '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Diárias:</span>
+                  <span className="ml-2">{selectedReserva.num_diarias || '-'}</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Valores */}
+            <div className="p-4 border-b">
+              <h3 className="font-semibold text-gray-700 mb-3">💰 Resumo Financeiro</h3>
+              
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Hospedagem ({selectedReserva.num_diarias || 0} diárias)</span>
+                  <span>R$ {Number(selectedReserva.valor_total || 0).toFixed(2)}</span>
+                </div>
+                
+                <div className="flex justify-between items-center">
+                  <label className="text-gray-600">Consumo Frigobar</label>
+                  <div className="flex items-center gap-2">
+                    <span>R$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={checkoutForm.consumo_frigobar}
+                      onChange={(e) => setCheckoutForm({ ...checkoutForm, consumo_frigobar: parseFloat(e.target.value) || 0 })}
+                      className="w-24 p-1 border rounded text-right"
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex justify-between items-center">
+                  <label className="text-gray-600">Serviços Extras</label>
+                  <div className="flex items-center gap-2">
+                    <span>R$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={checkoutForm.servicos_extras}
+                      onChange={(e) => setCheckoutForm({ ...checkoutForm, servicos_extras: parseFloat(e.target.value) || 0 })}
+                      className="w-24 p-1 border rounded text-right"
+                    />
+                  </div>
+                </div>
+                
+                <div className="border-t pt-2 mt-2 flex justify-between font-bold text-lg">
+                  <span>TOTAL A PAGAR</span>
+                  <span className="text-green-600">
+                    R$ {(
+                      Number(selectedReserva.valor_total || 0) + 
+                      Number(checkoutForm.consumo_frigobar || 0) + 
+                      Number(checkoutForm.servicos_extras || 0)
+                    ).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+              
+              {/* Pontos estimados */}
+              <div className="mt-3 p-2 bg-yellow-50 rounded border border-yellow-200">
+                <div className="flex items-center gap-2 text-yellow-800">
+                  <span>🎯</span>
+                  <span className="text-sm">
+                    Pontos estimados: <strong>{Math.floor((selectedReserva.num_diarias || 0) / 2) * 3} pontos</strong>
+                    <span className="text-xs ml-1">(sujeito a validação antifraude)</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Avaliação */}
+            <div className="p-4 space-y-3">
+              <h3 className="font-semibold text-gray-700">⭐ Avaliação do Hóspede</h3>
+              
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Como foi a experiência? (1-5)</label>
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5].map((nota) => (
+                    <button
+                      key={nota}
+                      type="button"
+                      onClick={() => setCheckoutForm({ ...checkoutForm, avaliacao: nota })}
+                      className={`w-10 h-10 rounded-full text-xl transition-all ${
+                        checkoutForm.avaliacao >= nota 
+                          ? 'bg-yellow-400 text-white' 
+                          : 'bg-gray-200 text-gray-400 hover:bg-gray-300'
+                      }`}
+                    >
+                      ⭐
+                    </button>
+                  ))}
+                  <span className="ml-2 self-center text-gray-600">
+                    {checkoutForm.avaliacao === 5 ? 'Excelente!' : 
+                     checkoutForm.avaliacao === 4 ? 'Muito bom' : 
+                     checkoutForm.avaliacao === 3 ? 'Bom' : 
+                     checkoutForm.avaliacao === 2 ? 'Regular' : 'Ruim'}
+                  </span>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Comentário (opcional)</label>
+                <textarea
+                  placeholder="O que o hóspede achou da estadia?"
+                  value={checkoutForm.comentario_avaliacao}
+                  onChange={(e) => setCheckoutForm({ ...checkoutForm, comentario_avaliacao: e.target.value })}
+                  className="w-full p-2 border rounded resize-none"
+                  rows={2}
+                />
+              </div>
+            </div>
+            
+            {/* Footer */}
+            <div className="p-4 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCheckoutModal(false)
+                  setSelectedReserva(null)
+                }}
+                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleCheckout}
+                disabled={checkoutLoadingId === selectedReserva?.id}
+                className="px-4 py-2 bg-real-blue text-white rounded hover:bg-blue-800 disabled:opacity-50 font-semibold"
+              >
+                {checkoutLoadingId === selectedReserva?.id ? '⏳ Processando...' : '✅ Confirmar Check-out'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Modal de Detalhes da Reserva */}
+      {showReservaDetailsModal && reservaDetalhes && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-6 rounded-t-lg">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-2xl font-bold mb-2">📋 Detalhes da Reserva</h2>
+                  <p className="text-blue-100">Código: {reservaDetalhes.codigo_reserva || `#${reservaDetalhes.id}`}</p>
+                </div>
+                <button
+                  onClick={() => setShowReservaDetailsModal(false)}
+                  className="text-white hover:text-gray-200 text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Conteúdo */}
+            <div className="p-6 space-y-6">
+              {/* Status Badge Grande */}
+              <div className="text-center">
+                <span className={`inline-block px-6 py-3 rounded-lg text-lg font-bold ${
+                  reservaDetalhes.status === 'HOSPEDADO' ? 'bg-blue-100 text-blue-800' :
+                  reservaDetalhes.status === 'CHECKED_OUT' ? 'bg-green-100 text-green-800' :
+                  reservaDetalhes.status === 'CANCELADO' ? 'bg-red-100 text-red-800' :
+                  reservaDetalhes.status === 'CONFIRMADA' ? 'bg-purple-100 text-purple-800' :
+                  'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {reservaDetalhes.status}
+                </span>
+              </div>
+
+              {/* Informações do Cliente */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-lg font-bold text-gray-800 mb-3">👤 Cliente</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Nome</p>
+                    <p className="font-medium text-gray-900">{reservaDetalhes.cliente_nome}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">ID do Cliente</p>
+                    <p className="font-medium text-gray-900">#{reservaDetalhes.cliente_id}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Informações do Quarto */}
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <h3 className="text-lg font-bold text-gray-800 mb-3">🛏️ Acomodação</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Quarto</p>
+                    <p className="font-medium text-gray-900 text-xl">{reservaDetalhes.quarto_numero}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Tipo de Suíte</p>
+                    <p className="font-medium text-gray-900">{reservaDetalhes.tipo_suite}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Diárias</p>
+                    <p className="font-medium text-gray-900">{reservaDetalhes.num_diarias} noite(s)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Datas */}
+              <div className="bg-green-50 p-4 rounded-lg">
+                <h3 className="text-lg font-bold text-gray-800 mb-3">📅 Período</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Check-in Previsto</p>
+                    <p className="font-medium text-gray-900">
+                      {reservaDetalhes.checkin_previsto ? new Date(reservaDetalhes.checkin_previsto).toLocaleDateString('pt-BR') : '-'}
+                    </p>
+                    {reservaDetalhes.checkin_realizado && (
+                      <>
+                        <p className="text-xs text-green-600 mt-1">✓ Realizado em:</p>
+                        <p className="text-sm text-green-700 font-semibold">
+                          {new Date(reservaDetalhes.checkin_realizado).toLocaleString('pt-BR')}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Check-out Previsto</p>
+                    <p className="font-medium text-gray-900">
+                      {reservaDetalhes.checkout_previsto ? new Date(reservaDetalhes.checkout_previsto).toLocaleDateString('pt-BR') : '-'}
+                    </p>
+                    {reservaDetalhes.checkout_realizado && (
+                      <>
+                        <p className="text-xs text-green-600 mt-1">✓ Realizado em:</p>
+                        <p className="text-sm text-green-700 font-semibold">
+                          {new Date(reservaDetalhes.checkout_realizado).toLocaleString('pt-BR')}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Valores */}
+              <div className="bg-yellow-50 p-4 rounded-lg border-2 border-yellow-200">
+                <h3 className="text-lg font-bold text-gray-800 mb-3">💰 Valores</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Valor da Diária</p>
+                    <p className="font-medium text-gray-900">R$ {Number(reservaDetalhes.valor_diaria || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Número de Diárias</p>
+                    <p className="font-medium text-gray-900">{reservaDetalhes.num_diarias}x</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Valor Total</p>
+                    <p className="text-2xl font-bold text-green-600">
+                      R$ {Number(reservaDetalhes.valor_total || 0).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pagamentos */}
+              {reservaDetalhes.pagamentos && reservaDetalhes.pagamentos.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800 mb-3">💳 Pagamentos</h3>
+                  <div className="space-y-2">
+                    {reservaDetalhes.pagamentos.map((pag, idx) => (
+                      <div key={idx} className="bg-white border border-gray-200 p-3 rounded-lg flex justify-between items-center">
+                        <div>
+                          <p className="font-semibold text-gray-900">
+                            {pag.metodo_pagamento || 'Não especificado'}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {pag.created_at ? new Date(pag.created_at).toLocaleString('pt-BR') : '-'}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-green-600">
+                            R$ {Number(pag.valor || 0).toFixed(2)}
+                          </p>
+                          <span className={`text-xs px-2 py-1 rounded ${
+                            pag.status === 'APROVADO' ? 'bg-green-100 text-green-800' :
+                            pag.status === 'PENDENTE' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-red-100 text-red-800'
+                          }`}>
+                            {pag.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Timeline */}
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <h3 className="text-lg font-bold text-gray-800 mb-3">⏱️ Timeline</h3>
+                <div className="space-y-2">
+                  <div className="flex items-start space-x-3">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
+                    <div>
+                      <p className="text-sm font-medium">Reserva Criada</p>
+                      <p className="text-xs text-gray-600">
+                        {reservaDetalhes.created_at ? new Date(reservaDetalhes.created_at).toLocaleString('pt-BR') : 'Data não disponível'}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {reservaDetalhes.checkin_realizado && (
+                    <div className="flex items-start space-x-3">
+                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2"></div>
+                      <div>
+                        <p className="text-sm font-medium">Check-in Realizado</p>
+                        <p className="text-xs text-gray-600">
+                          {new Date(reservaDetalhes.checkin_realizado).toLocaleString('pt-BR')}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {reservaDetalhes.checkout_realizado && (
+                    <div className="flex items-start space-x-3">
+                      <div className="w-2 h-2 bg-purple-500 rounded-full mt-2"></div>
+                      <div>
+                        <p className="text-sm font-medium">Check-out Realizado</p>
+                        <p className="text-xs text-gray-600">
+                          {new Date(reservaDetalhes.checkout_realizado).toLocaleString('pt-BR')}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 px-6 py-4 rounded-b-lg flex justify-end">
+              <button
+                onClick={() => setShowReservaDetailsModal(false)}
+                className="px-6 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 font-medium"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* ============= MODAL DE HISTÓRICO DO QUARTO ============= */}
+      {showQuartoHistoricoModal && quartoHistorico && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-purple-800 text-white p-6 rounded-t-lg">
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                📊 Histórico de Ocupação - Quarto {quartoHistorico.quarto.numero}
+              </h2>
+              <p className="text-sm opacity-80 mt-1">Tipo: {quartoHistorico.quarto.tipo_suite}</p>
+            </div>
+
+            {/* Estatísticas */}
+            <div className="grid grid-cols-5 gap-4 p-6 bg-gray-50 border-b">
+              <div className="text-center">
+                <p className="text-3xl font-bold text-purple-600">{quartoHistorico.estatisticas.total_reservas}</p>
+                <p className="text-sm text-gray-600 mt-1">Total Reservas</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-bold text-green-600">{quartoHistorico.estatisticas.concluidas}</p>
+                <p className="text-sm text-gray-600 mt-1">Concluídas</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-bold text-blue-600">{quartoHistorico.estatisticas.ativas}</p>
+                <p className="text-sm text-gray-600 mt-1">Ativas</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-bold text-red-600">{quartoHistorico.estatisticas.canceladas}</p>
+                <p className="text-sm text-gray-600 mt-1">Canceladas</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-bold text-yellow-600">{quartoHistorico.estatisticas.taxa_ocupacao_90d}%</p>
+                <p className="text-sm text-gray-600 mt-1">Ocupação 90d</p>
+              </div>
+            </div>
+
+            {/* Histórico de Reservas */}
+            <div className="p-6">
+              <h3 className="text-lg font-bold text-gray-800 mb-4">📅 Histórico de Reservas</h3>
+              
+              {quartoHistorico.historico.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p className="text-4xl mb-2">🏨</p>
+                  <p>Nenhuma reserva encontrada</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {quartoHistorico.historico.map((reserva, index) => (
+                    <div 
+                      key={reserva.id}
+                      className={`border rounded-lg p-4 ${
+                        reserva.status === 'CHECKOUT' ? 'bg-green-50 border-green-200' :
+                        reserva.status === 'CHECKIN' ? 'bg-blue-50 border-blue-200' :
+                        reserva.status === 'CONFIRMADA' ? 'bg-yellow-50 border-yellow-200' :
+                        reserva.status === 'CANCELADA' ? 'bg-red-50 border-red-200' :
+                        'bg-gray-50 border-gray-200'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="font-bold text-lg text-gray-800">
+                              #{reserva.id}
+                            </span>
+                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              reserva.status === 'CHECKOUT' ? 'bg-green-200 text-green-800' :
+                              reserva.status === 'CHECKIN' ? 'bg-blue-200 text-blue-800' :
+                              reserva.status === 'CONFIRMADA' ? 'bg-yellow-200 text-yellow-800' :
+                              reserva.status === 'CANCELADA' ? 'bg-red-200 text-red-800' :
+                              'bg-gray-200 text-gray-800'
+                            }`}>
+                              {reserva.status}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <p className="text-gray-500">Cliente</p>
+                              <p className="font-medium text-gray-900">
+                                {reserva.cliente?.nome || 'N/A'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-gray-500">Email</p>
+                              <p className="font-medium text-gray-900 text-xs">
+                                {reserva.cliente?.email || 'N/A'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-gray-500">Check-in</p>
+                              <p className="font-medium text-gray-900">
+                                {reserva.data_checkin ? new Date(reserva.data_checkin).toLocaleDateString('pt-BR') : 'N/A'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-gray-500">Check-out</p>
+                              <p className="font-medium text-gray-900">
+                                {reserva.data_checkout ? new Date(reserva.data_checkout).toLocaleDateString('pt-BR') : 'N/A'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="text-right ml-4">
+                          <p className="text-2xl font-bold text-green-600">
+                            R$ {reserva.valor_total.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {reserva.pagamentos} pagamento(s)
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 px-6 py-4 rounded-b-lg flex justify-end border-t">
+              <button
+                onClick={() => setShowQuartoHistoricoModal(false)}
+                className="px-6 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 font-medium"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Toast Container para notificações */}
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="colored"
+      />
+    </div>
+  )
+}

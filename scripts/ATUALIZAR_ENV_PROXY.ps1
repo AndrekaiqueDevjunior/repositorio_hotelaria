@@ -1,0 +1,273 @@
+# Script para Atualizar .env com Proxy Reverso Ngrok
+# Uso: .\ATUALIZAR_ENV_PROXY.ps1
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "ATUALIZACAO - NGROK PROXY REVERSO" -ForegroundColor Cyan
+Write-Host "========================================`n" -ForegroundColor Cyan
+
+# 1. Obter URL do ngrok
+Write-Host "[1] Obtendo URL do ngrok..." -ForegroundColor Yellow
+
+$ngrokUrl = ""
+
+# Tentar ler do arquivo temporario primeiro
+if (Test-Path ".ngrok_proxy_url.tmp") {
+    try {
+        $urlData = Get-Content ".ngrok_proxy_url.tmp" -Raw | ConvertFrom-Json
+        $ngrokUrl = $urlData.ngrokUrl
+        Write-Host "[OK] URL lida do arquivo temporario" -ForegroundColor Green
+        Write-Host "[INFO] URL: $ngrokUrl" -ForegroundColor Gray
+    } catch {
+        Write-Host "[AVISO] Erro ao ler arquivo temporario, usando API..." -ForegroundColor Yellow
+    }
+}
+
+# Se nao conseguiu do arquivo, tentar da API
+if (-not $ngrokUrl) {
+    try {
+        $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
+        
+        if ($tunnels.tunnels.Count -eq 0) {
+            Write-Host "[ERRO] Nenhum tunel ngrok ativo!" -ForegroundColor Red
+            Write-Host "[INFO] Execute primeiro: .\INICIAR_NGROK_PROXY_UNICO.ps1" -ForegroundColor Cyan
+            exit 1
+        }
+        
+        $ngrokUrl = $tunnels.tunnels[0].public_url
+        Write-Host "[OK] URL obtida da API do ngrok" -ForegroundColor Green
+        
+    } catch {
+        Write-Host "[ERRO] Nao foi possivel conectar ao ngrok API" -ForegroundColor Red
+        Write-Host "[INFO] Verifique se ngrok esta rodando: http://localhost:4040" -ForegroundColor Cyan
+        exit 1
+    }
+}
+
+# Validar URL
+if (-not $ngrokUrl) {
+    Write-Host "[ERRO] URL do ngrok nao encontrada" -ForegroundColor Red
+    exit 1
+}
+
+# 2. Atualizar .env do backend
+Write-Host "`n[2] Atualizando backend/.env..." -ForegroundColor Yellow
+
+$envPath = ".env"
+$backupPath = ".env.backup.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+
+if (Test-Path $envPath) {
+    # Fazer backup
+    Copy-Item $envPath $backupPath
+    Write-Host "[INFO] Backup criado: $backupPath" -ForegroundColor Gray
+    
+    # Ler conteudo atual
+    $envContent = Get-Content $envPath -Raw
+    
+    # Construir nova linha de CORS_ORIGINS (apenas a URL do ngrok)
+    $newCorsOrigins = "CORS_ORIGINS=http://localhost:3000,$ngrokUrl"
+    
+    # Atualizar CORS_ORIGINS
+    if ($envContent -match "CORS_ORIGINS=.+") {
+        $envContent = $envContent -replace "CORS_ORIGINS=.+", $newCorsOrigins
+        Write-Host "[OK] CORS_ORIGINS atualizado" -ForegroundColor Green
+    } else {
+        $envContent += "`n$newCorsOrigins"
+        Write-Host "[OK] CORS_ORIGINS adicionado" -ForegroundColor Green
+    }
+    
+    # Atualizar COOKIE_SECURE
+    if ($envContent -match "COOKIE_SECURE=.+") {
+        $envContent = $envContent -replace "COOKIE_SECURE=.+", "COOKIE_SECURE=true"
+    } else {
+        $envContent += "`nCOOKIE_SECURE=true"
+    }
+    Write-Host "[OK] COOKIE_SECURE=true" -ForegroundColor Green
+    
+    # Atualizar COOKIE_SAMESITE
+    if ($envContent -match "COOKIE_SAMESITE=.+") {
+        $envContent = $envContent -replace "COOKIE_SAMESITE=.+", "COOKIE_SAMESITE=none"
+    } else {
+        $envContent += "`nCOOKIE_SAMESITE=none"
+    }
+    Write-Host "[OK] COOKIE_SAMESITE=none" -ForegroundColor Green
+    
+    # Atualizar COOKIE_DOMAIN (vazio)
+    if ($envContent -match "COOKIE_DOMAIN=.+") {
+        $envContent = $envContent -replace "COOKIE_DOMAIN=.+", "COOKIE_DOMAIN="
+    } else {
+        $envContent += "`nCOOKIE_DOMAIN="
+    }
+    Write-Host "[OK] COOKIE_DOMAIN= (vazio)" -ForegroundColor Green
+    
+    # Salvar arquivo
+    $envContent | Set-Content $envPath -NoNewline
+    Write-Host "[OK] Arquivo .env atualizado" -ForegroundColor Green
+    
+} else {
+    Write-Host "[ERRO] Arquivo .env nao encontrado!" -ForegroundColor Red
+    Write-Host "[INFO] Crie a partir de: .env.ngrok.example" -ForegroundColor Cyan
+    exit 1
+}
+
+# 3. Atualizar frontend/.env.local
+Write-Host "`n[3] Atualizando frontend/.env.local..." -ForegroundColor Yellow
+
+$frontendEnvPath = "frontend/.env.local"
+$frontendBackupPath = "frontend/.env.local.backup.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+
+# Criar diretorio se nao existir
+if (-not (Test-Path "frontend")) {
+    Write-Host "[ERRO] Diretorio frontend/ nao encontrado!" -ForegroundColor Red
+    exit 1
+}
+
+# Fazer backup se arquivo existir
+if (Test-Path $frontendEnvPath) {
+    Copy-Item $frontendEnvPath $frontendBackupPath
+    Write-Host "[INFO] Backup criado: $frontendBackupPath" -ForegroundColor Gray
+    $frontendEnvContent = Get-Content $frontendEnvPath -Raw
+} else {
+    $frontendEnvContent = ""
+    Write-Host "[INFO] Criando novo arquivo .env.local" -ForegroundColor Gray
+}
+
+# Construir nova linha de NEXT_PUBLIC_API_URL (apontando para o ngrok)
+$newApiUrl = "NEXT_PUBLIC_API_URL=$ngrokUrl/api/v1"
+
+# Atualizar ou adicionar
+if ($frontendEnvContent -match "NEXT_PUBLIC_API_URL=.+") {
+    $frontendEnvContent = $frontendEnvContent -replace "NEXT_PUBLIC_API_URL=.+", $newApiUrl
+    Write-Host "[OK] NEXT_PUBLIC_API_URL atualizado" -ForegroundColor Green
+} else {
+    if ($frontendEnvContent) {
+        $frontendEnvContent += "`n$newApiUrl"
+    } else {
+        $frontendEnvContent = $newApiUrl
+    }
+    Write-Host "[OK] NEXT_PUBLIC_API_URL adicionado" -ForegroundColor Green
+}
+
+# Salvar arquivo
+$frontendEnvContent | Set-Content $frontendEnvPath -NoNewline
+Write-Host "[OK] Arquivo frontend/.env.local atualizado" -ForegroundColor Green
+
+# 4. Reiniciar containers Docker
+Write-Host "`n[4] Reiniciando containers Docker..." -ForegroundColor Yellow
+
+try {
+    # Parar containers
+    Write-Host "[INFO] Parando containers..." -ForegroundColor Gray
+    docker-compose stop backend frontend 2>&1 | Out-Null
+    
+    Start-Sleep -Seconds 2
+    
+    # Iniciar containers
+    Write-Host "[INFO] Iniciando containers..." -ForegroundColor Gray
+    docker-compose up -d backend frontend 2>&1 | Out-Null
+    
+    Start-Sleep -Seconds 3
+    
+    Write-Host "[OK] Containers reiniciados" -ForegroundColor Green
+    
+} catch {
+    Write-Host "[ERRO] Falha ao reiniciar containers: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+
+# 5. Verificar se servicos estao respondendo
+Write-Host "`n[5] Verificando servicos..." -ForegroundColor Yellow
+
+Start-Sleep -Seconds 5
+
+$backendOk = Test-NetConnection -ComputerName localhost -Port 8000 -InformationLevel Quiet -WarningAction SilentlyContinue
+$frontendOk = Test-NetConnection -ComputerName localhost -Port 3000 -InformationLevel Quiet -WarningAction SilentlyContinue
+$proxyOk = Test-NetConnection -ComputerName localhost -Port 9000 -InformationLevel Quiet -WarningAction SilentlyContinue
+
+if ($backendOk) {
+    Write-Host "[OK] Backend respondendo na porta 8000" -ForegroundColor Green
+} else {
+    Write-Host "[AVISO] Backend nao esta respondendo" -ForegroundColor Yellow
+}
+
+if ($frontendOk) {
+    Write-Host "[OK] Frontend respondendo na porta 3000" -ForegroundColor Green
+} else {
+    Write-Host "[AVISO] Frontend nao esta respondendo" -ForegroundColor Yellow
+}
+
+if ($proxyOk) {
+    Write-Host "[OK] Proxy respondendo na porta 9000" -ForegroundColor Green
+} else {
+    Write-Host "[AVISO] Proxy nao esta respondendo" -ForegroundColor Yellow
+}
+
+# 6. Testar URLs do ngrok
+Write-Host "`n[6] Testando URLs do ngrok..." -ForegroundColor Yellow
+
+try {
+    # Testar frontend
+    $ngrokFrontendTest = Invoke-WebRequest -Uri "$ngrokUrl" -Method GET -Headers @{
+        "ngrok-skip-browser-warning" = "true"
+    } -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    
+    if ($ngrokFrontendTest.StatusCode -eq 200) {
+        Write-Host "[OK] Frontend ngrok respondendo" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[AVISO] Frontend ngrok nao respondeu: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+try {
+    # Testar backend
+    $ngrokBackendTest = Invoke-WebRequest -Uri "$ngrokUrl/api/v1/health" -Method GET -Headers @{
+        "ngrok-skip-browser-warning" = "true"
+    } -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    
+    if ($ngrokBackendTest.StatusCode -eq 200) {
+        Write-Host "[OK] Backend ngrok respondendo" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[AVISO] Backend ngrok nao respondeu: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+# 7. Resumo final
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "CONFIGURACAO CONCLUIDA" -ForegroundColor Cyan
+Write-Host "========================================`n" -ForegroundColor Cyan
+
+Write-Host "URL Ngrok (Proxy Reverso):" -ForegroundColor Yellow
+Write-Host "  $ngrokUrl" -ForegroundColor White
+
+Write-Host "`nAcesso:" -ForegroundColor Yellow
+Write-Host "  Frontend: $ngrokUrl" -ForegroundColor White
+Write-Host "  Backend:  $ngrokUrl/api/v1/*" -ForegroundColor White
+
+Write-Host "`nArquivos Atualizados:" -ForegroundColor Yellow
+Write-Host "  .env -> CORS_ORIGINS, COOKIE_*" -ForegroundColor White
+Write-Host "  frontend/.env.local -> NEXT_PUBLIC_API_URL" -ForegroundColor White
+
+Write-Host "`nContainers Docker:" -ForegroundColor Yellow
+Write-Host "  Backend:  $(if($backendOk){'RODANDO'}else{'VERIFICAR'})" -ForegroundColor $(if($backendOk){'Green'}else{'Yellow'})
+Write-Host "  Frontend: $(if($frontendOk){'RODANDO'}else{'VERIFICAR'})" -ForegroundColor $(if($frontendOk){'Green'}else{'Yellow'})
+Write-Host "  Proxy:    $(if($proxyOk){'RODANDO'}else{'VERIFICAR'})" -ForegroundColor $(if($proxyOk){'Green'}else{'Yellow'})
+
+Write-Host "`nProximo Passo:" -ForegroundColor Yellow
+Write-Host "  Acesse: $ngrokUrl" -ForegroundColor White
+Write-Host "  Login: admin@hotelreal.com.br / admin123" -ForegroundColor Gray
+
+Write-Host "`nBackups Criados:" -ForegroundColor Yellow
+Write-Host "  $backupPath" -ForegroundColor Gray
+Write-Host "  $frontendBackupPath" -ForegroundColor Gray
+
+Write-Host "`nComandos Uteis:" -ForegroundColor Yellow
+Write-Host "  Validar: .\VALIDAR_NGROK.ps1" -ForegroundColor Gray
+Write-Host "  Testar:  .\TESTAR_AUTENTICACAO_NGROK.ps1" -ForegroundColor Gray
+Write-Host "  Parar:   .\PARAR_NGROK.ps1" -ForegroundColor Gray
+
+Write-Host "`n========================================`n" -ForegroundColor Cyan
+
+# Limpar arquivo temporario
+if (Test-Path ".ngrok_proxy_url.tmp") {
+    Remove-Item ".ngrok_proxy_url.tmp" -Force
+    Write-Host "[INFO] Arquivo temporario removido" -ForegroundColor Gray
+}

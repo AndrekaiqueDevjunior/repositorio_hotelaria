@@ -1,0 +1,41 @@
+# ========================================
+# COMANDOS PARA EXECUTAR MANUALMENTE NA VPS
+# ========================================
+# 
+# Abra o PowerShell ou CMD e execute estes comandos um por vez
+# Você vai precisar digitar a senha da VPS em cada comando
+#
+
+# 1. CONECTAR NA VPS
+ssh root@72.61.27.152
+
+# Depois de conectado, execute os comandos abaixo DENTRO da VPS:
+
+# 2. IR PARA O DIRETÓRIO DO PROJETO
+cd /opt/hotel
+
+# 3. PARAR TODOS OS CONTAINERS
+docker-compose -f docker-compose.production.yml down
+
+# 4. SUBIR TODOS OS CONTAINERS NOVAMENTE
+docker-compose -f docker-compose.production.yml up -d
+
+# 5. AGUARDAR 30 SEGUNDOS
+sleep 30
+
+# 6. VERIFICAR STATUS DOS CONTAINERS
+docker ps
+
+# 7. VERIFICAR LOGS DO FRONTEND
+docker logs --tail 30 hotel_frontend_prod
+
+# 8. VERIFICAR LOGS DO NGINX
+docker logs --tail 30 hotel_nginx_proxy_prod
+
+# 9. TESTAR SE O SITE ESTÁ RESPONDENDO
+curl http://localhost:8080
+
+# ========================================
+# APÓS EXECUTAR, ACESSE NO NAVEGADOR:
+# http://72.61.27.152:8080
+# ========================================

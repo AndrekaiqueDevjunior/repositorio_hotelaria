@@ -1,0 +1,2 @@
+ALTER TABLE IF EXISTS funcionarios
+  ADD COLUMN IF NOT EXISTS foto_url TEXT;

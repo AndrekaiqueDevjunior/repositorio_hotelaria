@@ -1,0 +1,411 @@
+generator client {
+  provider                    = "prisma-client-py"
+  recursive_type_depth        = "-1"
+  enable_experimental_decimal = "true"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS - Validação de valores
+// ============================================
+
+enum StatusUsuario {
+  ATIVO
+  INATIVO
+  BLOQUEADO
+}
+
+enum PerfilUsuario {
+  ADMIN
+  GERENTE
+  FUNCIONARIO
+  RECEPCAO
+}
+
+enum TipoHospede {
+  NORMAL
+  VIP
+  CORPORATIVO
+  FIDELIDADE
+}
+
+enum StatusCliente {
+  ATIVO
+  INATIVO
+  BLOQUEADO
+}
+
+enum TipoSuite {
+  LUXO
+  MASTER
+  REAL
+}
+
+enum StatusQuarto {
+  LIVRE
+  OCUPADO
+  MANUTENCAO
+  BLOQUEADO
+}
+
+enum StatusReserva {
+  PENDENTE
+  CONFIRMADA
+  CHECKIN
+  CHECKED_OUT
+  CANCELADO
+  NO_SHOW
+}
+
+enum MetodoPagamento {
+  DINHEIRO
+  DEBITO
+  CREDITO
+  PIX
+  TRANSFERENCIA
+  BOLETO
+}
+
+enum StatusPagamento {
+  PENDENTE
+  PROCESSANDO
+  APROVADO
+  RECUSADO
+  CANCELADO
+  ESTORNADO
+}
+
+enum TipoTransacaoPontos {
+  CREDITO
+  DEBITO
+  AJUSTE
+  ESTORNO
+}
+
+enum OrigemPontos {
+  RESERVA
+  AJUSTE_MANUAL
+  CONVITE
+  RESGATE
+  EXPIRACAO
+  CANCELAMENTO
+}
+
+enum TipoNotificacao {
+  INFO
+  SUCESSO
+  AVISO
+  ERRO
+  URGENTE
+}
+
+// ============================================
+// MODELOS PRINCIPAIS
+// ============================================
+
+model Usuario {
+  id        Int            @id @default(autoincrement())
+  nome      String
+  email     String         @unique
+  senhaHash String         @map("senha_hash")
+  perfil    PerfilUsuario  @default(FUNCIONARIO)
+  status    StatusUsuario  @default(ATIVO)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@index([email])
+  @@index([status])
+  @@map("usuarios")
+}
+
+model Cliente {
+  id                  Int                  @id @default(autoincrement())
+  nomeCompleto        String               @map("nome_completo")
+  documento           String               @unique
+  telefone            String?
+  email               String?
+  dataNascimento      DateTime?            @map("data_nascimento")
+  nacionalidade       String?
+  enderecoCompleto    String?              @map("endereco_completo")
+  cidade              String?
+  estado              String?
+  pais                String?
+  observacoes         String?
+  tipoHospede         TipoHospede          @default(NORMAL) @map("tipo_hospede")
+  nivelFidelidade     Int                  @default(0) @map("nivel_fidelidade")
+  totalGasto          Decimal              @default(0) @map("total_gasto") @db.Decimal(12, 2)
+  totalReservas       Int                  @default(0) @map("total_reservas")
+  ultimaVisita        DateTime?            @map("ultima_visita")
+  status              StatusCliente        @default(ATIVO)
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  reservas            Reserva[]
+  pagamentos          Pagamento[]
+  operacoesAntifraude OperacaoAntifraude[]
+  usuarioPontos       UsuarioPontos?
+  transacoesPontos    TransacaoPontos[]
+  convitesGerados     Convite[]            @relation("ConvitesGerados")
+  convitesUsados      ConviteUso[]         @relation("ConvitesUsados")
+
+  @@unique([nomeCompleto, documento])
+  @@index([documento])
+  @@index([email])
+  @@index([tipoHospede])
+  @@index([nivelFidelidade])
+  @@index([totalGasto])
+  @@index([status])
+  @@index([createdAt])
+  @@map("clientes")
+}
+
+model Quarto {
+  id        Int          @id @default(autoincrement())
+  numero    String       @unique
+  tipoSuite TipoSuite    @map("tipo_suite")
+  status    StatusQuarto @default(LIVRE)
+  andar     Int?
+  capacidade Int         @default(2)
+  descricao String?
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  reservas  Reserva[]
+
+  @@index([status])
+  @@index([tipoSuite])
+  @@index([numero])
+  @@map("quartos")
+}
+
+model Reserva {
+  id               Int            @id @default(autoincrement())
+  codigoReserva    String         @unique @map("codigo_reserva")
+  clienteId        Int            @map("cliente_id")
+  quartoId         Int            @map("quarto_id")
+  status           StatusReserva  @default(PENDENTE)
+  checkinPrevisto  DateTime       @map("checkin_previsto")
+  checkoutPrevisto DateTime       @map("checkout_previsto")
+  checkinReal      DateTime?      @map("checkin_real")
+  checkoutReal     DateTime?      @map("checkout_real")
+  valorDiaria      Decimal        @map("valor_diaria") @db.Decimal(10, 2)
+  numDiarias       Int            @map("num_diarias")
+  numHospedes      Int            @default(1) @map("num_hospedes")
+  numCriancas      Int            @default(0) @map("num_criancas")
+  observacoes      String?
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  cliente          Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  quarto           Quarto            @relation(fields: [quartoId], references: [id], onDelete: Restrict)
+  pagamentos       Pagamento[]
+  notificacoes     Notificacao[]
+  transacoesPontos TransacaoPontos[]
+
+  @@index([clienteId])
+  @@index([quartoId])
+  @@index([status])
+  @@index([checkinPrevisto])
+  @@index([checkoutPrevisto])
+  @@index([codigoReserva])
+  @@index([createdAt])
+  @@map("reservas")
+}
+
+model Funcionario {
+  id                  Int               @id @default(autoincrement())
+  nome                String
+  email               String            @unique
+  senha               String
+  perfil              PerfilUsuario     @default(FUNCIONARIO)
+  status              StatusUsuario     @default(ATIVO)
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  transacoesPontos    TransacaoPontos[]
+
+  @@index([email])
+  @@index([status])
+  @@map("funcionarios")
+}
+
+model Pagamento {
+  id                  Int                  @id @default(autoincrement())
+  reservaId           Int                  @map("reserva_id")
+  clienteId           Int                  @map("cliente_id")
+  valor               Decimal              @db.Decimal(10, 2)
+  metodo              MetodoPagamento
+  parcelas            Int?
+  status              StatusPagamento      @default(PENDENTE)
+  cieloPaymentId      String?              @map("cielo_payment_id")
+  cartaoNumero        String?              @map("cartao_numero")
+  cartaoValidade      String?              @map("cartao_validade")
+  cartaoNome          String?              @map("cartao_nome")
+  cartaoToken         String?              @map("cartao_token") @db.VarChar(255)
+  dadosMascarados     Boolean              @default(false) @map("dados_mascarados")
+  urlPagamento        String?              @map("url_pagamento")
+  dataAprovacao       DateTime?            @map("data_aprovacao")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  cliente             Cliente              @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  reserva             Reserva              @relation(fields: [reservaId], references: [id], onDelete: Restrict)
+  notificacoes        Notificacao[]
+  operacoesAntifraude OperacaoAntifraude[]
+
+  @@index([reservaId])
+  @@index([clienteId])
+  @@index([status])
+  @@index([metodo])
+  @@index([cartaoToken])
+  @@index([createdAt])
+  @@map("pagamentos")
+}
+
+model OperacaoAntifraude {
+  id          Int              @id @default(autoincrement())
+  pagamentoId Int              @map("pagamento_id")
+  clienteId   Int              @map("cliente_id")
+  status      StatusPagamento  @default(PENDENTE)
+  riskScore   Int?             @map("risk_score")
+  fatores     String?
+  analiseEm   DateTime?        @map("analise_em")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  cliente     Cliente          @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  pagamento   Pagamento        @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
+
+  @@index([pagamentoId])
+  @@index([clienteId])
+  @@index([status])
+  @@map("operacoes_antifraude")
+}
+
+// ============================================
+// SISTEMA DE PONTOS
+// ============================================
+
+model UsuarioPontos {
+  id         Int               @id @default(autoincrement())
+  clienteId  Int               @unique @map("cliente_id")
+  saldo      Int               @default(0)
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  cliente    Cliente           @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  transacoes TransacaoPontos[]
+
+  @@index([saldo])
+  @@map("usuarios_pontos")
+}
+
+model TransacaoPontos {
+  id              Int                 @id @default(autoincrement())
+  clienteId       Int                 @map("cliente_id")
+  usuarioId       Int                 @map("usuario_id")
+  funcionarioId   Int?                @map("funcionario_id")
+  reservaId       Int?                @map("reserva_id")
+  tipo            TipoTransacaoPontos
+  origem          OrigemPontos
+  pontos          Int
+  saldoAnterior   Int                 @map("saldo_anterior")
+  saldoPosterior  Int                 @map("saldo_posterior")
+  motivo          String?
+  createdAt       DateTime            @default(now()) @map("created_at")
+  
+  // Relacionamentos
+  cliente         Cliente             @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  usuario         UsuarioPontos       @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  funcionario     Funcionario?        @relation(fields: [funcionarioId], references: [id], onDelete: SetNull)
+  reserva         Reserva?            @relation(fields: [reservaId], references: [id], onDelete: SetNull)
+
+  @@index([clienteId])
+  @@index([usuarioId])
+  @@index([funcionarioId])
+  @@index([reservaId])
+  @@index([tipo])
+  @@index([origem])
+  @@index([createdAt])
+  @@map("transacoes_pontos")
+}
+
+model Convite {
+  id              Int          @id @default(autoincrement())
+  codigo          String       @unique
+  convidanteId    Int          @map("convidante_id")
+  usosMaximos     Int          @default(5) @map("usos_maximos")
+  usosRestantes   Int          @default(5) @map("usos_restantes")
+  ativo           Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @map("created_at")
+  expiresAt       DateTime?    @map("expires_at")
+  
+  // Relacionamentos
+  convidante      Cliente      @relation("ConvitesGerados", fields: [convidanteId], references: [id], onDelete: Restrict)
+  usos            ConviteUso[]
+
+  @@index([codigo])
+  @@index([convidanteId])
+  @@index([ativo])
+  @@index([expiresAt])
+  @@map("convites")
+}
+
+model ConviteUso {
+  id            Int      @id @default(autoincrement())
+  conviteId     Int      @map("convite_id")
+  convidadoId   Int      @map("convidado_id")
+  pontosGanhos  Int      @map("pontos_ganhos")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  // Relacionamentos
+  convite       Convite  @relation(fields: [conviteId], references: [id], onDelete: Cascade)
+  convidado     Cliente  @relation("ConvitesUsados", fields: [convidadoId], references: [id], onDelete: Restrict)
+
+  @@unique([conviteId, convidadoId])
+  @@index([convidadoId])
+  @@index([conviteId])
+  @@map("convite_usos")
+}
+
+// ============================================
+// NOTIFICAÇÕES
+// ============================================
+
+model Notificacao {
+  id            Int              @id @default(autoincrement())
+  titulo        String
+  mensagem      String
+  tipo          TipoNotificacao  @default(INFO)
+  categoria     String
+  perfil        String?
+  lida          Boolean          @default(false)
+  dataCriacao   DateTime         @default(now()) @map("data_criacao")
+  dataExpiracao DateTime?        @map("data_expiracao")
+  urlAcao       String?          @map("url_acao")
+  reservaId     Int?             @map("reserva_id")
+  pagamentoId   Int?             @map("pagamento_id")
+  
+  // Relacionamentos
+  pagamento     Pagamento?       @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
+  reserva       Reserva?         @relation(fields: [reservaId], references: [id], onDelete: Cascade)
+
+  @@index([perfil])
+  @@index([lida])
+  @@index([tipo])
+  @@index([dataCriacao])
+  @@index([reservaId])
+  @@index([pagamentoId])
+  @@map("notificacoes")
+}

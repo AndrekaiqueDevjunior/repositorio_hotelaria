@@ -1,0 +1,159 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Next.js
+.next/
+out/
+node_modules/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Docker
+docker-compose.override.yml
+
+# Nginx configuration files
+nginx.conf
+conf.d/
+
+# Database optimization scripts
+*.sql
+optimize_db.sql
+
+# Allow versioned DB bootstrap migrations
+!backend/migrations/
+!backend/migrations/*.sql
+
+# Prisma
+backend/prisma/migrations/
+prisma/migrations/
+*.prisma.backup
+
+# Docker
+docker-compose.override.yml
+*.dockerfile.swp
+volumes/
+data/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (gerada automaticamente)
+TESTE_*.md
+ERRO*.md
+DEBUG*.md
+MODAL_*.txt
+PROBLEMA_*.md
+CORRECAO_*.md
+REBUILD_*.md
+COMO_*.md
+PERMISSOES_*.md
+
+# Cache e build
+.cache/
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend específico
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.env.local
+frontend/.env.*.local
+frontend/package-lock.json
+
+# Backend específico
+backend/__pycache__/
+backend/.pytest_cache/
+backend/venv/
+backend/.venv/
+
+# Uploads e arquivos de usuário
+uploads/
+media/
+static/media/
+
+# Certificados e chaves
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# Backups
+*.backup
+backup/
+backups/
+
+# OS específico
+Thumbs.db
+Desktop.ini
+.Spotlight-V100
+.Trashes

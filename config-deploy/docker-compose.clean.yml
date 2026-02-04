@@ -1,0 +1,132 @@
+# ============================================================
+# docker-compose.clean.yml - Versão Limpa (sem conflitos)
+# ============================================================
+# Este compose usa um project name diferente para evitar
+# conflitos com containers Dead órfãos.
+# 
+# USO: docker-compose -p hotelcf -f docker-compose.clean.yml up -d
+# ============================================================
+
+services:
+  # ============================================================
+  # BANCO DE DADOS - PostgreSQL
+  # ============================================================
+  db:
+    image: postgres:16-alpine
+    container_name: hotelcf_db
+    restart: "no"
+    environment:
+      POSTGRES_DB: hotel_cabo_frio
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - hotelcf_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - hotelcf_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hotel_cabo_frio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ============================================================
+  # BACKEND - FastAPI
+  # ============================================================
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hotelcf_api
+    restart: "no"
+    env_file:
+      - ./backend/.env
+    environment:
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./backend:/app
+      - hotelcf_cache:/app/.cache
+    ports:
+      - "8000:8000"
+    networks:
+      - hotelcf_net
+    # Comando simplificado
+    command: >
+      sh -c "
+        echo '=== Iniciando Backend ===' &&
+        if [ -f .env ]; then
+          export \$(grep -v '^#' .env | xargs) 2>/dev/null || true
+        fi &&
+        prisma generate 2>/dev/null || echo 'Prisma generate skipped' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================
+  # FRONTEND - Next.js
+  # ============================================================
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hotelcf_web
+    restart: "no"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+      BACKEND_URL: "http://api:8000"
+      NODE_ENV: development
+      HOSTNAME: "0.0.0.0"
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - hotelcf_node_modules:/app/node_modules
+      - hotelcf_next:/app/.next
+    ports:
+      - "3000:3000"
+    networks:
+      - hotelcf_net
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    command: npm run dev
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# ============================================================
+# VOLUMES (nomes únicos para evitar conflitos)
+# ============================================================
+volumes:
+  hotelcf_pgdata:
+    driver: local
+  hotelcf_cache:
+    driver: local
+  hotelcf_node_modules:
+    driver: local
+  hotelcf_next:
+    driver: local
+
+# ============================================================
+# NETWORK (nome único)
+# ============================================================
+networks:
+  hotelcf_net:
+    driver: bridge
+    name: hotelcf_network

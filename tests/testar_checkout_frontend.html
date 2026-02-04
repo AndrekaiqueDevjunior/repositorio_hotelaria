@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Testar Checkout</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Teste de Checkout - Hotel Cabo Frio</h1>
+    
+    <div id="status"></div>
+    
+    <button onclick="testarAPI()">Testar API Backend</button>
+    <button onclick="criarReserva()">Criar Reserva Teste</button>
+    <button onclick="fazerCheckin()">Fazer Check-in</button>
+    <button onclick="verificarStatus()">Verificar Status</button>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+        let token = null;
+        let reservaId = null;
+        
+        function log(msg, type = 'info') {
+            const div = document.getElementById('status');
+            div.innerHTML += `<div class="status ${type}">${msg}</div>`;
+        }
+        
+        async function testarAPI() {
+            try {
+                const response = await fetch(`${API_BASE}/info`);
+                const data = await response.json();
+                log(`✅ API OK: ${data.name} v${data.version}`, 'success');
+            } catch (error) {
+                log(`❌ API Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function criarReserva() {
+            try {
+                // Criar sem autenticação primeiro
+                const reservaData = {
+                    cliente_id: 1,
+                    quarto_numero: "101",
+                    tipo_suite: "LUXO",
+                    checkin_previsto: "2026-01-05T15:00:00Z",
+                    checkout_previsto: "2026-01-08T12:00:00Z",
+                    valor_diaria: 350.00,
+                    num_diarias: 3
+                };
+                
+                const response = await fetch(`${API_BASE}/reservas`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(reservaData)
+                });
+                
+                if (response.ok) {
+                    const reserva = await response.json();
+                    reservaId = reserva.id;
+                    log(`✅ Reserva criada: ID ${reserva.id}, Status: ${reserva.status}`, 'success');
+                } else {
+                    const error = await response.text();
+                    log(`❌ Erro reserva: ${error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function fazerCheckin() {
+            if (!reservaId) {
+                log('❌ Crie uma reserva primeiro', 'error');
+                return;
+            }
+            
+            try {
+                const checkinData = {
+                    hospede_titular_nome: "Teste Checkout",
+                    hospede_titular_documento: "123456789",
+                    num_hospedes_real: 1,
+                    caucao_cobrada: 200.00,
+                    documentos_conferidos: true,
+                    pagamento_validado: true,
+                    termos_aceitos: true
+                };
+                
+                const response = await fetch(`${API_BASE}/reservas/${reservaId}/checkin`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(checkinData)
+                });
+                
+                if (response.ok) {
+                    log(`✅ Check-in realizado!`, 'success');
+                    setTimeout(verificarStatus, 1000);
+                } else {
+                    const error = await response.text();
+                    log(`❌ Erro check-in: ${error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function verificarStatus() {
+            if (!reservaId) {
+                log('❌ Crie uma reserva primeiro', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/reservas/${reservaId}`);
+                if (response.ok) {
+                    const reserva = await response.json();
+                    log(`📊 Status atual: ${reserva.status}`, 'info');
+                    
+                    if (reserva.status === 'HOSPEDADO') {
+                        log(`🎯 PERFEITO! Status HOSPEDADO!`, 'success');
+                        log(`📱 Abra http://localhost:3000/dashboard/reservas e procure por:`, 'info');
+                        log(`   - Código: ${reserva.codigo_reserva}`, 'info');
+                        log(`   - Status: HOSPEDADO (botão checkout deve aparecer)`, 'info');
+                    } else {
+                        log(`⚠️ Status ainda não é HOSPEDADO: ${reserva.status}`, 'error');
+                    }
+                } else {
+                    log(`❌ Erro ao verificar status`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-teste ao carregar
+        window.onload = () => {
+            log('🚀 Teste de Checkout iniciado', 'info');
+            log('📋 Passos:', 'info');
+            log('   1. Testar API Backend', 'info');
+            log('   2. Criar Reserva Teste', 'info');
+            log('   3. Fazer Check-in', 'info');
+            log('   4. Verificar Status HOSPEDADO', 'info');
+            log('   5. Abrir frontend para ver botão checkout', 'info');
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+    "backend":  "https://hotel-api-202601191619.loca.lt",
+    "timestamp":  "2026-01-19 16:19:31",
+    "frontend":  "https://hotel-app-202601191619.loca.lt",
+    "backendPort":  8000,
+    "frontendPort":  3000
+}

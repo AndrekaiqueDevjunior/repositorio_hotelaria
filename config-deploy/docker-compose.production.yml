@@ -1,0 +1,301 @@
+# ============================================================
+# DOCKER COMPOSE - PRODUÇÃO HOTEL CABO FRIO
+# ============================================================
+# Uso: docker-compose -f docker-compose.production.yml --env-file .env.production up -d
+# ============================================================
+
+version: '3.8'
+
+services:
+  # ============================================================
+  # POSTGRESQL - BANCO DE DADOS PRODUÇÃO
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: hotel_postgres_prod
+    restart: always
+    environment:
+      POSTGRES_DB: hotel_cabo_frio_prod
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+      - ./backup:/backup
+    networks:
+      - hotel_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # REDIS - CACHE E SESSÕES
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: hotel_redis_prod
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data_prod:/data
+    networks:
+      - hotel_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ============================================================
+  # BACKEND - FASTAPI PRODUÇÃO
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: hotel_backend_prod
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      FRONTEND_URL: ${FRONTEND_URL}
+      COOKIE_NAME: ${COOKIE_NAME}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      COOKIE_SECURE: ${COOKIE_SECURE}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE}
+      COOKIE_HTTPONLY: ${COOKIE_HTTPONLY}
+      COOKIE_MAX_AGE: ${COOKIE_MAX_AGE}
+      APP_ENV: ${APP_ENV}
+      DEBUG: ${DEBUG}
+      ENVIRONMENT: ${ENVIRONMENT}
+      API_V1_PREFIX: ${API_V1_PREFIX}
+      CIELO_MERCHANT_ID: ${CIELO_MERCHANT_ID}
+      CIELO_MERCHANT_KEY: ${CIELO_MERCHANT_KEY}
+      CIELO_MODE: ${CIELO_MODE}
+      CIELO_API_URL: ${CIELO_API_URL}
+      CIELO_TIMEOUT_MS: ${CIELO_TIMEOUT_MS}
+      ANTIFRAUDE_RISK_THRESHOLD_AUTO: ${ANTIFRAUDE_RISK_THRESHOLD_AUTO}
+      ANTIFRAUDE_RISK_THRESHOLD_REJECT: ${ANTIFRAUDE_RISK_THRESHOLD_REJECT}
+    volumes:
+      - backend_cache_prod:/app/.cache
+      - ./uploads:/app/uploads
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hotel_network
+    command: >
+      sh -c "
+        echo 'Ambiente: $ENVIRONMENT' &&
+        echo 'Database: OK' &&
+        echo 'Gerando Prisma Client...' &&
+        prisma generate &&
+        echo 'Executando migrações...' &&
+        prisma db push --accept-data-loss &&
+        echo 'Iniciando servidor produção...' &&
+        gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 50
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================================
+  # FRONTEND - NEXT.JS PRODUÇÃO
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: hotel_frontend_prod
+    restart: always
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://hotelreal.com.br/api
+      NEXT_PUBLIC_APP_NAME: Hotel Real Cabo Frio
+    expose:
+      - "3000"
+    networks:
+      - hotel_network
+    command: >
+      sh -c "
+        npm run build &&
+        npm start
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================================
+  # CELERY WORKER - TAREFAS BACKGROUND
+  # ============================================================
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: hotel_celery_prod
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: ${SECRET_KEY}
+      CIELO_MERCHANT_ID: ${CIELO_MERCHANT_ID}
+      CIELO_MERCHANT_KEY: ${CIELO_MERCHANT_KEY}
+      CIELO_MODE: ${CIELO_MODE}
+      CIELO_API_URL: ${CIELO_API_URL}
+    volumes:
+      - backend_cache_prod:/app/.cache
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hotel_network
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================================
+  # NGINX - PROXY REVERSO COM HTTPS
+  # ============================================================
+  nginx:
+    image: nginx:alpine
+    container_name: hotel_nginx_prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/production.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs_prod:/var/log/nginx
+      - ./uploads:/var/www/uploads:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks:
+      - hotel_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================================
+  # BACKUP AUTOMÁTICO
+  # ============================================================
+  backup:
+    image: postgres:16-alpine
+    container_name: hotel_backup_prod
+    restart: always
+    environment:
+      POSTGRES_DB: hotel_cabo_frio_prod
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_HOST: postgres
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+      - ./backup:/backup
+      - ./scripts/backup.sh:/backup.sh:ro
+    networks:
+      - hotel_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "
+        chmod +x /backup.sh &&
+        while true; do
+          echo '[$(date)] Iniciando backup agendado...' &&
+          /backup.sh &&
+          echo '[$(date)] Backup concluído. Próximo em 24h.' &&
+          sleep 86400
+        done
+      "
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+# ============================================================
+# NETWORKS
+# ============================================================
+networks:
+  hotel_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================================
+# VOLUMES
+# ============================================================
+volumes:
+  postgres_data_prod:
+    driver: local
+  redis_data_prod:
+    driver: local
+  nginx_logs_prod:
+    driver: local
+  backend_cache_prod:
+    driver: local

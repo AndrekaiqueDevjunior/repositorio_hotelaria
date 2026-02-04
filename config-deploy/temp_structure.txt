@@ -1,0 +1,200 @@
+﻿'use client'
+import { useEffect, useState } from 'react'
+import { api } from '../../../lib/api'
+import { toast, ToastContainer } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
+
+// Helper para formatar erros de validaÃ§Ã£o
+const formatErrorMessage = (error) => {
+  const detail = error.response?.data?.detail
+  
+  // Se detail Ã© um array (erros de validaÃ§Ã£o do Pydantic)
+  if (Array.isArray(detail)) {
+    return detail.map(err => {
+      if (typeof err === 'string') return err
+      if (err.msg) return String(err.msg)
+      return JSON.stringify(err)
+    }).join(', ')
+  }
+  
+  // Se detail Ã© uma string
+  if (typeof detail === 'string') {
+    return detail
+  }
+  
+  // Se detail Ã© um objeto, tentar extrair mensagem
+  if (detail && typeof detail === 'object') {
+    return JSON.stringify(detail)
+  }
+  
+  // Fallback para outras mensagens
+  return error.response?.data?.message || error.message || 'Erro desconhecido'
+}
+
+export default function Clientes() {
+  const [clientes, setClientes] = useState([])
+  const [funcionarios, setFuncionarios] = useState([])
+  const [showForm, setShowForm] = useState(false)
+  const [showFuncionarioForm, setShowFuncionarioForm] = useState(false)
+  const [activeTab, setActiveTab] = useState('admin-pontos')
+  const [editingFuncionario, setEditingFuncionario] = useState(null)
+  const [showClienteDetailsModal, setShowClienteDetailsModal] = useState(false)
+  const [clienteDetalhes, setClienteDetalhes] = useState(null)
+  const [showClienteEditModal, setShowClienteEditModal] = useState(false)
+  const [editingCliente, setEditingCliente] = useState(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [clienteToDelete, setClienteToDelete] = useState(null)
+  const [editForm, setEditForm] = useState({
+    nome_completo: '',
+    documento: '',
+    telefone: '',
+    email: '',
+    data_nascimento: '',
+    nacionalidade: '',
+    endereco_completo: '',
+    cidade: '',
+    estado: '',
+    pais: '',
+    observacoes: ''
+  })
+
+  // Estados para Admin Pontos
+  const [clientesPontos, setClientesPontos] = useState([])
+  const [historicoAntifraude, setHistoricoAntifraude] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [showAjusteModal, setShowAjusteModal] = useState(false)
+  const [selectedCliente, setSelectedCliente] = useState(null)
+
+  // Form de ajuste manual
+  const [ajusteForm, setAjusteForm] = useState({
+    cliente_id: '',
+    pontos: '',
+    motivo: ''
+  })
+
+  // Estados para filtros e busca
+  const [filters, setFilters] = useState({
+    search: '',
+    status: '',
+    limit: 20,
+    offset: 0
+  })
+  const [totalRecords, setTotalRecords] = useState(0)
+
+  // PaginaÃ§Ã£o
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: 20,
+    total: 0
+  })
+  const [form, setForm] = useState({
+    nome_completo: '',
+    documento: '',
+    telefone: '',
+    email: '',
+    data_nascimento: '',
+    nacionalidade: 'Brasil',
+    endereco_completo: '',
+    cidade: '',
+    estado: '',
+    pais: 'Brasil',
+    observacoes: ''
+  })
+  const [formFuncionario, setFormFuncionario] = useState({
+    nome: '',
+    email: '',
+    perfil: 'ADMIN',
+    status: 'ATIVO',
+    senha: ''
+  })
+
+  useEffect(() => {
+    if (activeTab === 'clientes') {
+      loadClientes()
+    } else if (activeTab === 'funcionarios') {
+      loadFuncionarios()
+    } else if (activeTab === 'admin-pontos') {
+      loadClientesPontos()
+    } else if (activeTab === 'antifraude') {
+      loadHistoricoAntifraude()
+    }
+  }, [activeTab, pagination.page, filters])
+
+  const loadClientesPontos = async () => {
+    try {
+      setLoading(true)
+      const res = await api.get('/clientes')
+      // Buscar clientes e seus pontos
+      const clientes = res.data.clientes || []
+      setClientesPontos(clientes)
+      setError('')
+    } catch (error) {
+      console.error('Erro ao carregar clientes:', error)
+      setError('Erro ao conectar com o servidor')
+      setClientesPontos([]) // Garantir array vazio
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadHistoricoAntifraude = async () => {
+    try {
+      setLoading(true)
+      const res = await api.get('/antifraude/transacoes-suspeitas?limit=50')
+      
+      if (res.data.success) {
+        const transacoes = res.data.transacoes || []
+        // Transformar para formato esperado
+        const operacoes = transacoes.map(t => ({
+          id: t.cliente_id,
+          operacao_id: `OP-${t.cliente_id}`,
+          reserva_codigo: '-',
+          cliente_nome: `Cliente #${t.cliente_id}`,
+          cpf_hospede: t.documento || '-',
+          pontos_calculados: 0,
+          status: t.risco === 'ALTO' ? 'RECUSADO' : 'SUCESSO',
+          motivo_recusa: t.alertas?.join(', ') || '-',
+          created_at: new Date().toISOString(),
+          ...t
+        }))
+        setHistoricoAntifraude(operacoes)
+        setPagination(prev => ({
+          ...prev,
+          total: operacoes.length
+        }))
+        setError('')
+      } else {
+        setError(res.data.message || 'Erro ao carregar histÃ³rico antifraude')
+        setHistoricoAntifraude([])
+      }
+    } catch (error) {
+      console.error('Erro ao carregar histÃ³rico antifraude:', error)
+      setError('Erro ao conectar com o servidor')
+      setHistoricoAntifraude([]) // Garantir array vazio
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAjusteManual = async (e) => {
+    e.preventDefault()
+
+    // Validar limite de Â±4 pontos
+    const pontos = parseInt(ajusteForm.pontos)
+    if (Math.abs(pontos) > 4) {
+      setError('Ajuste manual limitado a Â±4 pontos')
+      return
+    }
+
+    try {
+      setLoading(true)
+      const res = await api.post('/api/pontos/ajustar', {
+        cliente_id: parseInt(ajusteForm.cliente_id),
+        pontos: pontos,
+        motivo: ajusteForm.motivo,
+        usuario_id: 1 // ID do usuÃ¡rio admin (simulado)
+      })
+
+      if (res.data.success) {
+        alert('Ajuste realizado com sucesso!')

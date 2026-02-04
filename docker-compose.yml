@@ -1,0 +1,206 @@
+services:
+  # ============================================================
+  # BANCO DE DADOS - PostgreSQL
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: hotel_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hotel_cabo_frio
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - hotel_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # BACKEND - FastAPI + Python
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hotel_backend
+    restart: unless-stopped
+    # IMPORTANTE: Usar env_file do backend para garantir DATABASE_URL do Prisma remoto
+    env_file:
+      - ./backend/.env
+    environment:
+      # Manter apenas variáveis que podem vir do docker-compose root .env
+      # DATABASE_URL será carregado do backend/.env (Prisma remoto)
+      
+      # CORS - URLs permitidas (incluir ngrok) - pode ser sobrescrito pelo backend/.env
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:8000,http://127.0.0.1:8080,http://127.0.0.1:8000}
+      
+    volumes:
+      - ./backend:/app
+      - backend_cache:/app/.cache
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hotel_network
+    command: >
+      sh -c "
+        echo 'CRITICO: Carregando .env antes de gerar Prisma Client...' &&
+        export $(cat .env | grep -v '^#' | xargs) &&
+        echo 'DATABASE_URL carregada:' &&
+        echo $DATABASE_URL | sed 's/:[^@]*@/:****@/g' &&
+        echo 'Gerando Prisma Client com DATABASE_URL correta...' &&
+        prisma generate &&
+        echo 'Pulando migrations (usando Prisma Data Platform)...' &&
+        echo 'Iniciando servidor...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # ============================================================
+  # FRONTEND - Next.js
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hotel_frontend
+    restart: unless-stopped
+    environment:
+      # CORREÇÃO: Usar URL direta do backend para evitar problemas de proxy
+      NEXT_PUBLIC_API_URL: "/api/v1"
+      # Backend URL para o proxy interno do Next.js
+      BACKEND_URL: http://backend:8000
+      NODE_ENV: development
+      # Permite acesso externo
+      HOSTNAME: "0.0.0.0"
+      # Limitar file watchers para evitar ENOMEM
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - hotel_network
+    # Aumentar memória disponível
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    command: npm run dev
+
+  # ============================================================
+  # PGADMIN - Gerenciamento do Banco (Opcional)
+  # ============================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: hotel_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@hotel.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - hotel_network
+    profiles:
+      - tools
+
+  # ============================================================
+  # NGINX - Proxy Reverso (Unifica Frontend + Backend)
+  # ============================================================
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: hotel_nginx_proxy
+    restart: unless-stopped
+    volumes:
+      - ./nginx-proxy.conf:/etc/nginx/conf.d/default.conf
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - hotel_network
+    profiles:
+      - ngrok
+
+  # ============================================================
+  # NGROK - Túnel para Acesso Externo (Frontend + Backend)
+  # ============================================================
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: hotel_ngrok
+    restart: unless-stopped
+    command:
+      - "http"
+      - "--domain=${NGROK_DOMAIN}"
+      - "nginx-proxy:80"
+    ports:
+      - "4040:4040"  # Dashboard ngrok
+    depends_on:
+      - nginx-proxy
+    networks:
+      - hotel_network
+    profiles:
+      - ngrok
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+
+  # ============================================================
+  # REDIS - Cache
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: hotel_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - hotel_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ============================================================
+# VOLUMES
+# ============================================================
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  backend_cache:
+    driver: local
+  redis_data:
+    driver: local
+
+# ============================================================
+# NETWORKS
+# ============================================================
+networks:
+  hotel_network:
+    driver: bridge
