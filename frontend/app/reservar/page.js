@@ -233,7 +233,7 @@ export default function Reservar() {
       'REAL': {
         titulo: 'Suíte Real',
         descricao: 'O máximo em luxo e exclusividade',
-        amenidades: ['Ar condicionado Split', 'TV 55" Smart', 'Frigobar premium', 'Wi-Fi 5G', 'Terraço privativo', 'Banheira', 'Sala de estar', 'Secador de cabelo']
+        amenidades: ['Ar condicionado Split', 'TV 55" Smart', 'Frigobar premium', 'Wi-Fi 5G', 'Terraço privativo', 'Banheira', 'Secador de cabelo']
       }
     }
     return descricoes[tipo] || { titulo: tipo, descricao: '', amenidades: [] }
