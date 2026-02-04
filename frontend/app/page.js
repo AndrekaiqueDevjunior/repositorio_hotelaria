@@ -219,17 +219,17 @@ const HeroSection = () => (
             Pontue a cada 2 diárias e troque por prêmios exclusivos!
           </p>
           <div className="flex flex-col md:flex-row gap-4 text-center">
-            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
+            <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🏆</div>
               <div className="font-semibold">Prêmios Exclusivos</div>
-              <div className="text-sm text-blue-100">Diárias grátis, upgrades e muito mais</div>
+              <div className="text-sm text-blue-100">Diárias grátis, Smartphone e muitos mais</div>
             </div>
-            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
+            <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">⭐</div>
               <div className="font-semibold">Acumule Pontos</div>
               <div className="text-sm text-blue-100">A cada 2 diárias você pontua</div>
             </div>
-            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
+            <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🎁</div>
               <div className="font-semibold">Resgate Fácil</div>
               <div className="text-sm text-blue-100">Troque quando quiser</div>
