@@ -223,17 +223,17 @@ export default function Reservar() {
       'LUXO': {
         titulo: 'Suíte Luxo',
         descricao: 'Conforto e elegância com vista privilegiada',
-        amenidades: ['Ar condicionado', 'TV 42"', 'Frigobar', 'Wi-Fi', 'Varanda']
+        amenidades: ['Ar condicionado', 'TV 32"', 'Frigobar', 'Wi-Fi', 'Varanda', 'Secador de cabelo']
       },
       'MASTER': {
         titulo: 'Suíte Master',
         descricao: 'Espaço amplo com acabamentos premium',
-        amenidades: ['Ar condicionado Split', 'TV 50"', 'Frigobar completo', 'Wi-Fi', 'Varanda', 'Banheira']
+        amenidades: ['Ar condicionado Split', 'TV 50"', 'Frigobar completo', 'Wi-Fi', 'Varanda', 'Secador de cabelo']
       },
       'REAL': {
         titulo: 'Suíte Real',
         descricao: 'O máximo em luxo e exclusividade',
-        amenidades: ['Ar condicionado Split', 'TV 55" Smart', 'Frigobar premium', 'Wi-Fi 5G', 'Terraço privativo', 'Jacuzzi', 'Sala de estar']
+        amenidades: ['Ar condicionado Split', 'TV 55" Smart', 'Frigobar premium', 'Wi-Fi 5G', 'Terraço privativo', 'Banheira', 'Sala de estar', 'Secador de cabelo']
       }
     }
     return descricoes[tipo] || { titulo: tipo, descricao: '', amenidades: [] }
