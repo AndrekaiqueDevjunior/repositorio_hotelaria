@@ -394,13 +394,22 @@ export default function Reservar() {
                   return (
                     <div key={tipo.tipo} className="bg-white rounded-2xl shadow-xl overflow-hidden">
                       <div className="md:flex">
-                        {/* Imagem placeholder */}
-                        <div className="md:w-1/3 bg-gradient-to-br from-blue-100 to-blue-200 p-8 flex items-center justify-center">
-                          <div className="text-center">
-                            <span className="text-6xl">
-                              {tipo.tipo === 'REAL' ? '👑' : tipo.tipo === 'MASTER' ? '⭐' : '🛏️'}
-                            </span>
-                            <p className="text-blue-800 font-bold mt-2">{info.titulo}</p>
+                        {/* Imagem da suíte */}
+                        <div className="md:w-1/3 relative h-48 md:h-auto">
+                          <img
+                            src={
+                              tipo.tipo === 'REAL' 
+                                ? '/images/suites/suite-real.png'
+                                : tipo.tipo === 'MASTER'
+                                ? '/images/suites/suite-master.png'
+                                : '/images/suites/suite-luxo.png'
+                            }
+                            alt={info.titulo}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+                          <div className="absolute bottom-4 left-4 text-white">
+                            <span className="text-2xl font-bold">{info.titulo}</span>
                           </div>
                         </div>
                         
