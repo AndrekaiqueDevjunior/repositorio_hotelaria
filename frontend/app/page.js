@@ -94,8 +94,8 @@ const testimonials = [
 
 const benefits = [
   { 
-    title: 'Sua reserva vale prêmios! 💎', 
-    desc: 'Pontue a cada 2 diárias e troque por prêmios exclusivos!', 
+    title: 'Sua reserva vale prêmios 💎', 
+    desc: 'Pontue a cada 2 diárias e troque por prêmios', 
     icon: '�' 
   },
   { 
@@ -182,7 +182,7 @@ const HeroSection = () => (
         Seu lar longe de casa
       </p>
       <p className="text-lg text-blue-100/80 mt-4 max-w-xl">
-        Sua reserva vale prêmios! 💎 Pontue a cada 2 diárias e troque por prêmios exclusivos!
+        Sua reserva vale prêmios 💎 Pontue a cada 2 diárias e troque por prêmios
       </p>
       <div className="flex flex-wrap gap-4 mt-8">
         <Link
@@ -214,14 +214,14 @@ const HeroSection = () => (
       <div className="relative h-[360px] md:h-[420px] rounded-3xl overflow-hidden border border-white/20 shadow-2xl bg-gradient-to-br from-amber-400/20 via-blue-500/20 to-purple-600/20 backdrop-blur">
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-8">
           <div className="text-6xl mb-4">💎</div>
-          <h3 className="text-3xl md:text-4xl font-bold text-center mb-4">Sua reserva vale prêmios!</h3>
+          <h3 className="text-3xl md:text-4xl font-bold text-center mb-4">Sua reserva vale prêmios</h3>
           <p className="text-xl text-center text-blue-100 mb-8 max-w-2xl">
-            Pontue a cada 2 diárias e troque por prêmios exclusivos!
+            Pontue a cada 2 diárias e troque por prêmios
           </p>
           <div className="flex flex-col md:flex-row gap-4 text-center">
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🏆</div>
-              <div className="font-semibold">Prêmios Exclusivos</div>
+              <div className="font-semibold">Prêmios</div>
               <div className="text-sm text-blue-100">Diárias grátis, Smartphone e muitos mais</div>
             </div>
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
@@ -283,7 +283,7 @@ const PrimaryActions = () => (
             <div>
               <h3 className="text-2xl font-semibold">Consultar Pontos</h3>
               <p className="text-blue-100/80 mt-2">
-                Veja benefícios exclusivos e saldo de fidelidade com seu CPF.
+                Veja benefícios e saldo de fidelidade com seu CPF.
               </p>
             </div>
           </div>
@@ -366,7 +366,7 @@ const BenefitsSection = () => (
     <div className="text-center mb-10">
       <h3 className="text-3xl md:text-4xl font-semibold text-white">Por que escolher o Hotel Real?</h3>
       <p className="text-blue-100/80 mt-3 max-w-2xl mx-auto">
-        Sua reserva vale prêmios! 💎 Pontue a cada 2 diárias e troque por prêmios exclusivos!
+        Sua reserva vale prêmios 💎 Pontue a cada 2 diárias e troque por prêmios
       </p>
     </div>
     <div className="grid md:grid-cols-3 gap-6">
@@ -397,7 +397,7 @@ const LocationSection = () => (
     <div className="text-center mb-10">
       <h3 className="text-3xl md:text-4xl font-semibold text-white">A 600 Metros da Praia</h3>
       <p className="text-blue-100/80 mt-3 max-w-2xl mx-auto">
-        Estamos pertinho de tudo que importa em Cabo Frio. Veja no mapa!
+        Estamos pertinho de tudo que importa em Cabo Frio. Veja no mapa
       </p>
     </div>
     <div className="bg-white/10 border border-white/20 backdrop-blur rounded-3xl overflow-hidden shadow-2xl">
