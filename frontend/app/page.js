@@ -40,7 +40,7 @@ const suites = [
     details: [
       'Tamanho Médio: 60m²',
       'Ocupação Máxima: 4 a 5 pessoas',
-      'Cama: Queen',
+      'Camas: Queen',
       'Ar-condicionado: 2',
       'Wi-Fi',
       'TV de tela plana: 2',
