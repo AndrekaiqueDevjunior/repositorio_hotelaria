@@ -215,18 +215,6 @@ export default function CheckinPage() {
                 </div>
               </div>
             </div>
-
-            {/* Valores */}
-            <div className="mt-6 pt-6 border-t">
-              <div className="flex justify-between items-center">
-                <div>
-                  <span className="text-gray-600">Valor Total:</span>
-                  <span className="ml-2 text-2xl font-bold text-green-600">
-                    R$ {parseFloat(reserva.valor_total).toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* Ações */}
