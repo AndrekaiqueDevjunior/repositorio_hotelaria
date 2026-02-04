@@ -560,7 +560,7 @@ export default function ConsultarPontos() {
                 <div>
                   <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
                     <p className="text-blue-800 dark:text-blue-200 text-center">
-                      💡 <strong>Acumule pontos</strong> hospedando-se no hotel para resgatar prêmios incríveis!
+                      💡 <strong>Acumule pontos</strong> no hotel para resgatar prêmios incríveis!
                     </p>
                   </div>
                   
@@ -686,9 +686,9 @@ export default function ConsultarPontos() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
               <div className="text-center p-6 bg-purple-50 dark:bg-purple-900/20 rounded-xl">
                 <div className="text-4xl mb-3">🏨</div>
-                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Hospede-se</h4>
+                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Hóspede-se</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Ganhe 1 ponto a cada R$ 10,00 gastos em hospedagem
+                  A cada duas diárias ganhe pontos
                 </p>
               </div>
               <div className="text-center p-6 bg-pink-50 dark:bg-pink-900/20 rounded-xl">
