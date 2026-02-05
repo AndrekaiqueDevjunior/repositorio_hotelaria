@@ -221,18 +221,19 @@ const HeroSection = () => (
           <div className="flex flex-col md:flex-row gap-4 text-center">
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🏆</div>
-              <div className="font-semibold">Prêmios</div>
-              <div className="text-sm text-blue-100">Diárias grátis, Smartphone e muitos mais</div>
+              <div className="font-semibold">Programa de pontos exclusivos para Hóspedes</div>
+              <div className="text-sm text-blue-100">Diárias grátis, smartphones de upgrades de quadros, cafeteiras até um super prêmio exclusivo</div>
             </div>
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">⭐</div>
               <div className="font-semibold">Acumule Pontos</div>
-              <div className="text-sm text-blue-100">A cada 2 diárias você pontua</div>
+              <div className="text-sm text-blue-100">A cada duas diárias você pontua</div>
             </div>
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🎁</div>
               <div className="font-semibold">Resgate Fácil</div>
               <div className="text-sm text-blue-100">Troque quando quiser</div>
+              <div className="text-xs text-blue-200 mt-1">Suítes superiores acumulam mais</div>
             </div>
           </div>
           <Link
