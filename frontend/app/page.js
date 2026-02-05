@@ -179,10 +179,10 @@ const HeroSection = () => (
         Hotel Real Cabo Frio
       </h2>
       <p className="text-2xl text-amber-300 mt-4 font-light">
-        Seu lar longe de casa
+        O sonho é real
       </p>
       <p className="text-lg text-blue-100/80 mt-4 max-w-xl">
-        Sua reserva vale prêmios 💎 Pontue a cada 2 diárias e troque por prêmios
+        Reserve , Acumule , conquiste
       </p>
       <div className="flex flex-wrap gap-4 mt-8">
         <Link
