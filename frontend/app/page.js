@@ -178,11 +178,11 @@ const HeroSection = () => (
       <h2 className="text-4xl md:text-5xl font-semibold text-white mt-3">
         Hotel Real Cabo Frio
       </h2>
-      <p className="text-2xl text-amber-300 mt-4 font-light">
-        O sonho é real
+      <p className="text-2xl text-amber-300 mt-4 font-light" style={{fontFamily: 'Arial, sans-serif'}}>
+        O Sonho é Real!
       </p>
-      <p className="text-lg text-blue-100/80 mt-4 max-w-xl">
-        Reserve , Acumule , conquiste
+      <p className="text-lg text-blue-100/80 mt-2 max-w-xl">
+        Reserve , Acumule , conquiste!
       </p>
       <div className="flex flex-wrap gap-4 mt-8">
         <Link
