@@ -681,28 +681,28 @@ export default function ConsultarPontos() {
         {!resultado && (
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-8 mt-8">
             <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 text-center">
-              💎 Como Funciona o Programa de Pontos
+              💎 Como funciona a jornada Real 👑
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
               <div className="text-center p-6 bg-purple-50 dark:bg-purple-900/20 rounded-xl">
                 <div className="text-4xl mb-3">🏨</div>
-                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Hóspede-se</h4>
+                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Reserve</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  A cada duas diárias ganhe pontos
+                  Reserve sua hospedagem diretamente com o hotel e comece a participar do nosso Programa de Pontos.
                 </p>
               </div>
               <div className="text-center p-6 bg-pink-50 dark:bg-pink-900/20 rounded-xl">
                 <div className="text-4xl mb-3">💰</div>
                 <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Acumule</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Seus pontos não expiram e são creditados após o check-out
+                  Quanto melhor a suíte, mais rápido você avança.
                 </p>
               </div>
               <div className="text-center p-6 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
                 <div className="text-4xl mb-3">🎁</div>
-                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Resgate</h4>
+                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Conquiste</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Use seus pontos para descontos em futuras hospedagens
+                  Troque seus pontos por prêmios, diárias grátis e chegue ao prêmio máximo: um iPhone exclusivo.
                 </p>
               </div>
             </div>

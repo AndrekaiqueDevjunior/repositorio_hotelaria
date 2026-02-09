@@ -175,10 +175,7 @@ const Header = () => (
 const HeroSection = () => (
   <section className="grid lg:grid-cols-2 gap-10 items-center pt-12">
     <div>
-      <h2 className="text-4xl md:text-5xl font-semibold text-white mt-3">
-        Hotel Real Cabo Frio
-      </h2>
-      <p className="text-2xl text-amber-300 mt-4 font-light" style={{fontFamily: 'Arial, sans-serif'}}>
+      <p className="text-2xl text-amber-300 mt-3 font-light" style={{fontFamily: 'Arial, sans-serif'}}>
         O Sonho é Real!
       </p>
       <p className="text-lg text-blue-100/80 mt-2 max-w-xl">
@@ -221,13 +218,13 @@ const HeroSection = () => (
           <div className="flex flex-col md:flex-row gap-4 text-center">
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🏆</div>
-              <div className="font-semibold">Programa de pontos exclusivos para Hóspedes</div>
-              <div className="text-sm text-blue-100">Diárias grátis, smartphones de upgrades de quadros, cafeteiras até um super prêmio exclusivo</div>
+              <div className="font-semibold">Jornada Real 👑</div>
+              <div className="text-sm text-blue-100">Desfrute de cada passo dessa jornada até chegar ao topo !</div>
             </div>
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">⭐</div>
-              <div className="font-semibold">Acumule Pontos</div>
-              <div className="text-sm text-blue-100">A cada duas diárias você pontua</div>
+              <div className="font-semibold">Acumule e conquiste</div>
+              <div className="text-sm text-blue-100">Suítes superiores acumulam mais !</div>
             </div>
             <div className="bg-white/10 backdrop-blur rounded-2xl p-4">
               <div className="text-2xl mb-2">🎁</div>
