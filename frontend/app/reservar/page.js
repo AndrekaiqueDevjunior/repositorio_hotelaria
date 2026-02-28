@@ -1,9 +1,12 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Script from 'next/script'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import { api } from '../../lib/api'
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''
 
 export default function Reservar() {
   const router = useRouter()
@@ -11,6 +14,11 @@ export default function Reservar() {
   // Estados do fluxo
   const [step, setStep] = useState(1) // 1: Datas, 2: Quarto, 3: Dados, 4: Pagamento, 5: Confirmação
   const [loading, setLoading] = useState(false)
+  const [captchaStatus, setCaptchaStatus] = useState(TURNSTILE_SITE_KEY ? 'ready' : 'disabled')
+  const [turnstileLoaded, setTurnstileLoaded] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const turnstileContainerRef = useRef(null)
+  const turnstileWidgetIdRef = useRef(null)
   
   // Dados da busca
   const [searchData, setSearchData] = useState({
@@ -107,6 +115,64 @@ export default function Reservar() {
 
     return () => clearInterval(id)
   }, [step, searchData.data_checkin, searchData.data_checkout])
+
+  const resetTurnstile = () => {
+    if (!TURNSTILE_SITE_KEY) return
+
+    try {
+      if (
+        typeof window !== 'undefined' &&
+        window.turnstile &&
+        turnstileWidgetIdRef.current !== null
+      ) {
+        window.turnstile.reset(turnstileWidgetIdRef.current)
+      }
+    } catch (error) {
+      console.error('Erro ao resetar Turnstile:', error)
+    } finally {
+      setTurnstileToken('')
+      setCaptchaStatus('ready')
+    }
+  }
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return
+    if (step !== 4) return
+    if (!turnstileLoaded) return
+    if (!turnstileContainerRef.current) return
+    if (typeof window === 'undefined' || !window.turnstile?.render) return
+
+    if (turnstileWidgetIdRef.current !== null) {
+      return
+    }
+
+    turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
+      sitekey: TURNSTILE_SITE_KEY,
+      action: 'criar_reserva_publica',
+      theme: 'light',
+      callback: (token) => {
+        setTurnstileToken(token)
+        setCaptchaStatus('verified')
+      },
+      'expired-callback': () => {
+        setTurnstileToken('')
+        setCaptchaStatus('ready')
+      },
+      'error-callback': () => {
+        setTurnstileToken('')
+        setCaptchaStatus('error')
+      }
+    })
+  }, [step, turnstileLoaded])
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return
+    if (step === 4 || step === 5) return
+
+    turnstileWidgetIdRef.current = null
+    setTurnstileToken('')
+    setCaptchaStatus('ready')
+  }, [step])
   
   // Selecionar quarto
   const selecionarQuarto = (tipo, quarto) => {
@@ -141,8 +207,26 @@ export default function Reservar() {
     }
     
     setLoading(true)
-    
+    let attemptedCaptcha = false
+    let captchaVerified = false
+
     try {
+      let antibotHeaders = {}
+      if (TURNSTILE_SITE_KEY) {
+        attemptedCaptcha = true
+        if (!turnstileToken) {
+          setCaptchaStatus('error')
+          toast.error('❌ Resolva o captcha antes de confirmar a reserva.')
+          return
+        }
+
+        setCaptchaStatus('checking')
+        antibotHeaders = {
+          'X-Turnstile-Token': turnstileToken,
+          'X-Turnstile-Action': 'criar_reserva_publica'
+        }
+      }
+
       const payload = {
         nome_completo: hospedeData.nome_completo,
         documento: cpfLimpo,
@@ -158,11 +242,17 @@ export default function Reservar() {
         metodo_pagamento: metodoPagamento
       }
       
-      const response = await api.post('/public/reservas', payload)
+      const response = await api.post(
+        '/public/reservas',
+        payload,
+        Object.keys(antibotHeaders).length ? { headers: antibotHeaders } : undefined
+      )
       
       const data = response.data
       
       if (data.success) {
+        captchaVerified = true
+        setCaptchaStatus(TURNSTILE_SITE_KEY ? 'verified' : 'disabled')
         setReservaConfirmada(data)
         toast.success('🎉 Reserva confirmada com sucesso!')
         setStep(5)
@@ -188,6 +278,9 @@ export default function Reservar() {
       // Tratamento de erros de rede
       if (error.code === 'ECONNREFUSED') {
         toast.error('❌ Servidor indisponível. Tente novamente em alguns instantes.')
+      } else if (error.response?.status === 403) {
+        setCaptchaStatus('error')
+        toast.error(`❌ ${error.response?.data?.detail || 'Captcha inválido ou expirado.'}`)
       } else if (error.response?.status === 400) {
         toast.error('❌ Dados inválidos. Verifique as informações e tente novamente.')
       } else if (error.response?.status === 500) {
@@ -196,6 +289,9 @@ export default function Reservar() {
         toast.error('❌ Erro ao conectar com o servidor. Tente novamente.')
       }
     } finally {
+      if (TURNSTILE_SITE_KEY && attemptedCaptcha && !captchaVerified) {
+        resetTurnstile()
+      }
       setLoading(false)
     }
   }
@@ -239,8 +335,53 @@ export default function Reservar() {
     return descricoes[tipo] || { titulo: tipo, descricao: '', amenidades: [] }
   }
 
+  const getCaptchaBadge = () => {
+    switch (captchaStatus) {
+      case 'checking':
+        return {
+          label: 'Validando',
+          classes: 'bg-amber-100 text-amber-800 border-amber-200',
+          description: 'Validando o captcha antes de confirmar a reserva.'
+        }
+      case 'verified':
+        return {
+          label: 'Validado',
+          classes: 'bg-green-100 text-green-800 border-green-200',
+          description: 'Captcha concluído. Você pode confirmar a reserva.'
+        }
+      case 'error':
+        return {
+          label: 'Falhou',
+          classes: 'bg-red-100 text-red-800 border-red-200',
+          description: 'O captcha falhou ou expirou. Resolva novamente antes de prosseguir.'
+        }
+      case 'disabled':
+        return {
+          label: 'Dev',
+          classes: 'bg-slate-100 text-slate-700 border-slate-200',
+          description: 'Captcha visível desativado neste ambiente. Ative as chaves para produção.'
+        }
+      case 'ready':
+      default:
+        return {
+          label: 'Pendente',
+          classes: 'bg-blue-100 text-blue-800 border-blue-200',
+          description: 'Resolva o captcha visível antes de confirmar a reserva.'
+        }
+    }
+  }
+
+  const captchaBadge = getCaptchaBadge()
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-900 via-blue-800 to-blue-900">
+      {TURNSTILE_SITE_KEY && (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+          strategy="afterInteractive"
+          onLoad={() => setTurnstileLoaded(true)}
+        />
+      )}
       {/* Header */}
       <header className="bg-white/10 backdrop-blur-md border-b border-white/20">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -584,6 +725,23 @@ export default function Reservar() {
                   rows={3}
                 />
               </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/80 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">Proteção anti-bot</p>
+                    <p className="mt-1 text-sm text-blue-800">
+                      O captcha visível será exibido na próxima etapa, imediatamente antes da confirmação da reserva.
+                    </p>
+                    <p className="mt-2 text-xs text-blue-700">
+                      Esse posicionamento evita expiração do token e reduz spam automatizado sem atrapalhar o preenchimento dos dados.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-blue-200 bg-blue-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-800">
+                    Etapa 4
+                  </span>
+                </div>
+              </div>
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -726,6 +884,33 @@ export default function Reservar() {
                   Cancelamentos podem ser feitos até 24h antes do check-in sem custo.
                 </p>
               </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 mt-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Captcha anti-bot</p>
+                    <p className="mt-1 text-sm text-slate-700">
+                      {captchaBadge.description}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-600">
+                      O captcha precisa ser resolvido antes da confirmação para bloquear bots e spam malicioso.
+                    </p>
+                  </div>
+                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${captchaBadge.classes}`}>
+                    {captchaBadge.label}
+                  </span>
+                </div>
+
+                {TURNSTILE_SITE_KEY ? (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                    <div ref={turnstileContainerRef} className="min-h-[65px]" />
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 p-4 text-sm text-slate-600">
+                    Turnstile desativado no ambiente atual. Configure `NEXT_PUBLIC_TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` para habilitar.
+                  </div>
+                )}
+              </div>
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -736,7 +921,7 @@ export default function Reservar() {
                 </button>
                 <button
                   onClick={criarReserva}
-                  disabled={loading}
+                  disabled={loading || (TURNSTILE_SITE_KEY && !turnstileToken)}
                   className="flex-1 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-all disabled:opacity-50"
                 >
                   {loading ? '⏳ Processando...' : '✅ Confirmar Reserva'}

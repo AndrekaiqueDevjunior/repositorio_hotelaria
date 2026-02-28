@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime, date
@@ -12,7 +12,10 @@ from app.core.database import get_db
 import random
 import string
 import re
+import os
+import httpx
 from app.services.consulta_publica_service import ConsultaPublicaService
+from app.middleware.rate_limit import rate_limit_strict
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -34,6 +37,100 @@ class ReservaPublicaCreate(BaseModel):
     num_criancas: int = 0
     observacoes: Optional[str] = None
     metodo_pagamento: str = "na_chegada"
+
+
+async def _validar_recaptcha_publico(request: Request, action_esperada: str) -> None:
+    secret = (os.getenv("RECAPTCHA_SECRET_KEY") or "").strip()
+    if not secret:
+        return
+
+    token = (request.headers.get("X-Recaptcha-Token") or "").strip()
+    action = (request.headers.get("X-Recaptcha-Action") or "").strip()
+
+    if not token:
+        raise HTTPException(status_code=403, detail="Antifraude: validação obrigatória")
+
+    if action_esperada and action and action != action_esperada:
+        raise HTTPException(status_code=403, detail="Antifraude: ação inválida")
+
+    min_score_raw = (os.getenv("RECAPTCHA_MIN_SCORE") or "0.5").strip()
+    try:
+        min_score = float(min_score_raw)
+    except Exception:
+        min_score = 0.5
+
+    data = {
+        "secret": secret,
+        "response": token,
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post("https://www.google.com/recaptcha/api/siteverify", data=data)
+        payload = resp.json() if resp.content else {}
+
+    if not payload.get("success"):
+        raise HTTPException(status_code=403, detail="Antifraude: validação falhou")
+
+    if action_esperada:
+        payload_action = payload.get("action")
+        if payload_action and payload_action != action_esperada:
+            raise HTTPException(status_code=403, detail="Antifraude: ação inválida")
+
+    score = payload.get("score")
+    if score is not None:
+        try:
+            score_f = float(score)
+        except Exception:
+            score_f = 0.0
+        if score_f < min_score:
+            raise HTTPException(status_code=403, detail="Antifraude: baixa confiança")
+
+
+async def _validar_turnstile_publico(request: Request, action_esperada: str) -> None:
+    secret = (os.getenv("TURNSTILE_SECRET_KEY") or "").strip()
+    if not secret:
+        return
+
+    token = (request.headers.get("X-Turnstile-Token") or "").strip()
+    action = (request.headers.get("X-Turnstile-Action") or "").strip()
+
+    if not token:
+        raise HTTPException(status_code=403, detail="Captcha obrigatório")
+
+    if action_esperada and action and action != action_esperada:
+        raise HTTPException(status_code=403, detail="Captcha inválido para esta ação")
+
+    data = {
+        "secret": secret,
+        "response": token,
+    }
+
+    client_ip = request.client.host if request.client else None
+    if client_ip:
+        data["remoteip"] = client_ip
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data=data
+        )
+        payload = resp.json() if resp.content else {}
+
+    if not payload.get("success"):
+        raise HTTPException(status_code=403, detail="Captcha inválido ou expirado")
+
+    payload_action = payload.get("action")
+    if action_esperada and payload_action and payload_action != action_esperada:
+        raise HTTPException(status_code=403, detail="Captcha inválido para esta ação")
+
+
+async def _validar_antibot_publico(request: Request, action_esperada: str) -> None:
+    turnstile_secret = (os.getenv("TURNSTILE_SECRET_KEY") or "").strip()
+    if turnstile_secret:
+        await _validar_turnstile_publico(request, action_esperada)
+        return
+
+    await _validar_recaptcha_publico(request, action_esperada)
 
 
 async def _obter_tarifa_diaria(db, tipo_suite: str, data_ref: date) -> float:
@@ -308,13 +405,18 @@ async def consultar_pontos_cliente(cpf: str):
         raise HTTPException(status_code=500, detail=f"Erro ao consultar pontos: {str(e)}")
 
 @router.post("/reservas")
-async def criar_reserva_publica(reserva_data: ReservaPublicaCreate):
+async def criar_reserva_publica(
+    reserva_data: ReservaPublicaCreate,
+    request: Request,
+    _rate_limit: None = Depends(rate_limit_strict)
+):
     """
     Criar reserva (API Pública)
     
     Não requer autenticação - criação simplificada de reservas
     """
     try:
+        await _validar_antibot_publico(request, "criar_reserva_publica")
         db = get_db()
         cliente_repo = ClienteRepository(db)
         reserva_repo = ReservaRepository(db)
