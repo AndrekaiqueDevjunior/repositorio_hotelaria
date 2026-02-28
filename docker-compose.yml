@@ -82,7 +82,6 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /app/.next
     ports:
       - "${HOTEL_FRONTEND_PORT:-3000}:3000"
     depends_on:
