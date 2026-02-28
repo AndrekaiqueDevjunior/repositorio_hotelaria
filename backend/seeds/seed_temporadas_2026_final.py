@@ -22,20 +22,20 @@ async def seed_temporadas_2026_corrigido():
         # BAIXA TEMPORADA: ABRIL A AGOSTO
         print("📋 Inserindo BAIXA TEMPORADA (Abril a Agosto)...")
         await db.tarifasuite.create({
-            'suite_tipo': 'LUXO',
+            'suiteTipo': 'LUXO',
             'temporada': 'BAIXA',
-            'data_inicio': '2026-04-01',
-            'data_fim': '2026-08-31',
-            'preco_diaria': 290.00,
+            'dataInicio': '2026-04-01',
+            'dataFim': '2026-08-31',
+            'precoDiaria': 290.00,
             'ativo': True
         })
         
         await db.tarifasuite.create({
-            'suite_tipo': 'MASTER',
+            'suiteTipo': 'MASTER',
             'temporada': 'BAIXA',
-            'data_inicio': '2026-04-01',
-            'data_fim': '2026-08-31',
-            'preco_diaria': 450.00,
+            'dataInicio': '2026-04-01',
+            'dataFim': '2026-08-31',
+            'precoDiaria': 450.00,
             'ativo': True
         })
         

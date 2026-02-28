@@ -10,6 +10,14 @@ Uso:
 import asyncio
 from datetime import datetime
 from typing import Dict, Any
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from seeds.bootstrap import bootstrap_seed_environment
+
+bootstrap_seed_environment()
 
 from app.core.database import connect_db, disconnect_db, get_db
 from app.repositories.cliente_repo import ClienteRepository

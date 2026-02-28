@@ -24,7 +24,24 @@ Esta pasta contém todos os scripts para popular o banco de dados com informaç�
 
 ## 🚀 Como Executar
 
-### Executar seeds individuais:
+### Executar seeds individuais em desenvolvimento local:
+```bash
+cd backend
+python seeds/seed_quartos.py
+python seeds/seed_tarifas_simple.py
+```
+
+### Forçar um arquivo de ambiente seguro:
+```bash
+SEED_ENV_FILE=backend/.env.test python backend/seeds/seed_quartos.py
+```
+
+### Se realmente quiser rodar contra produção:
+```bash
+SEED_ALLOW_PROD=true python backend/seeds/seed_quartos.py
+```
+
+### Executar via Docker:
 ```bash
 docker exec hotel_backend python seeds/nome_do_arquivo.py
 ```
@@ -34,14 +51,14 @@ docker exec hotel_backend python seeds/nome_do_arquivo.py
 # Opção 1: Executar todos de uma vez
 docker exec hotel_backend python seeds/run_all_seeds.py
 
-# Opção 2: Executar individualmente
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_5_users"
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_clientes"
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_quartos"
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_tarifas_simple"
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_pontos_regras"
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_premios"
-docker exec hotel_backend python -c "import sys; sys.path.append('/app'); import seeds.seed_demo_data"
+# Opção 2: Executar individualmente em dev local
+python backend/seeds/seed_5_users.py
+python backend/seeds/seed_clientes.py
+python backend/seeds/seed_quartos.py
+python backend/seeds/seed_tarifas_simple.py
+python backend/seeds/seed_pontos_regras.py
+python backend/seeds/seed_premios.py
+python backend/seeds/seed_demo_data.py
 ```
 
 ## 📋 Status dos Seeds

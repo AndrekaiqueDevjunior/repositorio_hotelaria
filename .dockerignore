@@ -1,0 +1,43 @@
+.git
+.gitignore
+**/.DS_Store
+**/Thumbs.db
+
+# env (nunca enviar credenciais reais)
+.env
+.env.*
+
+# python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+
+# node
+**/node_modules
+
+# next
+**/.next
+
+# logs
+**/*.log
+
+# editor
+**/.idea
+**/.vscode
+
+# local caches
+**/.cache
+
+# docker output
+**/*-debug.log
+
+# backups locais grandes (mantém a pasta, mas ignore dumps)
+backup/**/*.sql
+backup/**/*.dump
+backup/**/*.gz

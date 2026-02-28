@@ -405,11 +405,11 @@ class ComprovanteRepository:
             if pagamento and pagamento.cliente:
                 if dados.status == StatusValidacao.APROVADO:
                     await notification_service.criar_notificacao(
-                        titulo="✅ Comprovante Aprovado",
-                        mensagem=f"Pagamento de R$ {float(pagamento.valor):.2f} aprovado | Cliente: {pagamento.cliente.nomeCompleto}",
+                        titulo="💰 Pagamento Aprovado!",
+                        mensagem=f"Pagamento da reserva #{pagamento.reserva.codigoReserva} foi aprovado! Cliente: {pagamento.cliente.nomeCompleto} | Valor: R$ {float(pagamento.valor):.2f}",
                         tipo="success",
-                        categoria="pagamento",
-                        perfil="ADMIN,RECEPCAO",
+                        categoria="financeiro",
+                        perfil="ADMIN,RECEPCAO,RECEPCIONISTA",
                         pagamento_id=dados.pagamento_id,
                         reserva_id=pagamento.reservaId,
                         url_acao=f"/pagamentos"

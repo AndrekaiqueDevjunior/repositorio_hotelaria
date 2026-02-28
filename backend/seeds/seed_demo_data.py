@@ -10,6 +10,14 @@ Uso:
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Any
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from seeds.bootstrap import bootstrap_seed_environment
+
+bootstrap_seed_environment()
 
 from app.core.database import connect_db, disconnect_db, get_db
 from app.repositories.cliente_repo import ClienteRepository
@@ -137,6 +145,49 @@ async def ensure_funcionario(repo: FuncionarioRepository, data: Dict[str, Any]) 
         return funcionario
 
 
+async def ensure_pagamento_confirmado(
+    db,
+    pagamento_repo: PagamentoRepository,
+    reserva: Dict[str, Any],
+    cliente_nome: str,
+) -> Dict[str, Any]:
+    existente = await db.pagamento.find_first(where={"reservaId": reserva["id"]})
+    if existente:
+        if existente.statusPagamento != "APROVADO":
+            await db.pagamento.update(
+                where={"id": existente.id},
+                data={"statusPagamento": "APROVADO"}
+            )
+        return {
+            "id": existente.id,
+            "valor": float(existente.valor),
+            "status": "APROVADO",
+        }
+
+    valor_total = float(reserva.get("valor_total", 0.0) or 0.0)
+    pagamento = await pagamento_repo.create(
+        PagamentoCreate(
+            reserva_id=reserva["id"],
+            valor=valor_total,
+            metodo="credit_card",
+            parcelas=1,
+            cartao_numero="4111111111111111",
+            cartao_validade="12/28",
+            cartao_cvv="123",
+            cartao_nome=cliente_nome,
+        )
+    )
+    await db.pagamento.update(
+        where={"id": pagamento["id"]},
+        data={
+            "statusPagamento": "APROVADO",
+            "cieloPaymentId": f"CIELO-{reserva['id']}"
+        }
+    )
+    pagamento["status"] = "APROVADO"
+    return pagamento
+
+
 def build_datetime(offset_days: int) -> datetime:
     base = datetime.now().replace(hour=15, minute=0, second=0, microsecond=0)
     return base + timedelta(days=offset_days)
@@ -199,32 +250,69 @@ async def seed():
                 f"📘 Reserva {reserva['codigo_reserva']} criada para {cliente['nome_completo']} no quarto {data['quarto_numero']}"
             )
         except ValueError as exc:
-            print(f"⚠️  Não foi possível criar reserva para {cliente['nome_completo']}: {exc}")
-            continue
+            existente = await db.reserva.find_first(
+                where={
+                    "clienteId": cliente["id"],
+                    "quartoNumero": data["quarto_numero"],
+                },
+                order={"id": "desc"},
+            )
+            if not existente:
+                print(f"⚠️  Não foi possível criar reserva para {cliente['nome_completo']}: {exc}")
+                continue
+
+            reserva = await reserva_repo.get_by_id(existente.id)
+            print(
+                f"♻️  Reutilizando reserva existente {reserva['codigo_reserva']} para {cliente['nome_completo']} "
+                f"(status: {reserva['status']})"
+            )
 
         cenario = data["cenario"]
-        if cenario == "hospedado":
-            reserva = await reserva_repo.checkin(reserva["id"])
-            print(f"   ➜ Check-in realizado (status: {reserva['status']})")
-        elif cenario == "finalizada":
-            reserva = await reserva_repo.checkin(reserva["id"])
-            reserva = await reserva_repo.checkout(reserva["id"])
-            print(f"   ➜ Reserva finalizada (status: {reserva['status']})")
+        if cenario in ("hospedado", "finalizada"):
+            pagamento = await ensure_pagamento_confirmado(db, pagamento_repo, reserva, cliente["nome_completo"])
+            print(f"   💳 Pagamento confirmado (R$ {pagamento['valor']:.2f})")
 
-            pagamento = await pagamento_repo.create(
-                PagamentoCreate(
-                    reserva_id=reserva["id"],
-                    valor=reserva["valor_total"],
-                    metodo="credit_card",
-                    parcelas=1,
-                    cartao_numero="4111111111111111",
-                    cartao_validade="12/28",
-                    cartao_cvv="123",
-                    cartao_nome=cliente["nome_completo"],
+            if reserva["status"] == "PENDENTE":
+                reserva = await reserva_repo.confirmar(reserva["id"])
+                print(f"   ➜ Reserva confirmada (status: {reserva['status']})")
+
+            if reserva["status"] not in ("HOSPEDADO", "CHECKED_OUT"):
+                checkin_em = datetime.now()
+                await db.reserva.update(
+                    where={"id": reserva["id"]},
+                    data={
+                        "statusReserva": "HOSPEDADO",
+                        "checkinReal": checkin_em,
+                    }
                 )
-            )
-            await pagamento_repo.update_status(pagamento["id"], "APROVADO", cielo_payment_id=f"CIELO-{reserva['id']}")
-            print(f"   💳 Pagamento registrado (R$ {pagamento['valor']:.2f})")
+                await db.quarto.update(
+                    where={"numero": data["quarto_numero"]},
+                    data={"status": "OCUPADO"}
+                )
+            reserva = await reserva_repo.get_by_id(reserva["id"])
+            print(f"   ➜ Check-in simulado (status: {reserva['status']})")
+
+        if cenario == "finalizada":
+            if reserva["status"] != "CHECKED_OUT":
+                checkin_real = reserva.get("checkin_realizado") or reserva.get("checkin_real")
+                checkout_em = (
+                    datetime.fromisoformat(checkin_real.replace("Z", "+00:00")) + timedelta(days=data["num_diarias"])
+                    if isinstance(checkin_real, str) and checkin_real
+                    else datetime.now()
+                )
+                await db.reserva.update(
+                    where={"id": reserva["id"]},
+                    data={
+                        "statusReserva": "CHECKED_OUT",
+                        "checkoutReal": checkout_em,
+                    }
+                )
+                await db.quarto.update(
+                    where={"numero": data["quarto_numero"]},
+                    data={"status": "LIVRE"}
+                )
+            reserva = await reserva_repo.get_by_id(reserva["id"])
+            print(f"   ➜ Reserva finalizada (status: {reserva['status']})")
 
         created_reservas.append(reserva)
 

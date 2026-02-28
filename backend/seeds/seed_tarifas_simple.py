@@ -3,6 +3,15 @@
 Seed simples para criar tarifas usando SQL direto
 """
 import asyncio
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from seeds.bootstrap import bootstrap_seed_environment
+
+bootstrap_seed_environment()
+
 from app.core.database import get_db_connected
 
 TARIFAS_SQL = """
@@ -25,15 +34,16 @@ async def seed_tarifas_sql():
     
     try:
         # Executar SQL diretamente
-        result = await db.execute_raw(TARIFAS_SQL)
+        await db.execute_raw(TARIFAS_SQL)
         print("✅ Tarifas criadas com sucesso usando SQL direto")
         
         # Verificar quantidade
-        count_result = await db.execute_raw("SELECT COUNT(*) as total FROM tarifas_suites WHERE ativo = true")
-        print(f"📊 Total de tarifas ativas: {count_result[0]['total'] if count_result else 0}")
+        total_tarifas = await db.tarifasuite.count(where={"ativo": True})
+        print(f"📊 Total de tarifas ativas: {total_tarifas}")
         
     except Exception as e:
         print(f"❌ Erro ao executar SQL: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(seed_tarifas_sql())

@@ -231,6 +231,8 @@ services:
         echo '[CELERY] Iniciando worker...' &&
         celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
       "
+    healthcheck:
+      disable: true
     logging:
       driver: "json-file"
       options:

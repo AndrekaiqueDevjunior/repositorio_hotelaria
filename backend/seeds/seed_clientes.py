@@ -1,9 +1,12 @@
 import asyncio
 import sys
-import os
+from pathlib import Path
 
-# Adicionar o diretório app ao path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from seeds.bootstrap import bootstrap_seed_environment
+
+bootstrap_seed_environment()
 
 from app.core.database import connect_db, disconnect_db, get_db
 from app.schemas.cliente_schema import ClienteCreate
