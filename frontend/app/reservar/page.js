@@ -7,6 +7,7 @@ import 'react-toastify/dist/ReactToastify.css'
 import { api } from '../../lib/api'
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''
+const WHATSAPP_PHONE = '552226485900'
 
 export default function Reservar() {
   const router = useRouter()
@@ -14,6 +15,11 @@ export default function Reservar() {
   // Estados do fluxo
   const [step, setStep] = useState(1) // 1: Datas, 2: Quarto, 3: Dados, 4: Pagamento, 5: Confirmação
   const [loading, setLoading] = useState(false)
+  const [perfilReserva, setPerfilReserva] = useState('primeira_reserva')
+  const [clienteLookupLoading, setClienteLookupLoading] = useState(false)
+  const [clienteLookupStatus, setClienteLookupStatus] = useState('idle')
+  const [clienteRecorrente, setClienteRecorrente] = useState(null)
+  const [reservaAtivaCliente, setReservaAtivaCliente] = useState(null)
   const [captchaStatus, setCaptchaStatus] = useState(TURNSTILE_SITE_KEY ? 'ready' : 'disabled')
   const [turnstileLoaded, setTurnstileLoaded] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState('')
@@ -137,7 +143,7 @@ export default function Reservar() {
 
   useEffect(() => {
     if (!TURNSTILE_SITE_KEY) return
-    if (step !== 4) return
+    if (step !== 3) return
     if (!turnstileLoaded) return
     if (!turnstileContainerRef.current) return
     if (typeof window === 'undefined' || !window.turnstile?.render) return
@@ -167,12 +173,18 @@ export default function Reservar() {
 
   useEffect(() => {
     if (!TURNSTILE_SITE_KEY) return
-    if (step === 4 || step === 5) return
+    if (step === 3 || step === 5) return
 
     turnstileWidgetIdRef.current = null
     setTurnstileToken('')
     setCaptchaStatus('ready')
   }, [step])
+
+  useEffect(() => {
+    setClienteLookupStatus('idle')
+    setClienteRecorrente(null)
+    setReservaAtivaCliente(null)
+  }, [hospedeData.documento, hospedeData.email])
   
   // Selecionar quarto
   const selecionarQuarto = (tipo, quarto) => {
@@ -183,6 +195,63 @@ export default function Reservar() {
       preco_total: tipo.preco_total
     })
     setStep(3)
+  }
+
+  const buscarClienteRecorrente = async () => {
+    const cpfLimpo = hospedeData.documento.replace(/\D/g, '')
+    const emailNormalizado = hospedeData.email.trim().toLowerCase()
+
+    if (cpfLimpo.length !== 11) {
+      toast.warning('Informe um CPF válido para buscar seus dados')
+      return
+    }
+
+    if (!emailNormalizado.includes('@')) {
+      toast.warning('Informe o mesmo email usado na reserva anterior')
+      return
+    }
+
+    setClienteLookupLoading(true)
+
+    try {
+      const response = await api.post('/public/clientes/identificar', {
+        documento: cpfLimpo,
+        email: emailNormalizado
+      })
+
+      const data = response.data
+      if (data?.cliente_encontrado && data?.cliente) {
+        setHospedeData((prev) => ({
+          ...prev,
+          nome_completo: data.cliente.nome_completo || prev.nome_completo,
+          email: data.cliente.email || prev.email,
+          telefone: data.cliente.telefone ? formatTelefone(data.cliente.telefone) : prev.telefone
+        }))
+        setClienteRecorrente(data.cliente)
+        setReservaAtivaCliente(data.reserva_ativa || null)
+        if (data.tem_reserva_ativa) {
+          setClienteLookupStatus('active_reservation')
+          toast.warning(data.mensagem || `${data.cliente.nome_completo}, você já tem uma reserva ativa.`)
+        } else {
+          setClienteLookupStatus('found')
+          toast.success('Dados do cadastro anterior carregados')
+        }
+        return
+      }
+
+      setClienteRecorrente(null)
+      setReservaAtivaCliente(null)
+      setClienteLookupStatus('not_found')
+      toast.info('Nenhum cadastro compatível encontrado para CPF + email')
+    } catch (error) {
+      console.error('Erro ao buscar cliente recorrente:', error)
+      setClienteRecorrente(null)
+      setReservaAtivaCliente(null)
+      setClienteLookupStatus('error')
+      toast.error(error?.response?.data?.detail || 'Erro ao buscar cadastro anterior')
+    } finally {
+      setClienteLookupLoading(false)
+    }
   }
   
   // Criar reserva
@@ -203,6 +272,11 @@ export default function Reservar() {
     // Validar email
     if (!hospedeData.email.includes('@')) {
       toast.warning('Email inválido')
+      return
+    }
+
+    if (reservaAtivaCliente) {
+      toast.warning(`${hospedeData.nome_completo || 'Cliente'}, você já tem uma reserva ativa.`)
       return
     }
     
@@ -281,6 +355,8 @@ export default function Reservar() {
       } else if (error.response?.status === 403) {
         setCaptchaStatus('error')
         toast.error(`❌ ${error.response?.data?.detail || 'Captcha inválido ou expirado.'}`)
+      } else if (error.response?.status === 409) {
+        toast.warning(error.response?.data?.detail || `${hospedeData.nome_completo || 'Cliente'}, você já tem uma reserva ativa.`)
       } else if (error.response?.status === 400) {
         toast.error('❌ Dados inválidos. Verifique as informações e tente novamente.')
       } else if (error.response?.status === 500) {
@@ -372,6 +448,23 @@ export default function Reservar() {
   }
 
   const captchaBadge = getCaptchaBadge()
+  const whatsappReservaAtivaUrl = reservaAtivaCliente
+    ? `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
+        `Olá Hotel real cabo frio, tudo bem?\n\nGostaria de falar sobre minha reserva.\nCódigo ${reservaAtivaCliente.codigo} | Quarto ${reservaAtivaCliente.quarto_numero} | Status ${reservaAtivaCliente.status}`
+      )}&type=phone_number&app_absent=0`
+    : null
+  const tabsReserva = [
+    {
+      id: 'primeira_reserva',
+      titulo: 'Primeira reserva',
+      descricao: 'Fluxo guiado para quem ainda vai se cadastrar.'
+    },
+    {
+      id: 'ja_sou_cliente',
+      titulo: 'Já sou cliente',
+      descricao: 'Vamos reaproveitar seus dados no passo seguinte.'
+    }
+  ]
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-900 via-blue-800 to-blue-900">
@@ -433,13 +526,65 @@ export default function Reservar() {
         
         {/* Step 1: Datas */}
         {step === 1 && (
-          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-2 shadow-xl backdrop-blur-md">
+              <div className="grid gap-2 md:grid-cols-2">
+                {tabsReserva.map((tab) => {
+                  const ativo = perfilReserva === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setPerfilReserva(tab.id)}
+                      className={`rounded-xl px-5 py-4 text-left transition-all ${
+                        ativo
+                          ? 'bg-white text-blue-900 shadow-lg ring-2 ring-yellow-300/80'
+                          : 'bg-transparent text-white/80 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-base font-bold">{tab.titulo}</p>
+                          <p className={`mt-1 text-sm ${ativo ? 'text-blue-700' : 'text-white/65'}`}>
+                            {tab.descricao}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${
+                            ativo
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-white/10 text-white/60'
+                          }`}
+                        >
+                          {ativo ? 'ativo' : 'opção'}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-gradient-to-r from-yellow-400 to-yellow-500 p-6 text-center">
               <h2 className="text-2xl font-bold text-blue-900">🔍 Buscar Disponibilidade</h2>
-              <p className="text-blue-800">Selecione as datas da sua estadia</p>
+              <p className="text-blue-800">
+                {perfilReserva === 'ja_sou_cliente'
+                  ? 'Selecione as datas da sua estadia e depois recuperamos seu cadastro.'
+                  : 'Selecione as datas da sua estadia'}
+              </p>
             </div>
             
             <div className="p-8">
+              {perfilReserva === 'ja_sou_cliente' && (
+                <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-left">
+                  <p className="text-sm font-semibold text-blue-900">Cliente recorrente</p>
+                  <p className="mt-1 text-sm text-blue-800">
+                    No passo de dados, informe o mesmo CPF e email usados antes para preencher seu cadastro automaticamente.
+                  </p>
+                </div>
+              )}
+
               <div className="grid md:grid-cols-3 gap-6">
                 <div>
                   <label className="block text-gray-700 font-medium mb-2">📅 Check-in</label>
@@ -491,6 +636,7 @@ export default function Reservar() {
                 )}
               </button>
             </div>
+          </div>
           </div>
         )}
         
@@ -714,6 +860,72 @@ export default function Reservar() {
                   </select>
                 </div>
               </div>
+
+              <div className={`rounded-xl border p-4 ${
+                perfilReserva === 'ja_sou_cliente'
+                  ? 'border-blue-200 bg-blue-50'
+                  : 'border-gray-200 bg-gray-50'
+              }`}>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">Já reservou antes?</p>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Informe o mesmo CPF e email usados anteriormente para reaproveitar seu cadastro.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={buscarClienteRecorrente}
+                    disabled={clienteLookupLoading}
+                    className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {clienteLookupLoading ? 'Buscando...' : 'Buscar meus dados'}
+                  </button>
+                </div>
+
+                {clienteLookupStatus === 'found' && clienteRecorrente && (
+                  <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                    Cadastro anterior localizado para <strong>{clienteRecorrente.nome_completo}</strong>.
+                    Revise telefone e demais dados antes de continuar.
+                  </div>
+                )}
+
+                {clienteLookupStatus === 'active_reservation' && clienteRecorrente && reservaAtivaCliente && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <p>
+                      <strong>{clienteRecorrente.nome_completo}</strong>, você já tem uma reserva ativa.
+                    </p>
+                    <p className="mt-2">
+                      Código {reservaAtivaCliente.codigo} | Quarto {reservaAtivaCliente.quarto_numero} | Status {reservaAtivaCliente.status}
+                    </p>
+                    <p className="mt-2">
+                      Cliente recorrente só pode criar nova reserva após ter histórico com check-out realizado e nenhuma reserva aberta.
+                    </p>
+                    {whatsappReservaAtivaUrl && (
+                      <a
+                        href={whatsappReservaAtivaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center rounded-lg border border-amber-300 bg-white px-4 py-2 font-semibold text-amber-900 transition hover:bg-amber-100"
+                      >
+                        Falar no WhatsApp sobre essa reserva
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {clienteLookupStatus === 'not_found' && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Nenhum cadastro compatível foi encontrado. Você pode seguir com uma nova reserva normalmente.
+                  </div>
+                )}
+
+                {clienteLookupStatus === 'error' && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    Não foi possível buscar o cadastro anterior agora. Tente novamente em instantes.
+                  </div>
+                )}
+              </div>
               
               <div>
                 <label className="block text-gray-700 font-medium mb-1">Observações (opcional)</label>
@@ -731,15 +943,28 @@ export default function Reservar() {
                   <div>
                     <p className="text-sm font-semibold text-blue-900">Proteção anti-bot</p>
                     <p className="mt-1 text-sm text-blue-800">
-                      O captcha visível será exibido na próxima etapa, imediatamente antes da confirmação da reserva.
+                      Resolva o captcha antes de seguir para a etapa de pagamento.
                     </p>
                     <p className="mt-2 text-xs text-blue-700">
-                      Esse posicionamento evita expiração do token e reduz spam automatizado sem atrapalhar o preenchimento dos dados.
+                      Isso reduz spam automatizado e valida a solicitação ainda na etapa de dados.
                     </p>
                   </div>
-                  <span className="rounded-full border border-blue-200 bg-blue-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-800">
-                    Etapa 4
+                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${captchaBadge.classes}`}>
+                    {captchaBadge.label}
                   </span>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-white/70 bg-white/90 p-4">
+                  {TURNSTILE_SITE_KEY ? (
+                    <>
+                      <div ref={turnstileContainerRef} className="min-h-[65px]" />
+                      <p className="mt-3 text-xs text-gray-600">{captchaBadge.description}</p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-600">
+                      Captcha visível desativado neste ambiente. Configure as chaves para habilitar a validação.
+                    </p>
+                  )}
                 </div>
               </div>
               
@@ -752,7 +977,8 @@ export default function Reservar() {
                 </button>
                 <button
                   onClick={() => setStep(4)}
-                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all"
+                  disabled={Boolean(reservaAtivaCliente) || (TURNSTILE_SITE_KEY && !turnstileToken)}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all disabled:cursor-not-allowed disabled:bg-blue-300"
                 >
                   Continuar →
                 </button>

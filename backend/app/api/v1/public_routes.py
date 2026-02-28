@@ -39,6 +39,44 @@ class ReservaPublicaCreate(BaseModel):
     metodo_pagamento: str = "na_chegada"
 
 
+class ClienteRecorrenteLookupRequest(BaseModel):
+    documento: str
+    email: EmailStr
+
+
+RESERVA_STATUS_ABERTA = [
+    "PENDENTE",
+    "PENDENTE_PAGAMENTO",
+    "AGUARDANDO_COMPROVANTE",
+    "EM_ANALISE",
+    "CONFIRMADA",
+    "HOSPEDADO",
+    "CHECKIN_REALIZADO",
+]
+
+
+async def _buscar_reserva_aberta_cliente(db, cliente_id: int):
+    return await db.reserva.find_first(
+        where={
+            "clienteId": cliente_id,
+            "statusReserva": {"in": RESERVA_STATUS_ABERTA}
+        },
+        order={"checkinPrevisto": "asc"}
+    )
+
+
+def _montar_mensagem_reserva_aberta(nome_cliente: str, reserva_ativa) -> str:
+    nome_exibicao = (nome_cliente or "Cliente").strip()
+    msg = f"{nome_exibicao}, você já tem uma reserva ativa."
+    msg += f"\n\n📋 Reserva existente: {reserva_ativa.codigoReserva}"
+    msg += f"\n  • Quarto: {reserva_ativa.quartoNumero}"
+    msg += f"\n  • Check-in: {reserva_ativa.checkinPrevisto.strftime('%d/%m/%Y')}"
+    msg += f"\n  • Check-out: {reserva_ativa.checkoutPrevisto.strftime('%d/%m/%Y')}"
+    msg += f"\n  • Status: {reserva_ativa.statusReserva}"
+    msg += "\n\n⚠️ Cliente recorrente só pode criar nova reserva após ter histórico com check-out realizado e nenhuma reserva aberta."
+    return msg
+
+
 async def _validar_recaptcha_publico(request: Request, action_esperada: str) -> None:
     secret = (os.getenv("RECAPTCHA_SECRET_KEY") or "").strip()
     if not secret:
@@ -404,6 +442,69 @@ async def consultar_pontos_cliente(cpf: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao consultar pontos: {str(e)}")
 
+
+@router.post("/clientes/identificar")
+async def identificar_cliente_recorrente(
+    payload: ClienteRecorrenteLookupRequest,
+    _rate_limit: None = Depends(rate_limit_strict)
+):
+    """
+    Identificar cliente recorrente com CPF + email para reaproveitar cadastro.
+    """
+    try:
+        db = get_db()
+        cliente_repo = ClienteRepository(db)
+
+        documento_limpo = ''.join(filter(str.isdigit, payload.documento))
+        email_normalizado = payload.email.strip().lower()
+
+        if len(documento_limpo) != 11:
+            raise HTTPException(status_code=400, detail="CPF inválido")
+
+        try:
+            cliente = await cliente_repo.get_by_documento(documento_limpo)
+        except ValueError:
+            return {
+                "success": True,
+                "cliente_encontrado": False,
+                "mensagem": "Nenhum cadastro compatível encontrado"
+            }
+
+        email_cadastrado = (cliente.get("email") or "").strip().lower()
+        if not email_cadastrado or email_cadastrado != email_normalizado:
+            return {
+                "success": True,
+                "cliente_encontrado": False,
+                "mensagem": "Nenhum cadastro compatível encontrado"
+            }
+
+        reserva_ativa = await _buscar_reserva_aberta_cliente(db, cliente["id"])
+
+        return {
+            "success": True,
+            "cliente_encontrado": True,
+            "tem_reserva_ativa": reserva_ativa is not None,
+            "mensagem": _montar_mensagem_reserva_aberta(cliente.get("nome_completo"), reserva_ativa) if reserva_ativa else None,
+            "reserva_ativa": {
+                "codigo": reserva_ativa.codigoReserva,
+                "status": reserva_ativa.statusReserva,
+                "checkin": reserva_ativa.checkinPrevisto.isoformat(),
+                "checkout": reserva_ativa.checkoutPrevisto.isoformat(),
+                "quarto_numero": reserva_ativa.quartoNumero
+            } if reserva_ativa else None,
+            "cliente": {
+                "id": cliente["id"],
+                "nome_completo": cliente.get("nome_completo"),
+                "documento": cliente.get("documento"),
+                "email": cliente.get("email"),
+                "telefone": cliente.get("telefone")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao identificar cliente: {str(e)}")
+
 @router.post("/reservas")
 async def criar_reserva_publica(
     reserva_data: ReservaPublicaCreate,
@@ -426,6 +527,31 @@ async def criar_reserva_publica(
 
         try:
             cliente = await cliente_repo.get_by_documento(documento_limpo)
+            reserva_ativa = await _buscar_reserva_aberta_cliente(db, cliente["id"])
+            if reserva_ativa:
+                raise HTTPException(
+                    status_code=409,
+                    detail=_montar_mensagem_reserva_aberta(cliente.get("nome_completo"), reserva_ativa)
+                )
+
+            update_data = {}
+
+            nome_atual = (cliente.get("nome_completo") or "").strip()
+            nome_novo = (reserva_data.nome_completo or "").strip()
+            if nome_novo and nome_novo != nome_atual:
+                update_data["nome_completo"] = nome_novo
+
+            email_atual = (cliente.get("email") or "").strip().lower()
+            email_novo = (reserva_data.email or "").strip().lower()
+            if email_novo and email_novo != email_atual:
+                update_data["email"] = email_novo
+
+            telefone_atual = ''.join(filter(str.isdigit, cliente.get("telefone") or ""))
+            if telefone_limpo and telefone_limpo != telefone_atual:
+                update_data["telefone"] = telefone_limpo
+
+            if update_data:
+                cliente = await cliente_repo.update(cliente["id"], update_data)
         except ValueError:
             from app.schemas.cliente_schema import ClienteCreate
             cliente = await cliente_repo.create(
