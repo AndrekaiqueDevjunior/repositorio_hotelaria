@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, status
+from pydantic import BaseModel
 from app.schemas.reserva_schema import ReservaCreate, ReservaResponse
+from app.schemas.cupom_schema import AplicarCupomRequest
 from app.services.reserva_service import ReservaService
 from app.repositories.reserva_repo import ReservaRepository
 from app.repositories.cliente_repo import ClienteRepository
+from app.repositories.cupom_repo import CupomRepository
 from app.repositories.quarto_repo import QuartoRepository
 from app.core.database import get_db
 from app.utils.export_utils import export_to_csv, export_to_pdf_simple
@@ -11,6 +14,7 @@ from app.core.security import User
 from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from app.core.cache import redis_lock
 from app.core.validators import ReservaValidator, QuartoValidator
+from app.services.cupom_service import CupomService
 from typing import Optional
 from starlette.responses import JSONResponse
 from datetime import datetime
@@ -28,6 +32,10 @@ async def get_reserva_service() -> ReservaService:
         ClienteRepository(db),
         QuartoRepository(db)
     )
+
+
+async def get_cupom_service() -> CupomService:
+    return CupomService(CupomRepository(get_db()))
 
 @router.get("", response_model=dict)
 async def listar_reservas(
@@ -254,7 +262,40 @@ async def atualizar_reserva_parcial(
     # Atualização parcial normal
     return await service.update(reserva_id, reserva_data)
 
-from pydantic import BaseModel
+
+@router.post("/{reserva_id}/aplicar-cupom", response_model=dict)
+async def aplicar_cupom_reserva(
+    reserva_id: int,
+    payload: AplicarCupomRequest,
+    service: ReservaService = Depends(get_reserva_service),
+    cupom_service: CupomService = Depends(get_cupom_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    cupom_uso = await cupom_service.aplicar_em_reserva(reserva_id, payload.codigo)
+    reserva = await service.get_by_id(reserva_id)
+    return {
+        "success": True,
+        "message": "Cupom aplicado com sucesso",
+        "cupom": cupom_uso,
+        "reserva": reserva
+    }
+
+
+@router.delete("/{reserva_id}/cupom", response_model=dict)
+async def remover_cupom_reserva(
+    reserva_id: int,
+    service: ReservaService = Depends(get_reserva_service),
+    cupom_service: CupomService = Depends(get_cupom_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    cupom_removido = await cupom_service.remover_da_reserva(reserva_id)
+    reserva = await service.get_by_id(reserva_id)
+    return {
+        "success": True,
+        "message": "Cupom removido com sucesso",
+        "cupom": cupom_removido,
+        "reserva": reserva
+    }
 
 class ComprovanteUploadRequest(BaseModel):
     arquivo_base64: str

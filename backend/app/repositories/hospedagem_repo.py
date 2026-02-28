@@ -251,7 +251,10 @@ class HospedagemRepository:
         - Suíte Real: 5 RP a cada 2 diárias
         - Diárias excedentes são acumuladas para próximas reservas
         """
-        from app.services.pontos_checkout_service import creditar_rp_no_checkout
+        from app.services.pontos_checkout_service import (
+            creditar_bonus_cupom_no_checkout,
+            creditar_rp_no_checkout,
+        )
 
         try:
             result = await creditar_rp_no_checkout(
@@ -269,9 +272,18 @@ class HospedagemRepository:
                 motivo = result.get("motivo")
                 if motivo:
                     print(f"[CHECKOUT RP] Sem crédito de pontos: {motivo}")
-                return
+            else:
+                print(f"[CHECKOUT RP] Pontos creditados: {result.get('pontos', 0)}")
 
-            print(f"[CHECKOUT RP] Pontos creditados: {result.get('pontos', 0)}")
+            bonus_result = await creditar_bonus_cupom_no_checkout(
+                self.db,
+                reserva_id=reserva_id,
+                funcionario_id=funcionario_id,
+            )
+            if bonus_result.get("creditado"):
+                print(f"[CHECKOUT CUPOM] Bônus creditado: {bonus_result.get('pontos', 0)}")
+            elif bonus_result.get("motivo"):
+                print(f"[CHECKOUT CUPOM] Sem bônus: {bonus_result.get('motivo')}")
         except Exception as e:
             print(f"[CHECKOUT RP] Erro ao creditar pontos: {str(e)}")
             return

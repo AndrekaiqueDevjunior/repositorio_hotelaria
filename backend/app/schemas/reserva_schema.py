@@ -31,6 +31,10 @@ class ReservaResponse(BaseModel):
     valor_diaria: float
     num_diarias: int
     valor_total: float
+    valor_desconto: Optional[float] = 0.0
+    valor_total_com_desconto: Optional[float] = None
     pagamentos: Optional[list]
+    hospedagem: Optional[dict] = None
+    cupom_uso: Optional[dict] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]

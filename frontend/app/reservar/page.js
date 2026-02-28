@@ -1,6 +1,7 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import Script from 'next/script'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
@@ -20,6 +21,10 @@ export default function Reservar() {
   const [clienteLookupStatus, setClienteLookupStatus] = useState('idle')
   const [clienteRecorrente, setClienteRecorrente] = useState(null)
   const [reservaAtivaCliente, setReservaAtivaCliente] = useState(null)
+  const [cupomCodigo, setCupomCodigo] = useState('')
+  const [cupomLoading, setCupomLoading] = useState(false)
+  const [cupomStatus, setCupomStatus] = useState('idle')
+  const [cupomInfo, setCupomInfo] = useState(null)
   const [captchaStatus, setCaptchaStatus] = useState(TURNSTILE_SITE_KEY ? 'ready' : 'disabled')
   const [turnstileLoaded, setTurnstileLoaded] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState('')
@@ -173,7 +178,7 @@ export default function Reservar() {
 
   useEffect(() => {
     if (!TURNSTILE_SITE_KEY) return
-    if (step === 3 || step === 5) return
+    if (step === 3 || step === 4 || step === 5) return
 
     turnstileWidgetIdRef.current = null
     setTurnstileToken('')
@@ -185,6 +190,12 @@ export default function Reservar() {
     setClienteRecorrente(null)
     setReservaAtivaCliente(null)
   }, [hospedeData.documento, hospedeData.email])
+
+  useEffect(() => {
+    setCupomStatus('idle')
+    setCupomInfo(null)
+    setCupomCodigo('')
+  }, [searchData.data_checkin, searchData.data_checkout, quartoSelecionado?.numero])
   
   // Selecionar quarto
   const selecionarQuarto = (tipo, quarto) => {
@@ -313,7 +324,8 @@ export default function Reservar() {
         num_hospedes: hospedeData.num_hospedes,
         num_criancas: hospedeData.num_criancas,
         observacoes: hospedeData.observacoes,
-        metodo_pagamento: metodoPagamento
+        metodo_pagamento: metodoPagamento,
+        cupom_codigo: cupomStatus === 'valid' && cupomInfo?.codigo ? cupomInfo.codigo : null
       }
       
       const response = await api.post(
@@ -448,6 +460,15 @@ export default function Reservar() {
   }
 
   const captchaBadge = getCaptchaBadge()
+  const resumoValores = useMemo(() => {
+    const subtotal = Number(quartoSelecionado?.preco_total || 0)
+    const desconto = Number(cupomInfo?.valor_desconto_calculado || 0)
+    const total = cupomStatus === 'valid' && cupomInfo?.valor_final_estimado != null
+      ? Number(cupomInfo.valor_final_estimado)
+      : subtotal
+
+    return { subtotal, desconto, total }
+  }, [quartoSelecionado, cupomInfo, cupomStatus])
   const whatsappReservaAtivaUrl = reservaAtivaCliente
     ? `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
         `Olá Hotel real cabo frio, tudo bem?\n\nGostaria de falar sobre minha reserva.\nCódigo ${reservaAtivaCliente.codigo} | Quarto ${reservaAtivaCliente.quarto_numero} | Status ${reservaAtivaCliente.status}`
@@ -465,6 +486,94 @@ export default function Reservar() {
       descricao: 'Vamos reaproveitar seus dados no passo seguinte.'
     }
   ]
+
+  const validarCupom = async () => {
+    if (!cupomCodigo.trim()) {
+      toast.warning('Informe um código de cupom para validar')
+      return
+    }
+
+    if (!quartoSelecionado || !numDiarias) {
+      toast.warning('Selecione as datas e o quarto antes de validar o cupom')
+      return
+    }
+
+    try {
+      setCupomLoading(true)
+      setCupomStatus('checking')
+
+      const response = await api.post('/cupons/validar', {
+        codigo: cupomCodigo.trim().toUpperCase(),
+        suite_tipo: quartoSelecionado.tipo,
+        num_diarias: numDiarias,
+        valor_total_base: Number(quartoSelecionado.preco_total)
+      })
+
+      if (response.data?.valido) {
+        setCupomInfo(response.data)
+        setCupomCodigo(response.data.codigo || cupomCodigo.trim().toUpperCase())
+        setCupomStatus('valid')
+        toast.success(`Cupom ${response.data.codigo} aplicado ao resumo da reserva`)
+        return
+      }
+
+      setCupomInfo(response.data || null)
+      setCupomStatus('invalid')
+      toast.warning(response.data?.mensagem || 'Cupom inválido para esta reserva')
+    } catch (error) {
+      console.error('Erro ao validar cupom:', error)
+      setCupomInfo(null)
+      setCupomStatus('invalid')
+      toast.error(error?.response?.data?.detail || 'Não foi possível validar o cupom agora')
+    } finally {
+      setCupomLoading(false)
+    }
+  }
+
+  const removerCupom = () => {
+    setCupomCodigo('')
+    setCupomInfo(null)
+    setCupomStatus('idle')
+  }
+
+  const renderResumoFinanceiro = (variant = 'default') => {
+    const containerClasses = variant === 'compact'
+      ? 'rounded-xl border border-slate-200 bg-slate-50 p-4'
+      : 'rounded-xl border border-green-100 bg-green-50 p-4'
+    const titleClasses = variant === 'compact'
+      ? 'text-sm font-semibold text-slate-900'
+      : 'text-sm font-semibold text-green-900'
+
+    return (
+      <div className={containerClasses}>
+        <p className={titleClasses}>Resumo financeiro</p>
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-center justify-between text-gray-700">
+            <span>Subtotal da hospedagem</span>
+            <strong>R$ {resumoValores.subtotal.toFixed(2)}</strong>
+          </div>
+          {cupomStatus === 'valid' && cupomInfo ? (
+            <>
+              <div className="flex items-center justify-between text-green-700">
+                <span>Desconto do cupom {cupomInfo.codigo}</span>
+                <strong>- R$ {resumoValores.desconto.toFixed(2)}</strong>
+              </div>
+              {cupomInfo.pontos_bonus > 0 ? (
+                <div className="flex items-center justify-between text-blue-700">
+                  <span>Bônus previsto no checkout</span>
+                  <strong>+ {cupomInfo.pontos_bonus} RP</strong>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          <div className="flex items-center justify-between border-t border-white/70 pt-2 text-base font-bold text-gray-900">
+            <span>Total estimado</span>
+            <span>R$ {resumoValores.total.toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-900 via-blue-800 to-blue-900">
@@ -528,7 +637,7 @@ export default function Reservar() {
         {step === 1 && (
           <div className="space-y-4">
             <div className="rounded-2xl border border-white/15 bg-white/10 p-2 shadow-xl backdrop-blur-md">
-              <div className="grid gap-2 md:grid-cols-2">
+              <div className="grid gap-2 md:grid-cols-3">
                 {tabsReserva.map((tab) => {
                   const ativo = perfilReserva === tab.id
                   return (
@@ -562,6 +671,22 @@ export default function Reservar() {
                     </button>
                   )
                 })}
+                <Link
+                  href="/consultar"
+                  className="rounded-xl px-5 py-4 text-left transition-all bg-transparent text-white/80 hover:bg-white/10 hover:text-white"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-base font-bold">Consultar minha reserva</p>
+                      <p className="mt-1 text-sm text-white/65">
+                        Acesse código, status e instruções da sua reserva atual.
+                      </p>
+                    </div>
+                    <span className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] bg-white/10 text-white/60">
+                      consulta
+                    </span>
+                  </div>
+                </Link>
               </div>
             </div>
 
@@ -926,6 +1051,77 @@ export default function Reservar() {
                   </div>
                 )}
               </div>
+
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-900">Cupom de desconto</p>
+                    <p className="mt-1 text-sm text-emerald-800">
+                      Se você recebeu um código promocional, valide agora antes de seguir para o pagamento.
+                    </p>
+                  </div>
+                  {cupomStatus === 'valid' ? (
+                    <span className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                      Aplicado
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 md:flex-row">
+                  <input
+                    type="text"
+                    value={cupomCodigo}
+                    onChange={(e) => {
+                      setCupomCodigo(e.target.value.toUpperCase())
+                      if (cupomStatus !== 'idle') {
+                        setCupomStatus('idle')
+                        setCupomInfo(null)
+                      }
+                    }}
+                    className="flex-1 rounded-lg border-2 border-emerald-200 bg-white p-3 focus:border-emerald-400 focus:outline-none"
+                    placeholder="Ex: CARNAVAL10"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={validarCupom}
+                      disabled={cupomLoading}
+                      className="rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {cupomLoading ? 'Validando...' : 'Validar cupom'}
+                    </button>
+                    {cupomStatus === 'valid' ? (
+                      <button
+                        type="button"
+                        onClick={removerCupom}
+                        className="rounded-lg border border-gray-300 bg-white px-4 py-3 font-semibold text-gray-700 transition hover:bg-gray-50"
+                      >
+                        Remover
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {cupomStatus === 'valid' && cupomInfo ? (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900">
+                    <p>
+                      <strong>{cupomInfo.codigo}</strong> validado com sucesso.
+                      {cupomInfo.tipo_desconto === 'PERCENTUAL'
+                        ? ` Desconto de ${cupomInfo.valor_desconto}% aplicado nesta reserva.`
+                        : ` Desconto fixo de R$ ${Number(cupomInfo.valor_desconto || 0).toFixed(2)} aplicado nesta reserva.`}
+                    </p>
+                    <p className="mt-2">
+                      Total estimado com cupom: <strong>R$ {resumoValores.total.toFixed(2)}</strong>
+                    </p>
+                  </div>
+                ) : null}
+
+                {cupomStatus === 'invalid' ? (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    {cupomInfo?.mensagem || 'O cupom informado não pode ser usado nesta reserva.'}
+                  </div>
+                ) : null}
+              </div>
               
               <div>
                 <label className="block text-gray-700 font-medium mb-1">Observações (opcional)</label>
@@ -967,6 +1163,8 @@ export default function Reservar() {
                   )}
                 </div>
               </div>
+
+              {renderResumoFinanceiro('default')}
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -1009,7 +1207,7 @@ export default function Reservar() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600">Total</p>
-                  <p className="text-2xl font-bold text-green-600">R$ {quartoSelecionado.preco_total.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-600">R$ {resumoValores.total.toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -1111,32 +1309,7 @@ export default function Reservar() {
                 </p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 mt-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">Captcha anti-bot</p>
-                    <p className="mt-1 text-sm text-slate-700">
-                      {captchaBadge.description}
-                    </p>
-                    <p className="mt-2 text-xs text-slate-600">
-                      O captcha precisa ser resolvido antes da confirmação para bloquear bots e spam malicioso.
-                    </p>
-                  </div>
-                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${captchaBadge.classes}`}>
-                    {captchaBadge.label}
-                  </span>
-                </div>
-
-                {TURNSTILE_SITE_KEY ? (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-                    <div ref={turnstileContainerRef} className="min-h-[65px]" />
-                  </div>
-                ) : (
-                  <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 p-4 text-sm text-slate-600">
-                    Turnstile desativado no ambiente atual. Configure `NEXT_PUBLIC_TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` para habilitar.
-                  </div>
-                )}
-              </div>
+              {renderResumoFinanceiro('compact')}
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -1200,11 +1373,37 @@ export default function Reservar() {
                     <p className="font-medium">{reservaConfirmada.reserva.num_diarias} {reservaConfirmada.reserva.num_diarias === 1 ? 'diária' : 'diárias'}</p>
                   </div>
                   <div className="bg-green-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-500">Valor Total</p>
-                    <p className="font-bold text-green-600 text-xl">R$ {reservaConfirmada.reserva.valor_total.toFixed(2)}</p>
+                    <p className="text-sm text-gray-500">Valor Final</p>
+                    <p className="font-bold text-green-600 text-xl">
+                      R$ {(reservaConfirmada.reserva.valor_total_com_desconto ?? reservaConfirmada.reserva.valor_total).toFixed(2)}
+                    </p>
                   </div>
                 </div>
               </div>
+
+              {reservaConfirmada.reserva.cupom_uso ? (
+                <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <h3 className="font-bold text-emerald-900">🎟️ Cupom aplicado</h3>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Código</p>
+                      <p className="font-semibold text-emerald-900">{reservaConfirmada.reserva.cupom_uso.codigo}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Desconto</p>
+                      <p className="font-semibold text-emerald-900">
+                        R$ {(reservaConfirmada.reserva.valor_desconto || 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Total final</p>
+                      <p className="font-semibold text-emerald-900">
+                        R$ {(reservaConfirmada.reserva.valor_total_com_desconto || reservaConfirmada.reserva.valor_total).toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               
               {/* Instruções */}
               <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mb-6">

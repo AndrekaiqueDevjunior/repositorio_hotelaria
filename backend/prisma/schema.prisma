@@ -50,6 +50,7 @@ model Cliente {
   usuarioPontos       UsuarioPontos?
   transacoesPontos    TransacaoPontos[]
   resgatePremios      ResgatePremio[]
+  cupomUsos           CupomUso[]
 
   @@unique([nomeCompleto, documento])
   @@index([tipoHospede])
@@ -84,6 +85,7 @@ model Reserva {
   transacoesPontos TransacaoPontos[]
   voucher          Voucher?
   hospedagem       Hospedagem?
+  cupomUso         CupomUso?
   cliente          Cliente           @relation(fields: [clienteId], references: [id])
   quarto           Quarto            @relation(fields: [quartoId], references: [id])
 
@@ -438,4 +440,49 @@ model Auditoria {
   @@index([acao])
   @@index([createdAt])
   @@map("auditorias")
+}
+
+model Cupom {
+  id              Int        @id @default(autoincrement())
+  codigo          String     @unique
+  descricao       String?
+  tipoDesconto    String     @map("tipo_desconto")
+  valorDesconto   Decimal    @map("valor_desconto") @db.Decimal(10, 2)
+  pontosBonus     Int?       @map("pontos_bonus")
+  minDiarias      Int?       @map("min_diarias")
+  suitesPermitidas String?   @map("suites_permitidas")
+  dataInicio      DateTime   @map("data_inicio")
+  dataFim         DateTime   @map("data_fim")
+  limiteTotalUsos Int?       @map("limite_total_usos")
+  limitePorCliente Int?      @map("limite_por_cliente")
+  totalUsos       Int        @default(0) @map("total_usos")
+  ativo           Boolean    @default(true)
+  criadoPor       Int?       @map("criado_por")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  usos            CupomUso[]
+
+  @@index([codigo])
+  @@index([ativo])
+  @@index([dataInicio, dataFim])
+  @@map("cupons")
+}
+
+model CupomUso {
+  id            Int      @id @default(autoincrement())
+  cupomId       Int      @map("cupom_id")
+  reservaId     Int      @unique @map("reserva_id")
+  clienteId     Int      @map("cliente_id")
+  valorOriginal Decimal  @map("valor_original") @db.Decimal(10, 2)
+  valorDesconto Decimal  @map("valor_desconto") @db.Decimal(10, 2)
+  valorFinal    Decimal  @map("valor_final") @db.Decimal(10, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+  cupom         Cupom    @relation(fields: [cupomId], references: [id])
+  reserva       Reserva  @relation(fields: [reservaId], references: [id])
+  cliente       Cliente  @relation(fields: [clienteId], references: [id])
+
+  @@index([cupomId])
+  @@index([clienteId])
+  @@index([createdAt])
+  @@map("cupons_usos")
 }

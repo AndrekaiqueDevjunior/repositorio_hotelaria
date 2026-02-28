@@ -16,6 +16,13 @@ class ReservaRepository:
     def __init__(self, db: Client):
         self.db = db
 
+    def _default_include(self) -> Dict[str, Any]:
+        return {
+            "pagamentos": True,
+            "hospedagem": True,
+            "cupomUso": {"include": {"cupom": True}},
+        }
+
     async def _obter_tarifa_diaria(self, suite_tipo: str, checkin_previsto: datetime) -> float:
         tarifa_repo = TarifaSuiteRepository(self.db)
 
@@ -84,10 +91,7 @@ class ReservaRepository:
         # Buscar registros com paginação - P0-002: Incluir pagamentos e hospedagem
         registros = await self.db.reserva.find_many(
             where=where_conditions if where_conditions else None,
-            include={
-                "pagamentos": True,  # Incluir pagamentos para validação no frontend
-                "hospedagem": True   # Incluir hospedagem para validação de checkout
-            },
+            include=self._default_include(),
             order=order_clause,
             skip=offset,
             take=limit
@@ -100,7 +104,7 @@ class ReservaRepository:
             "offset": offset
         }
     
-    async def create(self, reserva: ReservaCreate) -> Dict[str, Any]:
+    async def create(self, reserva: ReservaCreate, notificar: bool = True) -> Dict[str, Any]:
         """Criar nova reserva com validações"""
         # Verificar se cliente existe
         cliente = await self.db.cliente.find_unique(where={"id": reserva.cliente_id})
@@ -225,8 +229,9 @@ class ReservaRepository:
             raise ValueError("Não foi possível gerar um código de reserva único")
         
         # Criar notificação de nova reserva
-        await NotificationService.notificar_nova_reserva(self.db, nova_reserva)
-        
+        if notificar:
+            await NotificationService.notificar_nova_reserva(self.db, nova_reserva)
+
         return self._serialize_reserva(nova_reserva)
     
     async def get_by_id(self, reserva_id: int) -> Dict[str, Any]:
@@ -234,7 +239,7 @@ class ReservaRepository:
         # Buscar reserva com pagamentos incluídos
         reserva = await self.db.reserva.find_unique(
             where={"id": reserva_id},
-            include={"pagamentos": True}
+            include=self._default_include(),
         )
         if not reserva:
             raise ValueError("Reserva não encontrada")
@@ -248,7 +253,7 @@ class ReservaRepository:
 
         reserva = await self.db.reserva.find_first(
             where={"codigoReserva": codigo_upper},
-            include={"pagamentos": True}
+            include=self._default_include(),
         )
 
         if not reserva:
@@ -304,7 +309,7 @@ class ReservaRepository:
             data={"status": "OCUPADO"}
         )
         
-        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
+        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         
         # Criar notificação de check-in
         await NotificationService.notificar_checkin_realizado(self.db, updated_reserva)
@@ -367,11 +372,14 @@ class ReservaRepository:
             data={"status": "LIVRE"}
         )
         
-        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
+        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         
         # Creditar pontos automaticamente para o cliente (idempotente)
         try:
-            from app.services.pontos_checkout_service import creditar_rp_no_checkout
+            from app.services.pontos_checkout_service import (
+                creditar_bonus_cupom_no_checkout,
+                creditar_rp_no_checkout,
+            )
 
             resultado_pontos = await creditar_rp_no_checkout(
                 self.db,
@@ -381,8 +389,15 @@ class ReservaRepository:
             )
 
             pontos_ganhos = int(resultado_pontos.get("pontos", 0) or 0) if resultado_pontos.get("creditado") else 0
+            resultado_bonus = await creditar_bonus_cupom_no_checkout(
+                self.db,
+                reserva_id=reserva_id,
+                funcionario_id=None,
+            )
+            pontos_bonus_cupom = int(resultado_bonus.get("pontos", 0) or 0) if resultado_bonus.get("creditado") else 0
         except Exception as e:
             pontos_ganhos = 0
+            pontos_bonus_cupom = 0
             print(f"[CHECKOUT] Erro ao creditar pontos: {e}")
         
         # Criar notificação de check-out
@@ -391,6 +406,7 @@ class ReservaRepository:
         # Retornar reserva com informações de pontos
         resultado = self._serialize_reserva(updated_reserva)
         resultado["pontos_ganhos"] = pontos_ganhos if pontos_ganhos > 0 else 0
+        resultado["pontos_bonus_cupom"] = pontos_bonus_cupom if pontos_bonus_cupom > 0 else 0
         
         return resultado
     
@@ -490,7 +506,7 @@ class ReservaRepository:
                     data={"status": "LIVRE"}
                 )
         
-        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
+        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         
         # RES-003 FIX: Notificar sobre estornos processados e pendentes
         if estornos_processados or estornos_pendentes:
@@ -714,7 +730,7 @@ class ReservaRepository:
             }
         )
         
-        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
+        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         
         # Criar hospedagem se não existir
         hospedagem_existente = await self.db.hospedagem.find_unique(
@@ -789,14 +805,17 @@ class ReservaRepository:
             data=update_data
         )
         
-        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
+        updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         return self._serialize_reserva(updated_reserva)
     
     def _serialize_reserva(self, reserva) -> Dict[str, Any]:
         """Serializar reserva para response com todos os campos"""
         # Calcular valor total
         valor_total = float(reserva.valorDiaria) * reserva.numDiarias if reserva.valorDiaria and reserva.numDiarias else 0.0
-        
+        cupom_uso = None
+        valor_desconto = 0.0
+        valor_total_com_desconto = valor_total
+
         # Serializar pagamentos para validação no frontend
         pagamentos = []
         if hasattr(reserva, 'pagamentos') and reserva.pagamentos:
@@ -826,6 +845,27 @@ class ReservaRepository:
             print(f"DEBUG: Erro ao serializar hospedagem: {e}")
             hospedagem = None
 
+        try:
+            if hasattr(reserva, 'cupomUso') and reserva.cupomUso:
+                uso = reserva.cupomUso
+                cupom = getattr(uso, 'cupom', None)
+                valor_desconto = float(getattr(uso, 'valorDesconto', 0) or 0.0)
+                valor_total_com_desconto = float(getattr(uso, 'valorFinal', valor_total) or valor_total)
+                cupom_uso = {
+                    "id": uso.id,
+                    "cupom_id": uso.cupomId,
+                    "codigo": getattr(cupom, 'codigo', None),
+                    "tipo_desconto": getattr(cupom, 'tipoDesconto', None),
+                    "valor_original": float(getattr(uso, 'valorOriginal', valor_total) or valor_total),
+                    "valor_desconto": valor_desconto,
+                    "valor_final": valor_total_com_desconto,
+                    "pontos_bonus": int(getattr(cupom, 'pontosBonus', 0) or 0),
+                    "created_at": uso.createdAt.isoformat() if getattr(uso, 'createdAt', None) else None,
+                }
+        except Exception as e:
+            print(f"DEBUG: Erro ao serializar cupom: {e}")
+            cupom_uso = None
+
         # Status da reserva (usar o valor real do banco)
         status_reserva = getattr(reserva, 'statusReserva', 'PENDENTE')
         
@@ -843,9 +883,12 @@ class ReservaRepository:
             "valor_diaria": float(reserva.valorDiaria) if reserva.valorDiaria else 0.0,
             "num_diarias": reserva.numDiarias,
             "valor_total": valor_total,
+            "valor_desconto": valor_desconto,
+            "valor_total_com_desconto": valor_total_com_desconto,
             "status": status_reserva,
             "pagamentos": pagamentos,
             "hospedagem": hospedagem,
+            "cupom_uso": cupom_uso,
             "created_at": reserva.createdAt.isoformat() if reserva.createdAt else None,
             "updated_at": reserva.updatedAt.isoformat() if hasattr(reserva, 'updatedAt') and reserva.updatedAt else None
         }

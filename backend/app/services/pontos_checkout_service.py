@@ -116,3 +116,59 @@ async def creditar_rp_no_checkout(
         "pontos": pontos if result.get("success") else 0,
         "transacao": result,
     }
+
+
+async def creditar_bonus_cupom_no_checkout(
+    db,
+    reserva_id: int,
+    funcionario_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    reserva = await db.reserva.find_unique(where={"id": reserva_id})
+    if not reserva:
+        return {"success": False, "error": "Reserva não encontrada"}
+
+    cliente_id = getattr(reserva, "clienteId", None)
+    if not cliente_id:
+        return {"success": False, "error": "Reserva sem clienteId"}
+
+    cupom_uso = await db.cupomuso.find_first(
+        where={"reservaId": reserva_id},
+        include={"cupom": True},
+    )
+    if not cupom_uso or not getattr(cupom_uso, "cupom", None):
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Reserva sem cupom"}
+
+    pontos_bonus = int(getattr(cupom_uso.cupom, "pontosBonus", 0) or 0)
+    if pontos_bonus <= 0:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cupom sem bônus de pontos"}
+
+    transacao_existente = await db.transacaopontos.find_first(
+        where={
+            "reservaId": reserva_id,
+            "tipo": "CREDITO",
+            "origem": "BONUS_CUPOM",
+        }
+    )
+    if transacao_existente:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Bônus do cupom já creditado"}
+
+    pontos_repo = PontosRepository(db)
+    codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
+    motivo = f"Bônus do cupom {cupom_uso.cupom.codigo} no checkout da reserva {codigo}"
+
+    result = await pontos_repo.criar_transacao_pontos(
+        cliente_id=cliente_id,
+        pontos=pontos_bonus,
+        tipo="CREDITO",
+        origem="BONUS_CUPOM",
+        motivo=motivo,
+        reserva_id=reserva_id,
+        funcionario_id=funcionario_id,
+    )
+
+    return {
+        "success": bool(result.get("success")),
+        "creditado": bool(result.get("success")),
+        "pontos": pontos_bonus if result.get("success") else 0,
+        "transacao": result,
+    }

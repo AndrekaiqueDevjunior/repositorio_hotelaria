@@ -9,6 +9,17 @@ import uuid
 class PagamentoRepository:
     def __init__(self, db: Client):
         self.db = db
+
+    async def _obter_valor_esperado_reserva(self, reserva_id: int, reserva=None) -> float:
+        reserva_obj = reserva or await self.db.reserva.find_unique(where={"id": reserva_id})
+        if not reserva_obj:
+            raise ValueError("Reserva não encontrada")
+
+        valor_base = float(reserva_obj.valorDiaria or 0) * int(reserva_obj.numDiarias or 0)
+        cupom_uso = await self.db.cupomuso.find_first(where={"reservaId": reserva_id})
+        if cupom_uso:
+            return float(cupom_uso.valorFinal or valor_base)
+        return float(valor_base)
     
     async def create(self, pagamento: PagamentoCreate, idempotency_key: str = None) -> Dict[str, Any]:
         """
@@ -21,6 +32,12 @@ class PagamentoRepository:
         reserva = await self.db.reserva.find_unique(where={"id": pagamento.reserva_id})
         if not reserva:
             raise ValueError("Reserva não encontrada")
+
+        valor_esperado = await self._obter_valor_esperado_reserva(pagamento.reserva_id, reserva)
+        if abs(float(pagamento.valor) - valor_esperado) > 0.01:
+            raise ValueError(
+                f"Valor do pagamento divergente da reserva. Esperado: R$ {valor_esperado:.2f}"
+            )
         
         # PAG-002 FIX: Validar status da reserva antes de processar pagamento
         if reserva.statusReserva in ["CANCELADO", "CHECKED_OUT"]:
@@ -242,6 +259,12 @@ class PagamentoRepository:
         reserva = await self.db.reserva.find_unique(where={"id": pagamento_data["reserva_id"]})
         if not reserva:
             raise ValueError("Reserva não encontrada")
+
+        valor_esperado = await self._obter_valor_esperado_reserva(pagamento_data["reserva_id"], reserva)
+        if abs(float(pagamento_data["valor"]) - valor_esperado) > 0.01:
+            raise ValueError(
+                f"Valor do pagamento divergente da reserva. Esperado: R$ {valor_esperado:.2f}"
+            )
         
         # Criar pagamento com status APROVADO
         novo_pagamento = await self.db.pagamento.create(

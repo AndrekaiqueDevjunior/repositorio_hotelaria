@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from app.repositories.notificacao_repo import NotificacaoRepository
 from app.utils.datetime_utils import now_utc
+from app.services.email_service import EmailService
 
 
 class NotificationService:
@@ -175,6 +176,38 @@ class NotificationService:
                         "quarto_numero": quarto_numero
                     }
                 )
+
+            # Email operacional para a empresa quando houver nova reserva
+            try:
+                cliente_email_data = None
+                cliente_id = _get(reserva, "clienteId") or _get(reserva, "cliente_id")
+                if cliente_id:
+                    cliente = await db.cliente.find_unique(where={"id": int(cliente_id)})
+                    if cliente:
+                        cliente_email_data = {
+                            "nome_completo": getattr(cliente, "nomeCompleto", None),
+                            "documento": getattr(cliente, "documento", None),
+                            "email": getattr(cliente, "email", None),
+                            "telefone": getattr(cliente, "telefone", None),
+                        }
+
+                email_service = EmailService()
+                await email_service.enviar_notificacao_nova_reserva(
+                    {
+                        "id": reserva_id,
+                        "codigo_reserva": codigo_reserva,
+                        "cliente_nome": cliente_nome,
+                        "quarto_numero": quarto_numero,
+                        "tipo_suite": _get(reserva, "tipoSuite") or _get(reserva, "tipo_suite"),
+                        "checkin_previsto": checkin_str,
+                        "checkout_previsto": _get(reserva, "checkoutPrevisto") or _get(reserva, "checkout_previsto"),
+                        "valor_total": valor_total,
+                        "status": _get(reserva, "statusReserva") or _get(reserva, "status") or "PENDENTE",
+                    },
+                    cliente_email_data,
+                )
+            except Exception as email_error:
+                print(f"[EMAIL] Erro ao notificar nova reserva por email: {email_error}")
             
             print(f"[NOTIFICAÇÃO] Notificação de nova reserva #{reserva_id} criada com sucesso")
             

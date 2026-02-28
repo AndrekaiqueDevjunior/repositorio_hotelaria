@@ -9,6 +9,7 @@ function PontosContent() {
   const { hasRole } = useAuth()
   const canManageRegras = hasRole(['ADMIN', 'GERENTE'])
   const canManagePremios = hasRole(['ADMIN', 'GERENTE'])
+  const canManageCupons = hasRole(['ADMIN', 'GERENTE'])
 
   const [activeTab, setActiveTab] = useState('dashboard')
   const [saldo, setSaldo] = useState(0)
@@ -51,6 +52,24 @@ function PontosContent() {
     ativo: true
   })
   const [precoEdits, setPrecoEdits] = useState({})
+  const [cupons, setCupons] = useState([])
+  const [cuponsLoading, setCuponsLoading] = useState(false)
+  const [cuponsError, setCuponsError] = useState('')
+  const [editCupomId, setEditCupomId] = useState(null)
+  const [cupomForm, setCupomForm] = useState({
+    codigo: '',
+    descricao: '',
+    tipo_desconto: 'PERCENTUAL',
+    valor_desconto: '',
+    pontos_bonus: '',
+    min_diarias: '',
+    suites_permitidas: '',
+    data_inicio: '',
+    data_fim: '',
+    limite_total_usos: '',
+    limite_por_cliente: '',
+    ativo: true
+  })
   
   // Cliente selecionado
   const [clienteId, setClienteId] = useState(null)
@@ -90,12 +109,16 @@ function PontosContent() {
       loadPremios()
     }
 
+    if (activeTab === 'cupons') {
+      loadCupons()
+    }
+
     if (activeTab === 'validar-resgate') {
       loadResgatesPendentes()
     }
 
     setError('')
-  }, [activeTab, clienteId, canManageRegras, canManagePremios])
+  }, [activeTab, clienteId, canManageRegras, canManagePremios, canManageCupons])
 
   const resetRegraForm = () => {
     setEditRegraId(null)
@@ -108,6 +131,45 @@ function PontosContent() {
       data_fim: '',
       ativo: true
     })
+  }
+
+  const resetCupomForm = () => {
+    setEditCupomId(null)
+    setCupomForm({
+      codigo: '',
+      descricao: '',
+      tipo_desconto: 'PERCENTUAL',
+      valor_desconto: '',
+      pontos_bonus: '',
+      min_diarias: '',
+      suites_permitidas: '',
+      data_inicio: '',
+      data_fim: '',
+      limite_total_usos: '',
+      limite_por_cliente: '',
+      ativo: true
+    })
+  }
+
+  const normalizarSuitesCupom = (value) =>
+    value
+      .split(',')
+      .map((item) => item.trim().toUpperCase())
+      .filter(Boolean)
+
+  const loadCupons = async () => {
+    if (!canManageCupons) return
+
+    try {
+      setCuponsLoading(true)
+      setCuponsError('')
+      const res = await api.get('/cupons')
+      setCupons(Array.isArray(res.data) ? res.data : [])
+    } catch (err) {
+      setCuponsError(formatErrorMessage(err))
+    } finally {
+      setCuponsLoading(false)
+    }
   }
 
   const loadRegras = async () => {
@@ -300,6 +362,122 @@ function PontosContent() {
       setPremiosError(formatErrorMessage(err))
     } finally {
       setPremiosLoading(false)
+    }
+  }
+
+  const startEditCupom = (cupom) => {
+    setEditCupomId(cupom.id)
+    setCupomForm({
+      codigo: cupom.codigo || '',
+      descricao: cupom.descricao || '',
+      tipo_desconto: cupom.tipo_desconto || 'PERCENTUAL',
+      valor_desconto: cupom.valor_desconto ?? '',
+      pontos_bonus: cupom.pontos_bonus ?? '',
+      min_diarias: cupom.min_diarias ?? '',
+      suites_permitidas: Array.isArray(cupom.suites_permitidas) ? cupom.suites_permitidas.join(', ') : '',
+      data_inicio: (cupom.data_inicio || '').toString().slice(0, 10),
+      data_fim: (cupom.data_fim || '').toString().slice(0, 10),
+      limite_total_usos: cupom.limite_total_usos ?? '',
+      limite_por_cliente: cupom.limite_por_cliente ?? '',
+      ativo: !!cupom.ativo
+    })
+  }
+
+  const submitCupom = async (e) => {
+    e.preventDefault()
+    if (!canManageCupons) return
+
+    if (!editCupomId && !cupomForm.codigo.trim()) {
+      setCuponsError('Informe o código do cupom')
+      return
+    }
+    if (!cupomForm.valor_desconto || Number(cupomForm.valor_desconto) <= 0) {
+      setCuponsError('Informe um valor de desconto válido')
+      return
+    }
+    if (!cupomForm.data_inicio || !cupomForm.data_fim) {
+      setCuponsError('Informe o período de vigência do cupom')
+      return
+    }
+
+    try {
+      setCuponsLoading(true)
+      setCuponsError('')
+
+      const payload = {
+        descricao: cupomForm.descricao || null,
+        tipo_desconto: cupomForm.tipo_desconto,
+        valor_desconto: Number(cupomForm.valor_desconto),
+        data_inicio: `${cupomForm.data_inicio}T00:00:00`,
+        data_fim: `${cupomForm.data_fim}T23:59:59`,
+        ativo: !!cupomForm.ativo
+      }
+
+      if (!editCupomId) {
+        payload.codigo = cupomForm.codigo.trim().toUpperCase()
+      }
+
+      if (cupomForm.pontos_bonus !== '') {
+        payload.pontos_bonus = Number(cupomForm.pontos_bonus)
+      }
+      if (cupomForm.min_diarias !== '') {
+        payload.min_diarias = Number(cupomForm.min_diarias)
+      }
+      if (cupomForm.limite_total_usos !== '') {
+        payload.limite_total_usos = Number(cupomForm.limite_total_usos)
+      }
+      if (cupomForm.limite_por_cliente !== '') {
+        payload.limite_por_cliente = Number(cupomForm.limite_por_cliente)
+      }
+
+      const suites = normalizarSuitesCupom(cupomForm.suites_permitidas)
+      if (suites.length) {
+        payload.suites_permitidas = suites
+      }
+
+      if (editCupomId) {
+        await api.put(`/cupons/${editCupomId}`, payload)
+      } else {
+        await api.post('/cupons', payload)
+      }
+
+      resetCupomForm()
+      await loadCupons()
+    } catch (err) {
+      setCuponsError(formatErrorMessage(err))
+    } finally {
+      setCuponsLoading(false)
+    }
+  }
+
+  const toggleCupomStatus = async (cupom) => {
+    if (!canManageCupons) return
+
+    try {
+      setCuponsLoading(true)
+      setCuponsError('')
+      await api.patch(`/cupons/${cupom.id}/ativar`, { ativo: !cupom.ativo })
+      await loadCupons()
+    } catch (err) {
+      setCuponsError(formatErrorMessage(err))
+    } finally {
+      setCuponsLoading(false)
+    }
+  }
+
+  const excluirCupom = async (cupomId) => {
+    if (!canManageCupons) return
+    if (!window.confirm('Deseja desativar este cupom?')) return
+
+    try {
+      setCuponsLoading(true)
+      setCuponsError('')
+      await api.delete(`/cupons/${cupomId}`)
+      await loadCupons()
+    } catch (err) {
+      setCuponsError(formatErrorMessage(err))
+    } finally {
+      setCuponsLoading(false)
     }
   }
 
@@ -1114,6 +1292,273 @@ function PontosContent() {
     </div>
   )
 
+  const renderCupons = () => (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold mb-4">Cupons Promocionais</h3>
+
+      {!canManageCupons ? (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+          <p className="text-gray-600 dark:text-gray-300">Acesso restrito a ADMIN e GERENTE.</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h4 className="font-semibold text-gray-900 dark:text-white">Cadastrar / Editar cupom</h4>
+                <p className="text-sm text-gray-500 mt-1">Gerencie cupons de desconto e bônus de RP diretamente no módulo de pontos.</p>
+              </div>
+              {editCupomId ? (
+                <button
+                  type="button"
+                  onClick={resetCupomForm}
+                  className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-900"
+                >
+                  Cancelar edição
+                </button>
+              ) : null}
+            </div>
+
+            {cuponsError ? (
+              <div className="mb-4 p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">
+                {cuponsError}
+              </div>
+            ) : null}
+
+            <form onSubmit={submitCupom} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Código</label>
+                <input
+                  value={cupomForm.codigo}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, codigo: e.target.value.toUpperCase() }))}
+                  disabled={!!editCupomId}
+                  className="w-full p-2 border border-gray-300 rounded-lg disabled:bg-gray-100"
+                  placeholder="CARNAVAL10"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de desconto</label>
+                <select
+                  value={cupomForm.tipo_desconto}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, tipo_desconto: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="PERCENTUAL">Percentual</option>
+                  <option value="FIXO">Fixo</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor do desconto</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={cupomForm.valor_desconto}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, valor_desconto: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Pontos bônus</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={cupomForm.pontos_bonus}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, pontos_bonus: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Mínimo de diárias</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={cupomForm.min_diarias}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, min_diarias: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suítes permitidas</label>
+                <input
+                  value={cupomForm.suites_permitidas}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, suites_permitidas: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="MASTER, DUPLA, REAL"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data início</label>
+                <input
+                  type="date"
+                  value={cupomForm.data_inicio}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, data_inicio: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data fim</label>
+                <input
+                  type="date"
+                  value={cupomForm.data_fim}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, data_fim: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Limite total de usos</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={cupomForm.limite_total_usos}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, limite_total_usos: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Limite por cliente</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={cupomForm.limite_por_cliente}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, limite_por_cliente: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Descrição</label>
+                <textarea
+                  value={cupomForm.descricao}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, descricao: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  rows="3"
+                  placeholder="Ex: Desconto de carnaval com bônus de fidelidade"
+                />
+              </div>
+
+              <div className="md:col-span-3 flex items-center justify-between">
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={!!cupomForm.ativo}
+                    onChange={(e) => setCupomForm(prev => ({ ...prev, ativo: e.target.checked }))}
+                  />
+                  Ativo
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={cuponsLoading}
+                  className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60"
+                >
+                  {editCupomId ? 'Salvar' : 'Criar'}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="font-semibold text-gray-900 dark:text-white">Cupons cadastrados</h4>
+              <button
+                type="button"
+                onClick={loadCupons}
+                disabled={cuponsLoading}
+                className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-900 disabled:opacity-60"
+              >
+                Atualizar
+              </button>
+            </div>
+
+            {cuponsLoading ? (
+              <div className="text-gray-600 dark:text-gray-300">Carregando cupons...</div>
+            ) : cupons.length ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left border-b">
+                      <th className="py-2 pr-4">Código</th>
+                      <th className="py-2 pr-4">Tipo</th>
+                      <th className="py-2 pr-4">Desconto</th>
+                      <th className="py-2 pr-4">Bônus</th>
+                      <th className="py-2 pr-4">Vigência</th>
+                      <th className="py-2 pr-4">Uso</th>
+                      <th className="py-2 pr-4">Status</th>
+                      <th className="py-2 pr-4">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cupons.map((cupom) => (
+                      <tr key={cupom.id} className="border-b">
+                        <td className="py-2 pr-4 font-semibold">{cupom.codigo}</td>
+                        <td className="py-2 pr-4">{cupom.tipo_desconto}</td>
+                        <td className="py-2 pr-4">
+                          {cupom.tipo_desconto === 'PERCENTUAL'
+                            ? `${Number(cupom.valor_desconto || 0).toFixed(2)}%`
+                            : `R$ ${Number(cupom.valor_desconto || 0).toFixed(2)}`}
+                        </td>
+                        <td className="py-2 pr-4">{cupom.pontos_bonus || 0} RP</td>
+                        <td className="py-2 pr-4">
+                          {(cupom.data_inicio || '').toString().slice(0, 10)} até {(cupom.data_fim || '').toString().slice(0, 10)}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {cupom.total_usos || 0}
+                          {cupom.limite_total_usos ? ` / ${cupom.limite_total_usos}` : ''}
+                        </td>
+                        <td className="py-2 pr-4">{cupom.ativo ? 'Ativo' : 'Inativo'}</td>
+                        <td className="py-2 pr-4">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => startEditCupom(cupom)}
+                              className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleCupomStatus(cupom)}
+                              className={`px-3 py-1 rounded text-white ${cupom.ativo ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
+                            >
+                              {cupom.ativo ? 'Inativar' : 'Ativar'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => excluirCupom(cupom.id)}
+                              className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-gray-600 dark:text-gray-300">Nenhum cupom cadastrado.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
   const renderRegras = () => (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold mb-4">Regras de Pontuacao</h3>
@@ -1478,8 +1923,9 @@ function PontosContent() {
     const isRegrasTab = activeTab === 'regras'
     const isPremiosTab = activeTab === 'premios'
     const isPrecosTab = activeTab === 'precos'
+    const isCuponsTab = activeTab === 'cupons'
     const isValidarResgateTab = activeTab === 'validar-resgate'
-    const needsCliente = !isRegrasTab && !isPremiosTab && !isPrecosTab && !isValidarResgateTab
+    const needsCliente = !isRegrasTab && !isPremiosTab && !isPrecosTab && !isCuponsTab && !isValidarResgateTab
 
     return (
       <div className="p-6">
@@ -1604,6 +2050,16 @@ function PontosContent() {
                 Precos
               </button>
             ) : null}
+            {canManageCupons ? (
+              <button
+                onClick={() => setActiveTab('cupons')}
+                className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
+                  activeTab === 'cupons' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Cupons
+              </button>
+            ) : null}
             <button
               onClick={() => setActiveTab('validar-resgate')}
               className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
@@ -1622,6 +2078,8 @@ function PontosContent() {
           renderPremios()
         ) : activeTab === 'precos' ? (
           renderPrecos()
+        ) : activeTab === 'cupons' ? (
+          renderCupons()
         ) : activeTab === 'validar-resgate' ? (
           renderValidarResgate()
         ) : clienteId ? (

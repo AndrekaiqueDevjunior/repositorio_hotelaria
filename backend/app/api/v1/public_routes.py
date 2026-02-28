@@ -6,6 +6,7 @@ from app.utils.datetime_utils import now_utc, to_utc, LOCAL_TIMEZONE
 from app.repositories.quarto_repo import QuartoRepository
 from app.repositories.reserva_repo import ReservaRepository
 from app.repositories.cliente_repo import ClienteRepository
+from app.repositories.cupom_repo import CupomRepository
 from app.repositories.pontos_repo import PontosRepository
 from app.repositories.tarifa_suite_repo import TarifaSuiteRepository
 from app.core.database import get_db
@@ -15,6 +16,8 @@ import re
 import os
 import httpx
 from app.services.consulta_publica_service import ConsultaPublicaService
+from app.services.cupom_service import CupomService
+from app.services.notification_service import NotificationService
 from app.middleware.rate_limit import rate_limit_strict
 
 router = APIRouter(prefix="/public", tags=["public"])
@@ -37,6 +40,7 @@ class ReservaPublicaCreate(BaseModel):
     num_criancas: int = 0
     observacoes: Optional[str] = None
     metodo_pagamento: str = "na_chegada"
+    cupom_codigo: Optional[str] = None
 
 
 class ClienteRecorrenteLookupRequest(BaseModel):
@@ -521,6 +525,7 @@ async def criar_reserva_publica(
         db = get_db()
         cliente_repo = ClienteRepository(db)
         reserva_repo = ReservaRepository(db)
+        cupom_service = CupomService(CupomRepository(db))
 
         documento_limpo = ''.join(filter(str.isdigit, reserva_data.documento))
         telefone_limpo = ''.join(filter(str.isdigit, reserva_data.telefone))
@@ -590,6 +595,7 @@ async def criar_reserva_publica(
         valor_diaria = await _obter_tarifa_diaria(db, reserva_data.tipo_suite, checkin_date.date())
 
         num_diarias = (checkout_date.date() - checkin_date.date()).days
+        valor_total_base = float(valor_diaria) * num_diarias
 
         from app.schemas.reserva_schema import ReservaCreate
         from app.schemas.quarto_schema import TipoSuite
@@ -598,6 +604,18 @@ async def criar_reserva_publica(
             tipo_suite = TipoSuite(reserva_data.tipo_suite)
         except Exception:
             raise HTTPException(status_code=400, detail="Tipo de suíte inválido")
+
+        cupom_codigo = (reserva_data.cupom_codigo or "").strip().upper() or None
+        if cupom_codigo:
+            validacao_cupom = await cupom_service.validar(
+                codigo=cupom_codigo,
+                cliente_id=cliente["id"],
+                suite_tipo=reserva_data.tipo_suite,
+                num_diarias=num_diarias,
+                valor_total_base=valor_total_base,
+            )
+            if not validacao_cupom.get("valido"):
+                raise HTTPException(status_code=400, detail=validacao_cupom.get("mensagem") or "Cupom inválido")
 
         reserva_criada = await reserva_repo.create(
             ReservaCreate(
@@ -608,8 +626,24 @@ async def criar_reserva_publica(
                 checkout_previsto=checkout_dt,
                 valor_diaria=valor_diaria,
                 num_diarias=num_diarias
-            )
+            ),
+            notificar=not bool(cupom_codigo)
         )
+
+        if cupom_codigo:
+            try:
+                await cupom_service.aplicar_em_reserva(reserva_criada["id"], cupom_codigo)
+            except HTTPException:
+                await db.reserva.delete(where={"id": reserva_criada["id"]})
+                raise
+            except Exception:
+                await db.reserva.delete(where={"id": reserva_criada["id"]})
+                raise
+
+            reserva_criada = await reserva_repo.get_by_id(reserva_criada["id"])
+            reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
+            if reserva_model:
+                await NotificationService.notificar_nova_reserva(db, reserva_model)
 
         return {
             "success": True,
@@ -624,6 +658,11 @@ async def criar_reserva_publica(
                 "num_diarias": reserva_criada.get("num_diarias"),
                 "valor_diaria": float(reserva_criada.get("valor_diaria", 0.0)),
                 "valor_total": float(reserva_criada.get("valor_total", 0.0)),
+                "valor_desconto": float(reserva_criada.get("valor_desconto", 0.0) or 0.0),
+                "valor_total_com_desconto": float(
+                    reserva_criada.get("valor_total_com_desconto", reserva_criada.get("valor_total", 0.0)) or 0.0
+                ),
+                "cupom_uso": reserva_criada.get("cupom_uso"),
             },
             "instrucoes": {
                 "checkin_horario": "12:00",
