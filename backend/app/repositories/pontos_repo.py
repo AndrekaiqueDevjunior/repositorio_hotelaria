@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from prisma import Client
 from fastapi import HTTPException
 from app.schemas.pontos_schema import (
@@ -146,7 +146,9 @@ class PontosRepository:
             "reserva_id": transacao.reservaId if hasattr(transacao, 'reservaId') else None,
             "reserva_codigo": transacao.reserva.codigoReserva if hasattr(transacao, 'reserva') and transacao.reserva else None,
             "funcionario_id": transacao.funcionarioId if hasattr(transacao, 'funcionarioId') else None,
-            "funcionario_nome": transacao.funcionario.nome if hasattr(transacao, 'funcionario') and transacao.funcionario else None
+            "funcionario_nome": transacao.funcionario.nome if hasattr(transacao, 'funcionario') and transacao.funcionario else None,
+            "cliente_id": transacao.clienteId if hasattr(transacao, 'clienteId') else None,
+            "cliente_nome": transacao.cliente.nomeCompleto if hasattr(transacao, 'cliente') and transacao.cliente else None
         }
     
     async def get_estatisticas(self) -> Dict[str, Any]:
@@ -162,15 +164,22 @@ class PontosRepository:
         # Transações recentes
         transacoes_recentes = await self.db.transacaopontos.find_many(
             order={"createdAt": "desc"},
-            take=10
+            take=10,
+            include={"cliente": True, "funcionario": True, "reserva": True}
         )
-        
+
+        inicio_hoje = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        transacoes_hoje = await self.db.transacaopontos.count(
+            where={"createdAt": {"gte": inicio_hoje}}
+        )
+
         return {
             "success": True,
             "total_pontos_circulacao": total_pontos,
             "total_usuarios": len(todos_usuarios),
             "usuarios_com_pontos": total_usuarios_com_pontos,
             "total_transacoes": total_transacoes,
+            "transacoes_hoje": transacoes_hoje,
             "transacoes_recentes": [self._serialize_transacao(t) for t in transacoes_recentes]
         }
     
@@ -251,4 +260,75 @@ class PontosRepository:
             "saldo_anterior": saldo_anterior,
             "saldo_posterior": saldo_posterior,
             "pontos": pontos
+        }
+
+    async def listar_ajustes_manuais(
+        self,
+        cliente_id: Optional[int] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        where: Dict[str, Any] = {
+            "origem": {"in": ["AJUSTE_MANUAL", "ESTORNO_AJUSTE_MANUAL"]}
+        }
+        if cliente_id is not None:
+            where["clienteId"] = cliente_id
+
+        transacoes = await self.db.transacaopontos.find_many(
+            where=where,
+            order={"createdAt": "desc"},
+            take=limit,
+            include={"cliente": True, "funcionario": True, "reserva": True}
+        )
+
+        return {
+            "success": True,
+            "transacoes": [self._serialize_transacao(t) for t in transacoes],
+            "total": len(transacoes)
+        }
+
+    async def estornar_ajuste_manual(
+        self,
+        transacao_id: int,
+        funcionario_id: int,
+        motivo: Optional[str] = None
+    ) -> Dict[str, Any]:
+        transacao = await self.db.transacaopontos.find_unique(
+            where={"id": transacao_id},
+            include={"cliente": True, "funcionario": True}
+        )
+
+        if not transacao:
+            raise ValueError("Transação não encontrada")
+
+        if transacao.origem != "AJUSTE_MANUAL":
+            raise ValueError("Apenas ajustes manuais podem ser estornados")
+
+        estorno_existente = await self.db.transacaopontos.find_first(
+            where={
+                "origem": "ESTORNO_AJUSTE_MANUAL",
+                "clienteId": transacao.clienteId,
+                "motivo": {"contains": f"#{transacao_id}"},
+            }
+        )
+        if estorno_existente:
+            raise ValueError("Este ajuste manual já foi estornado")
+
+        motivo_estorno = (
+            f"Estorno da transação #{transacao_id}"
+            + (f" | {motivo.strip()}" if motivo and motivo.strip() else "")
+        )
+
+        resultado = await self.criar_transacao_pontos(
+            cliente_id=transacao.clienteId,
+            pontos=transacao.pontos * -1,
+            tipo="ESTORNO",
+            origem="ESTORNO_AJUSTE_MANUAL",
+            motivo=motivo_estorno,
+            funcionario_id=funcionario_id
+        )
+
+        return {
+            "success": True,
+            "transacao_estornada_id": transacao_id,
+            **resultado
         }

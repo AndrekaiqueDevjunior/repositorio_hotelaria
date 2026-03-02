@@ -20,7 +20,11 @@ class AjustarPontosRequest(BaseModel):
     cliente_id: int
     pontos: int  # positivo para creditar, negativo para debitar
     motivo: str
-    usuario_id: int
+    usuario_id: Optional[int] = None
+
+
+class EstornarPontosRequest(BaseModel):
+    motivo: Optional[str] = None
 
 
 class GerarConviteRequest(BaseModel):

@@ -11,6 +11,8 @@ from app.repositories.pontos_repo import PontosRepository
 from app.repositories.reserva_repo import ReservaRepository
 from app.repositories.cliente_repo import ClienteRepository
 from app.utils.cache import cache_result, invalidate_cache_pattern
+from app.services.auditoria_service import AuditoriaService
+from fastapi import Request
 
 
 class PontosService:
@@ -29,7 +31,8 @@ class PontosService:
     async def ajustar_pontos(
         self,
         request: AjustarPontosRequest,
-        funcionario_id: int = None
+        funcionario_id: int = None,
+        http_request: Request = None
     ) -> Dict[str, Any]:
         try:
             result = await self.pontos_repo.ajustar_pontos(
@@ -39,6 +42,14 @@ class PontosService:
 
             if result["success"]:
                 invalidate_cache_pattern(f"saldo_pontos:{request.cliente_id}")
+                if funcionario_id:
+                    await AuditoriaService.registrar_operacao_pontos(
+                        funcionario_id=funcionario_id,
+                        cliente_id=request.cliente_id,
+                        pontos=request.pontos,
+                        origem="AJUSTE_MANUAL",
+                        request=http_request
+                    )
 
             return result
 
@@ -314,6 +325,43 @@ class PontosService:
             return await self.pontos_repo.get_estatisticas()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao consultar estatísticas: {str(e)}")
+
+    async def listar_ajustes_manuais(self, cliente_id: int = None, limit: int = 50) -> Dict[str, Any]:
+        try:
+            return await self.pontos_repo.listar_ajustes_manuais(cliente_id=cliente_id, limit=limit)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao listar ajustes: {str(e)}")
+
+    async def estornar_ajuste_manual(
+        self,
+        transacao_id: int,
+        funcionario_id: int,
+        motivo: str = None,
+        http_request: Request = None
+    ) -> Dict[str, Any]:
+        try:
+            result = await self.pontos_repo.estornar_ajuste_manual(
+                transacao_id=transacao_id,
+                funcionario_id=funcionario_id,
+                motivo=motivo
+            )
+            if result["success"]:
+                await AuditoriaService.registrar_acao(
+                    funcionario_id=funcionario_id,
+                    entidade="PONTOS",
+                    entidade_id=str(transacao_id),
+                    acao="ESTORNO",
+                    payload={
+                        "transacao_id": transacao_id,
+                        "motivo": motivo,
+                        "transacao_estorno_id": result.get("transacao_id"),
+                    },
+                    request=http_request,
+                    detalhes="Estorno de ajuste manual de pontos"
+                )
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao estornar ajuste: {str(e)}")
 
     @staticmethod
     def calcular_pontos_reserva(valor_total: float) -> int:

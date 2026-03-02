@@ -3,7 +3,7 @@ from app.schemas.pontos_schema import (
     AjustarPontosRequest, SaldoResponse, TransacaoResponse,
     ValidarReservaRequest, ConfirmarLancamentoRequest,
     GerarConviteRequest, UsarConviteRequest,
-    ValidarReservaResponse, ConviteResponse
+    ValidarReservaResponse, ConviteResponse, EstornarPontosRequest
 )
 from app.services.pontos_service import PontosService, get_pontos_service as _get_pontos_service
 from app.services.real_points_service import RealPointsService
@@ -12,7 +12,7 @@ from app.repositories.pontos_repo_atomic import PontosRepositoryAtomic
 from app.repositories.reserva_repo import ReservaRepository
 from app.repositories.cliente_repo import ClienteRepository
 from app.core.database import get_db
-from app.middleware.auth_middleware import get_current_active_user, require_admin_or_manager
+from app.middleware.auth_middleware import get_current_active_user, require_admin_or_manager, require_admin
 from app.core.security import User
 from app.middleware.rate_limit import rate_limit_strict, rate_limit_moderate
 from typing import List, Optional
@@ -205,3 +205,116 @@ async def obter_estatisticas_pontos(
 ):
     """Obter estatísticas gerais do sistema de pontos - Requer ADMIN ou GERENTE"""
     return await service.get_estatisticas()
+
+
+@router.post("/ajustar", response_model=dict)
+async def ajustar_pontos_admin(
+    request: Request,
+    payload: AjustarPontosRequest,
+    service: PontosService = Depends(get_pontos_service),
+    current_user: User = Depends(require_admin)
+):
+    """Ajustar pontos manualmente - apenas ADMIN."""
+    payload.usuario_id = current_user.id
+    return await service.ajustar_pontos(payload, funcionario_id=current_user.id, http_request=request)
+
+
+@router.get("/ajustes", response_model=dict)
+async def listar_ajustes_manuais(
+    cliente_id: Optional[int] = None,
+    limit: int = 50,
+    service: PontosService = Depends(get_pontos_service),
+    current_user: User = Depends(require_admin)
+):
+    """Listar ajustes manuais de pontos - apenas ADMIN."""
+    return await service.listar_ajustes_manuais(cliente_id=cliente_id, limit=limit)
+
+
+@router.post("/ajustes/{transacao_id}/estornar", response_model=dict)
+async def estornar_ajuste_manual(
+    transacao_id: int,
+    payload: EstornarPontosRequest,
+    request: Request,
+    service: PontosService = Depends(get_pontos_service),
+    current_user: User = Depends(require_admin)
+):
+    """Estornar ajuste manual de pontos - apenas ADMIN."""
+    return await service.estornar_ajuste_manual(
+        transacao_id=transacao_id,
+        funcionario_id=current_user.id,
+        motivo=payload.motivo,
+        http_request=request
+    )
+
+
+def get_pontos_regras_repo() -> PontosRegrasRepository:
+    return PontosRegrasRepository(get_db())
+
+
+@router.get("/regras", response_model=List[PontosRegraResponse])
+async def listar_regras_pontos(
+    ativo: Optional[bool] = None,
+    repo: PontosRegrasRepository = Depends(get_pontos_regras_repo),
+    current_user: User = Depends(require_admin)
+):
+    return await repo.list_all(ativo=ativo)
+
+
+@router.post("/regras", response_model=PontosRegraResponse)
+async def criar_regra_pontos(
+    payload: PontosRegraCreateRequest,
+    repo: PontosRegrasRepository = Depends(get_pontos_regras_repo),
+    current_user: User = Depends(require_admin)
+):
+    if payload.data_inicio > payload.data_fim:
+        raise HTTPException(status_code=400, detail="data_inicio não pode ser maior que data_fim")
+    sobrepoe = await repo.verificar_sobreposicao(payload.suite_tipo, payload.data_inicio, payload.data_fim)
+    if sobrepoe:
+        raise HTTPException(status_code=400, detail="Já existe regra ativa sobreposta para esta suíte no período informado")
+    return await repo.create({
+        "suiteTipo": payload.suite_tipo,
+        "diariasBase": payload.diarias_base,
+        "rpPorBase": payload.rp_por_base,
+        "temporada": payload.temporada,
+        "dataInicio": payload.data_inicio,
+        "dataFim": payload.data_fim,
+        "ativo": payload.ativo,
+    })
+
+
+@router.put("/regras/{regra_id}", response_model=PontosRegraResponse)
+async def atualizar_regra_pontos(
+    regra_id: int,
+    payload: PontosRegraUpdateRequest,
+    repo: PontosRegrasRepository = Depends(get_pontos_regras_repo),
+    current_user: User = Depends(require_admin)
+):
+    if payload.data_inicio > payload.data_fim:
+        raise HTTPException(status_code=400, detail="data_inicio não pode ser maior que data_fim")
+    sobrepoe = await repo.verificar_sobreposicao(payload.suite_tipo, payload.data_inicio, payload.data_fim, ignore_id=regra_id)
+    if sobrepoe:
+        raise HTTPException(status_code=400, detail="Já existe regra ativa sobreposta para esta suíte no período informado")
+    regra = await repo.update(regra_id, {
+        "suiteTipo": payload.suite_tipo,
+        "diariasBase": payload.diarias_base,
+        "rpPorBase": payload.rp_por_base,
+        "temporada": payload.temporada,
+        "dataInicio": payload.data_inicio,
+        "dataFim": payload.data_fim,
+        "ativo": payload.ativo,
+    })
+    if not regra:
+        raise HTTPException(status_code=404, detail="Regra não encontrada")
+    return regra
+
+
+@router.delete("/regras/{regra_id}", response_model=dict)
+async def excluir_regra_pontos(
+    regra_id: int,
+    repo: PontosRegrasRepository = Depends(get_pontos_regras_repo),
+    current_user: User = Depends(require_admin)
+):
+    sucesso = await repo.soft_delete(regra_id)
+    if not sucesso:
+        raise HTTPException(status_code=404, detail="Regra não encontrada")
+    return {"success": True, "message": "Regra desativada com sucesso"}

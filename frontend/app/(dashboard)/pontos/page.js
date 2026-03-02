@@ -7,9 +7,10 @@ import { useAuth } from '../../../contexts/AuthContext'
 
 function PontosContent() {
   const { hasRole } = useAuth()
-  const canManageRegras = hasRole(['ADMIN', 'GERENTE'])
-  const canManagePremios = hasRole(['ADMIN', 'GERENTE'])
-  const canManageCupons = hasRole(['ADMIN', 'GERENTE'])
+  const canManagePontos = hasRole(['ADMIN'])
+  const canManageRegras = hasRole(['ADMIN'])
+  const canManagePremios = hasRole(['ADMIN'])
+  const canManageCupons = hasRole(['ADMIN'])
 
   const [activeTab, setActiveTab] = useState('dashboard')
   const [saldo, setSaldo] = useState(0)
@@ -22,6 +23,13 @@ function PontosContent() {
   const [diariasPendentes, setDiariasPendentes] = useState(0)
   const [reservasCliente, setReservasCliente] = useState([])
   const [estatisticas, setEstatisticas] = useState(null)
+  const [ajustes, setAjustes] = useState([])
+  const [ajustesLoading, setAjustesLoading] = useState(false)
+  const [ajustesError, setAjustesError] = useState('')
+  const [ajusteForm, setAjusteForm] = useState({
+    pontos: '',
+    motivo: ''
+  })
 
   const [regras, setRegras] = useState([])
   const [regrasLoading, setRegrasLoading] = useState(false)
@@ -117,8 +125,12 @@ function PontosContent() {
       loadResgatesPendentes()
     }
 
+    if (activeTab === 'ajustes' && clienteId) {
+      loadAjustes()
+    }
+
     setError('')
-  }, [activeTab, clienteId, canManageRegras, canManagePremios, canManageCupons])
+  }, [activeTab, clienteId, canManagePontos, canManageRegras, canManagePremios, canManageCupons])
 
   const resetRegraForm = () => {
     setEditRegraId(null)
@@ -723,6 +735,75 @@ function PontosContent() {
     }
   }
 
+  const loadAjustes = async () => {
+    if (!canManagePontos || !clienteId) return
+
+    try {
+      setAjustesLoading(true)
+      setAjustesError('')
+      const res = await api.get(`/pontos/ajustes?cliente_id=${clienteId}&limit=100`)
+      setAjustes(res.data?.transacoes || [])
+    } catch (error) {
+      setAjustes([])
+      setAjustesError(formatErrorMessage(error))
+    } finally {
+      setAjustesLoading(false)
+    }
+  }
+
+  const submitAjuste = async (e) => {
+    e.preventDefault()
+    if (!canManagePontos) return
+    if (!clienteId) {
+      setAjustesError('Selecione um cliente antes de ajustar pontos')
+      return
+    }
+
+    const pontos = Number(ajusteForm.pontos)
+    if (!pontos || Number.isNaN(pontos)) {
+      setAjustesError('Informe uma quantidade válida de pontos')
+      return
+    }
+    if (!ajusteForm.motivo.trim()) {
+      setAjustesError('Informe o motivo do ajuste')
+      return
+    }
+
+    try {
+      setAjustesLoading(true)
+      setAjustesError('')
+      await api.post('/pontos/ajustar', {
+        cliente_id: clienteId,
+        pontos,
+        motivo: ajusteForm.motivo.trim()
+      })
+      setAjusteForm({ pontos: '', motivo: '' })
+      await Promise.all([loadSaldo(), loadHistorico(), loadAjustes(), loadEstatisticas()])
+    } catch (error) {
+      setAjustesError(formatErrorMessage(error))
+    } finally {
+      setAjustesLoading(false)
+    }
+  }
+
+  const estornarAjuste = async (transacao) => {
+    if (!canManagePontos) return
+    if (!window.confirm(`Estornar a transação #${transacao.id}?`)) return
+
+    try {
+      setAjustesLoading(true)
+      setAjustesError('')
+      await api.post(`/pontos/ajustes/${transacao.id}/estornar`, {
+        motivo: `Estorno administrativo da transação #${transacao.id}`
+      })
+      await Promise.all([loadSaldo(), loadHistorico(), loadAjustes(), loadEstatisticas()])
+    } catch (error) {
+      setAjustesError(formatErrorMessage(error))
+    } finally {
+      setAjustesLoading(false)
+    }
+  }
+
   const getTipoTransacaoColor = (tipo) => {
     switch (tipo) {
       case 'CREDITO':
@@ -942,6 +1023,134 @@ function PontosContent() {
           <p>Carregando estatísticas...</p>
         </div>
       )}
+    </div>
+  )
+
+  const renderAjustes = () => (
+    <div className="space-y-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">CRUD operacional de pontos</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Ajustes são registrados em ledger. Correções usam estorno, não edição destrutiva.
+            </p>
+          </div>
+        </div>
+
+        {!canManagePontos ? (
+          <p className="text-gray-600 dark:text-gray-300">Acesso restrito a ADMIN.</p>
+        ) : (
+          <form onSubmit={submitAjuste} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Pontos</label>
+              <input
+                type="number"
+                min="-1000"
+                max="1000"
+                value={ajusteForm.pontos}
+                onChange={(e) => setAjusteForm(prev => ({ ...prev, pontos: e.target.value }))}
+                className="w-full p-2 border border-gray-300 rounded-lg"
+                placeholder="Ex: 50 ou -20"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Motivo</label>
+              <input
+                value={ajusteForm.motivo}
+                onChange={(e) => setAjusteForm(prev => ({ ...prev, motivo: e.target.value }))}
+                className="w-full p-2 border border-gray-300 rounded-lg"
+                placeholder="Ex: compensação operacional, correção manual, bônus comercial"
+              />
+            </div>
+
+            <div className="md:col-span-3 flex items-center justify-between">
+              <div className="text-sm text-gray-500">
+                Cliente selecionado: <span className="font-semibold text-gray-900 dark:text-white">{clienteNome || 'Nenhum'}</span>
+              </div>
+              <button
+                type="submit"
+                disabled={ajustesLoading || !clienteId}
+                className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60"
+              >
+                Registrar ajuste
+              </button>
+            </div>
+          </form>
+        )}
+
+        {ajustesError ? (
+          <div className="mt-4 p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">
+            {ajustesError}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-semibold text-gray-900 dark:text-white">Ajustes manuais e estornos</h4>
+          <button
+            type="button"
+            onClick={loadAjustes}
+            disabled={ajustesLoading || !clienteId}
+            className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-900 disabled:opacity-60"
+          >
+            Atualizar
+          </button>
+        </div>
+
+        {ajustesLoading ? (
+          <div className="text-gray-600 dark:text-gray-300">Carregando ajustes...</div>
+        ) : ajustes.length ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left border-b">
+                  <th className="py-2 pr-4">Data</th>
+                  <th className="py-2 pr-4">Tipo</th>
+                  <th className="py-2 pr-4">Pontos</th>
+                  <th className="py-2 pr-4">Saldo</th>
+                  <th className="py-2 pr-4">Motivo</th>
+                  <th className="py-2 pr-4">Responsável</th>
+                  <th className="py-2 pr-4">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ajustes.map((item) => {
+                  const podeEstornar = item.origem === 'AJUSTE_MANUAL'
+                  return (
+                    <tr key={item.id} className="border-b">
+                      <td className="py-2 pr-4">{item.created_at ? new Date(item.created_at).toLocaleString('pt-BR') : '-'}</td>
+                      <td className="py-2 pr-4">{item.origem}</td>
+                      <td className={`py-2 pr-4 font-semibold ${item.pontos > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {item.pontos > 0 ? '+' : ''}{item.pontos}
+                      </td>
+                      <td className="py-2 pr-4">{item.saldo_anterior} → {item.saldo_posterior}</td>
+                      <td className="py-2 pr-4 max-w-[420px]">{item.motivo || '-'}</td>
+                      <td className="py-2 pr-4">{item.funcionario_nome || '-'}</td>
+                      <td className="py-2 pr-4">
+                        {podeEstornar ? (
+                          <button
+                            type="button"
+                            onClick={() => estornarAjuste(item)}
+                            className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                          >
+                            Estornar
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-500">Sem ação</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-gray-600 dark:text-gray-300">Nenhum ajuste manual encontrado para este cliente.</div>
+        )}
+      </div>
     </div>
   )
 
@@ -1920,6 +2129,7 @@ function PontosContent() {
   )
 
   const renderContent = () => {
+    const isAjustesTab = activeTab === 'ajustes'
     const isRegrasTab = activeTab === 'regras'
     const isPremiosTab = activeTab === 'premios'
     const isPrecosTab = activeTab === 'precos'
@@ -2020,6 +2230,16 @@ function PontosContent() {
             >
               📊 Estatísticas
             </button>
+            {canManagePontos ? (
+              <button
+                onClick={() => setActiveTab('ajustes')}
+                className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
+                  activeTab === 'ajustes' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Ajustes
+              </button>
+            ) : null}
             {canManageRegras ? (
               <button
                 onClick={() => setActiveTab('regras')}
@@ -2074,6 +2294,8 @@ function PontosContent() {
         {/* Tab Content */}
         {activeTab === 'regras' ? (
           renderRegras()
+        ) : activeTab === 'ajustes' ? (
+          renderAjustes()
         ) : activeTab === 'premios' ? (
           renderPremios()
         ) : activeTab === 'precos' ? (
@@ -2100,7 +2322,7 @@ function PontosContent() {
   }
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requiredRoles={['ADMIN']}>
       {renderContent()}
     </ProtectedRoute>
   )
