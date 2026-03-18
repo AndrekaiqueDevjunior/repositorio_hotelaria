@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     CIELO_API_URL: str = os.getenv("CIELO_API_URL", "https://api.cieloecommerce.cielo.com.br/")
     CIELO_MODE: str = os.getenv("CIELO_MODE", "sandbox")
 
+    # TEF (CliSiTef)
+    TEF_AGENTE_URL: str = os.getenv("TEF_AGENTE_URL", "http://localhost:9999")
+    TEF_TIMEOUT: int = int(os.getenv("TEF_TIMEOUT", "30"))
+
     # Admin
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
 

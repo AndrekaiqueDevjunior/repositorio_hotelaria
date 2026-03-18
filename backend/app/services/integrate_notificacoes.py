@@ -7,40 +7,32 @@ from app.services.notification_service import NotificationService
 
 async def notificar_em_reserva_criada(db, reserva):
     """Gatilho: Notificar quando reserva é criada"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_nova_reserva(reserva)
+    await NotificationService.notificar_nova_reserva(db, reserva)
 
 async def notificar_em_checkin(db, reserva):
     """Gatilho: Notificar quando check-in é realizado"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_checkin_realizado(reserva)
+    await NotificationService.notificar_checkin_realizado(db, reserva)
 
 async def notificar_em_checkout(db, reserva):
     """Gatilho: Notificar quando check-out é realizado"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_checkout_realizado(reserva)
+    await NotificationService.notificar_checkout_realizado(db, reserva)
 
 async def notificar_em_cancelamento(db, reserva):
     """Gatilho: Notificar quando reserva é cancelada"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_reserva_cancelada(reserva)
+    await NotificationService.notificar_reserva_cancelada(db, reserva)
 
 async def notificar_em_pagamento_aprovado(db, pagamento, reserva):
     """Gatilho: Notificar quando pagamento é aprovado"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_pagamento_aprovado(pagamento, reserva)
+    await NotificationService.notificar_pagamento_aprovado(db, pagamento, reserva)
 
 async def notificar_em_pagamento_recusado(db, pagamento, reserva):
     """Gatilho: Notificar quando pagamento é recusado (CRÍTICO)"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_pagamento_recusado(pagamento, reserva)
+    await NotificationService.notificar_pagamento_recusado(db, pagamento, reserva)
 
 async def notificar_em_pagamento_pendente(db, pagamento, reserva):
     """Gatilho: Notificar quando pagamento fica pendente"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_pagamento_pendente(pagamento, reserva)
+    await NotificationService.notificar_pagamento_pendente(db, pagamento, reserva)
 
 async def notificar_erro_sistema(db, mensagem: str):
     """Gatilho: Notificar erro crítico do sistema"""
-    notification_service = NotificationService(db)
-    await notification_service.notificar_erro_sistema(mensagem)
+    await NotificationService.notificar_erro_sistema(db, mensagem)

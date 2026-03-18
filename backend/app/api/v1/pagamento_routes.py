@@ -105,6 +105,62 @@ async def criar_pagamento(
             )
         raise
 
+@router.post("/tef/iniciar", response_model=dict)
+async def iniciar_fluxo_tef(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    reserva_id = payload.get("reserva_id")
+    valor = payload.get("valor")
+    if not reserva_id or valor is None:
+        raise HTTPException(status_code=400, detail="reserva_id e valor sao obrigatorios")
+    return await service.iniciar_fluxo_tef(reserva_id=int(reserva_id), valor=float(valor))
+
+@router.post("/tef/continuar", response_model=dict)
+async def continuar_fluxo_tef(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    session_id = payload.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id e obrigatorio")
+    return await service.continuar_fluxo_tef(
+        session_id=str(session_id),
+        continue_flag=int(payload.get("continue_flag", 0)),
+        data=str(payload.get("data", "")),
+    )
+
+@router.post("/tef/finalizar", response_model=dict)
+async def finalizar_fluxo_tef(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    session_id = payload.get("session_id")
+    reserva_id = payload.get("reserva_id")
+    valor = payload.get("valor")
+    if not session_id or not reserva_id or valor is None:
+        raise HTTPException(status_code=400, detail="session_id, reserva_id e valor sao obrigatorios")
+    return await service.finalizar_fluxo_tef(
+        reserva_id=int(reserva_id),
+        valor=float(valor),
+        session_id=str(session_id),
+        confirm=bool(payload.get("confirm", True)),
+    )
+
+@router.post("/tef/cancelar", response_model=dict)
+async def cancelar_fluxo_tef(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    session_id = payload.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id e obrigatorio")
+    return await service.cancelar_fluxo_tef(session_id=str(session_id))
+
 @router.get("/{pagamento_id}", response_model=PagamentoResponse)
 async def obter_pagamento(
     pagamento_id: int,

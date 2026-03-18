@@ -1,13 +1,13 @@
 from datetime import datetime
 from app.utils.datetime_utils import now_utc, to_utc
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel
 
 
 class PagamentoCreate(BaseModel):
     reserva_id: int
     valor: float
-    metodo: str  # credit_card, debit_card, pix
+    metodo: Literal["credit_card", "debit_card", "pix", "tef", "na_chegada", "balcao"]
     parcelas: Optional[int] = None
     cartao_numero: Optional[str] = None
     cartao_validade: Optional[str] = None
@@ -33,6 +33,14 @@ class PagamentoResponse(BaseModel):
     url_pagamento: Optional[str] = None
     data_criacao: Optional[datetime] = None
     risk_score: Optional[int] = None
+    nsu: Optional[str] = None
+    authorization_code: Optional[str] = None
+    tef_nsu: Optional[str] = None
+    tef_autorizacao: Optional[str] = None
+    tef_cupom_cliente: Optional[str] = None
+    tef_cupom_estabelecimento: Optional[str] = None
+    tef_cupom_cliente_arquivo: Optional[str] = None
+    tef_cupom_estabelecimento_arquivo: Optional[str] = None
     
     class Config:
         from_attributes = True

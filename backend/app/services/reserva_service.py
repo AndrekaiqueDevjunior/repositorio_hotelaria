@@ -61,7 +61,7 @@ class ReservaService:
             # Enviar notificação (em background, não bloquear)
             try:
                 from app.core.database import get_db
-                db = next(get_db())
+                db = get_db()
                 await notificar_em_reserva_criada(db, reserva)
                 print(f"[NOTIFICAÇÃO] Nova reserva {reserva.get('codigo_reserva')} notificada")
             except Exception as e:
@@ -90,7 +90,7 @@ class ReservaService:
             # Enviar notificação
             try:
                 from app.core.database import get_db
-                db = next(get_db())
+                db = get_db()
                 await notificar_em_checkin(db, reserva)
                 print(f"[NOTIFICAÇÃO] Check-in realizado para reserva {reserva.get('codigo_reserva')}")
             except Exception as e:

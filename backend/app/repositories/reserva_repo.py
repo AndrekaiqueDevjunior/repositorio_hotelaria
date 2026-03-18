@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+﻿from typing import Dict, Any, List
 from datetime import datetime, date
 from fastapi import HTTPException
 from app.schemas.reserva_schema import ReservaCreate, ReservaResponse
@@ -9,12 +9,40 @@ from app.core.validators import ReservaValidator
 from prisma import Client
 from prisma.errors import UniqueViolationError
 from app.services.notification_service import NotificationService
+from app.services.whatsapp_service import get_whatsapp_service
 import secrets
 import re
 
 class ReservaRepository:
     def __init__(self, db: Client):
         self.db = db
+
+    def _formatar_data_curta(self, valor) -> str:
+        if not valor:
+            return "-"
+        try:
+            return valor.strftime("%d/%m/%Y")
+        except Exception:
+            return str(valor)[:10]
+
+    async def _notificar_whatsapp_reserva(self, reserva, evento: str, detalhe: str = None) -> None:
+        try:
+            whatsapp_service = get_whatsapp_service()
+            valor_total = float(getattr(reserva, "valorDiaria", 0) or 0) * int(getattr(reserva, "numDiarias", 0) or 0)
+            await whatsapp_service.enviar_notificacao_evento_reserva(
+                evento=evento,
+                codigo_reserva=getattr(reserva, "codigoReserva", None) or f"RES-{getattr(reserva, 'id', '')}",
+                cliente_nome=getattr(reserva, "clienteNome", None) or "Cliente nao identificado",
+                quarto_numero=getattr(reserva, "quartoNumero", None) or "N/A",
+                checkin_previsto=self._formatar_data_curta(getattr(reserva, "checkinPrevisto", None)),
+                checkout_previsto=self._formatar_data_curta(getattr(reserva, "checkoutPrevisto", None)),
+                valor_total=valor_total,
+                status=getattr(reserva, "statusReserva", None) or "-",
+                detalhe=detalhe,
+                reserva_id=getattr(reserva, "id", None),
+            )
+        except Exception as whatsapp_error:
+            print(f"[WHATSAPP] Erro ao notificar reserva ({evento}): {whatsapp_error}")
 
     def _default_include(self) -> Dict[str, Any]:
         return {
@@ -29,14 +57,14 @@ class ReservaRepository:
         suite_tipo_norm = suite_tipo.value if hasattr(suite_tipo, "value") else str(suite_tipo)
 
         if not checkin_previsto:
-            raise ValueError("Data de check-in inválida para buscar tarifa")
+            raise ValueError("Data de check-in invÃ¡lida para buscar tarifa")
 
         data_ref = checkin_previsto.date() if isinstance(checkin_previsto, datetime) else checkin_previsto
         tarifa = await tarifa_repo.get_tarifa_ativa(suite_tipo_norm, data_ref)
 
         if not tarifa:
             raise ValueError(
-                f"Tarifa não cadastrada para a suíte {suite_tipo_norm} na data {data_ref}. Cadastre uma tarifa antes de criar a reserva."
+                f"Tarifa nÃ£o cadastrada para a suÃ­te {suite_tipo_norm} na data {data_ref}. Cadastre uma tarifa antes de criar a reserva."
             )
 
         return float(tarifa.get("preco_diaria", 0.0))
@@ -54,7 +82,7 @@ class ReservaRepository:
         """Listar todas as reservas com filtros e busca"""
         where_conditions = {}
         
-        # Filtro de busca (nome cliente ou número quarto)
+        # Filtro de busca (nome cliente ou nÃºmero quarto)
         if search:
             where_conditions["OR"] = [
                 {"clienteNome": {"contains": search, "mode": "insensitive"}},
@@ -76,11 +104,11 @@ class ReservaRepository:
                 from app.utils.datetime_utils import to_utc
                 where_conditions["checkinPrevisto"]["lte"] = to_utc(datetime.fromisoformat(checkin_fim))
         
-        # Buscar total de registros (para paginação)
+        # Buscar total de registros (para paginaÃ§Ã£o)
         total = await self.db.reserva.count(where=where_conditions if where_conditions else None)
         
-        # Processar ordenação
-        order_clause = {"id": "desc"}  # Ordem padrão
+        # Processar ordenaÃ§Ã£o
+        order_clause = {"id": "desc"}  # Ordem padrÃ£o
         
         if order_by:
             # Formato esperado: "campo:ordem" (ex: "data_criacao:desc")
@@ -88,7 +116,7 @@ class ReservaRepository:
                 field, direction = order_by.split(":", 1)
                 order_clause = {field: direction.lower()}
         
-        # Buscar registros com paginação - P0-002: Incluir pagamentos e hospedagem
+        # Buscar registros com paginaÃ§Ã£o - P0-002: Incluir pagamentos e hospedagem
         registros = await self.db.reserva.find_many(
             where=where_conditions if where_conditions else None,
             include=self._default_include(),
@@ -105,13 +133,13 @@ class ReservaRepository:
         }
     
     async def create(self, reserva: ReservaCreate, notificar: bool = True) -> Dict[str, Any]:
-        """Criar nova reserva com validações"""
+        """Criar nova reserva com validaÃ§Ãµes"""
         # Verificar se cliente existe
         cliente = await self.db.cliente.find_unique(where={"id": reserva.cliente_id})
         if not cliente:
-            raise ValueError("Cliente não encontrado")
+            raise ValueError("Cliente nÃ£o encontrado")
 
-        # VALIDAÇÃO: Verificar se cliente já tem reservas ativas
+        # VALIDAÃ‡ÃƒO: Verificar se cliente jÃ¡ tem reservas ativas
         reservas_ativas = await self.db.reserva.find_many(
             where={
                 "clienteId": reserva.cliente_id,
@@ -120,9 +148,9 @@ class ReservaRepository:
         )
         
         if reservas_ativas:
-            # Verificar se há conflito de datas
+            # Verificar se hÃ¡ conflito de datas
             for reserva_ativa in reservas_ativas:
-                # Se a reserva ativa estiver no mesmo período ou sobrepor o novo período
+                # Se a reserva ativa estiver no mesmo perÃ­odo ou sobrepor o novo perÃ­odo
                 if (reserva.checkin_previsto.date() <= reserva_ativa.checkoutPrevisto.date() and 
                     reserva.checkout_previsto.date() >= reserva_ativa.checkinPrevisto.date()):
                     
@@ -131,20 +159,20 @@ class ReservaRepository:
                     checkout_previsto_utc = to_utc(reserva_ativa.checkinPrevisto)
                     dias_restantes = (checkout_previsto_utc.date() - now_utc().date()).days
                     
-                    msg_erro = f"❌ CLIENTE JÁ POSSUI RESERVA ATIVA!"
-                    msg_erro += f"\n\n📋 Reserva existente: {reserva_ativa.codigoReserva}"
-                    msg_erro += f"\n  • Quarto: {reserva_ativa.quartoNumero}"
-                    msg_erro += f"\n  • Check-in: {reserva_ativa.checkinPrevisto.strftime('%d/%m/%Y')}"
-                    msg_erro += f"\n  • Check-out: {reserva_ativa.checkoutPrevisto.strftime('%d/%m/%Y')}"
-                    msg_erro += f"\n  • Status: {reserva_ativa.statusReserva}"
+                    msg_erro = f"âŒ CLIENTE JÃ POSSUI RESERVA ATIVA!"
+                    msg_erro += f"\n\nðŸ“‹ Reserva existente: {reserva_ativa.codigoReserva}"
+                    msg_erro += f"\n  â€¢ Quarto: {reserva_ativa.quartoNumero}"
+                    msg_erro += f"\n  â€¢ Check-in: {reserva_ativa.checkinPrevisto.strftime('%d/%m/%Y')}"
+                    msg_erro += f"\n  â€¢ Check-out: {reserva_ativa.checkoutPrevisto.strftime('%d/%m/%Y')}"
+                    msg_erro += f"\n  â€¢ Status: {reserva_ativa.statusReserva}"
                     
                     if dias_restantes > 0:
-                        msg_erro += f"\n\n⚠️ Para fazer uma nova reserva, você deve:"
+                        msg_erro += f"\n\nâš ï¸ Para fazer uma nova reserva, vocÃª deve:"
                         msg_erro += f"\n  1. Aguardar o check-in da reserva atual"
                         msg_erro += f"\n  2. Fazer check-out da reserva atual"
                         msg_erro += f"\n  3. Cancelar a reserva atual (se permitido)"
                     else:
-                        msg_erro += f"\n\n📞 Entre em contato com a recepção para assistência."
+                        msg_erro += f"\n\nðŸ“ž Entre em contato com a recepÃ§Ã£o para assistÃªncia."
                     
                     raise ValueError(msg_erro)
 
@@ -155,12 +183,12 @@ class ReservaRepository:
 
         quarto = await self.db.quarto.find_unique(where={"numero": reserva.quarto_numero})
         if not quarto:
-            raise ValueError("Quarto não encontrado")
+            raise ValueError("Quarto nÃ£o encontrado")
         
         if quarto.status in ("BLOQUEADO", "MANUTENCAO"):
-            raise ValueError(f"❌ Quarto {reserva.quarto_numero} está {quarto.status.lower()} e não pode ser reservado")
+            raise ValueError(f"âŒ Quarto {reserva.quarto_numero} estÃ¡ {quarto.status.lower()} e nÃ£o pode ser reservado")
         
-        # VALIDAÇÃO CRÍTICA: Verificar disponibilidade usando DisponibilidadeService
+        # VALIDAÃ‡ÃƒO CRÃTICA: Verificar disponibilidade usando DisponibilidadeService
         from app.services.disponibilidade_service import DisponibilidadeService
         disponibilidade_service = DisponibilidadeService(self.db)
         
@@ -179,26 +207,26 @@ class ReservaRepository:
                 limite=3
             )
             
-            msg_erro = f"❌ QUARTO INDISPONÍVEL! {resultado['motivo']}"
+            msg_erro = f"âŒ QUARTO INDISPONÃVEL! {resultado['motivo']}"
             
             if resultado["conflitos"]:
-                msg_erro += f"\n\n📋 Conflitos encontrados:"
+                msg_erro += f"\n\nðŸ“‹ Conflitos encontrados:"
                 for conflito in resultado["conflitos"]:
-                    msg_erro += f"\n  • Reserva {conflito['codigo']} - {conflito['cliente']}"
+                    msg_erro += f"\n  â€¢ Reserva {conflito['codigo']} - {conflito['cliente']}"
                     msg_erro += f"\n    Check-in: {conflito['checkin'][:10]} | Check-out: {conflito['checkout'][:10]}"
             
             if alternativas:
-                msg_erro += f"\n\n💡 Quartos {reserva.tipo_suite} disponíveis no período:"
+                msg_erro += f"\n\nðŸ’¡ Quartos {reserva.tipo_suite} disponÃ­veis no perÃ­odo:"
                 for alt in alternativas:
-                    msg_erro += f"\n  • Quarto {alt['numero']}"
+                    msg_erro += f"\n  â€¢ Quarto {alt['numero']}"
             else:
-                msg_erro += f"\n\n⚠️ Nenhum quarto {reserva.tipo_suite} disponível neste período"
+                msg_erro += f"\n\nâš ï¸ Nenhum quarto {reserva.tipo_suite} disponÃ­vel neste perÃ­odo"
             
             raise ValueError(msg_erro)
         
         from app.utils.datetime_utils import now_utc
         
-        # Gerar código único com retry (evita colisões em concorrência)
+        # Gerar cÃ³digo Ãºnico com retry (evita colisÃµes em concorrÃªncia)
         tentativa = 0
         nova_reserva = None
         while tentativa < 5:
@@ -226,30 +254,31 @@ class ReservaRepository:
                 nova_reserva = None
 
         if not nova_reserva:
-            raise ValueError("Não foi possível gerar um código de reserva único")
+            raise ValueError("NÃ£o foi possÃ­vel gerar um cÃ³digo de reserva Ãºnico")
         
-        # Criar notificação de nova reserva
+        # Criar notificaÃ§Ã£o de nova reserva
         if notificar:
             await NotificationService.notificar_nova_reserva(self.db, nova_reserva)
+            await self._notificar_whatsapp_reserva(nova_reserva, "criada")
 
         return self._serialize_reserva(nova_reserva)
     
     async def get_by_id(self, reserva_id: int) -> Dict[str, Any]:
         """Obter reserva por ID com todos os dados relacionados"""
-        # Buscar reserva com pagamentos incluídos
+        # Buscar reserva com pagamentos incluÃ­dos
         reserva = await self.db.reserva.find_unique(
             where={"id": reserva_id},
             include=self._default_include(),
         )
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
         return self._serialize_reserva(reserva)
 
     async def get_by_codigo(self, codigo_reserva: str) -> Dict[str, Any]:
-        """Obter reserva por código (codigoReserva) com dados relacionados"""
+        """Obter reserva por cÃ³digo (codigoReserva) com dados relacionados"""
         codigo_upper = (codigo_reserva or "").upper().strip()
         if not codigo_upper:
-            raise ValueError("Código de reserva inválido")
+            raise ValueError("CÃ³digo de reserva invÃ¡lido")
 
         reserva = await self.db.reserva.find_first(
             where={"codigoReserva": codigo_upper},
@@ -257,7 +286,7 @@ class ReservaRepository:
         )
 
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
 
         return self._serialize_reserva(reserva)
     
@@ -265,19 +294,19 @@ class ReservaRepository:
         """Realizar check-in da reserva"""
         from app.utils.datetime_utils import now_utc
         
-        # P1-001: Buscar reserva com pagamentos para validação
+        # P1-001: Buscar reserva com pagamentos para validaÃ§Ã£o
         reserva = await self.db.reserva.find_unique(
             where={"id": reserva_id},
             include={"pagamentos": True}
         )
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
         
-        # P1-001: VALIDAÇÃO 1 - Status deve ser CONFIRMADA (não mais PENDENTE)
+        # P1-001: VALIDAÃ‡ÃƒO 1 - Status deve ser CONFIRMADA (nÃ£o mais PENDENTE)
         if reserva.statusReserva != "CONFIRMADA":
             raise ValueError(f"Check-in requer status CONFIRMADA. Status atual: {reserva.statusReserva}")
         
-        # P1-001: VALIDAÇÃO 2 - Deve ter pagamento aprovado
+        # P1-001: VALIDAÃ‡ÃƒO 2 - Deve ter pagamento aprovado
         pagamentos_aprovados = [
             p for p in reserva.pagamentos
             if p.status in ("APROVADO", "PAGO", "CONFIRMADO", "CAPTURED", "AUTHORIZED")
@@ -286,10 +315,10 @@ class ReservaRepository:
         if not pagamentos_aprovados:
             raise ValueError("Check-in requer pagamento aprovado. Realize o pagamento antes do check-in.")
         
-        # P1-001: VALIDAÇÃO 3 - Verificar se quarto está livre
+        # P1-001: VALIDAÃ‡ÃƒO 3 - Verificar se quarto estÃ¡ livre
         quarto = await self.db.quarto.find_unique(where={"numero": reserva.quartoNumero})
         if quarto and quarto.status != "LIVRE":
-            raise ValueError(f"Quarto {reserva.quartoNumero} não está disponível (status: {quarto.status})")
+            raise ValueError(f"Quarto {reserva.quartoNumero} nÃ£o estÃ¡ disponÃ­vel (status: {quarto.status})")
         
         # Atualizar status da reserva
         await self.db.reserva.update(
@@ -311,8 +340,9 @@ class ReservaRepository:
         
         updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         
-        # Criar notificação de check-in
+        # Criar notificaÃ§Ã£o de check-in
         await NotificationService.notificar_checkin_realizado(self.db, updated_reserva)
+        await self._notificar_whatsapp_reserva(updated_reserva, "check-in realizado")
         
         return self._serialize_reserva(updated_reserva)
     
@@ -322,14 +352,14 @@ class ReservaRepository:
         
         reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
         
         # Verificar status da reserva
         if reserva.statusReserva not in ("HOSPEDADO", "CHECKIN_REALIZADO", "CHECKED_IN"):
             raise ValueError("Apenas reservas hospedadas podem fazer check-out")
         
-        # VALIDAÇÃO CRÍTICA: Verificar se há pagamentos pendentes
-        # Cliente não pode sair sem pagar!
+        # VALIDAÃ‡ÃƒO CRÃTICA: Verificar se hÃ¡ pagamentos pendentes
+        # Cliente nÃ£o pode sair sem pagar!
         pagamentos = await self.db.pagamento.find_many(
             where={"reservaId": reserva_id}
         )
@@ -346,10 +376,10 @@ class ReservaRepository:
         # Calcular saldo pendente
         saldo_pendente = valor_total_reserva - total_pago
         
-        # BLOQUEIO: Não permite check-out se houver dívida
-        if saldo_pendente > 0.01:  # Tolerância de 1 centavo para arredondamento
+        # BLOQUEIO: NÃ£o permite check-out se houver dÃ­vida
+        if saldo_pendente > 0.01:  # TolerÃ¢ncia de 1 centavo para arredondamento
             raise ValueError(
-                f"❌ CHECK-OUT BLOQUEADO! Cliente possui saldo pendente de R$ {saldo_pendente:.2f}. "
+                f"âŒ CHECK-OUT BLOQUEADO! Cliente possui saldo pendente de R$ {saldo_pendente:.2f}. "
                 f"Valor total: R$ {valor_total_reserva:.2f} | Pago: R$ {total_pago:.2f}. "
                 f"O pagamento deve ser realizado antes do check-out!"
             )
@@ -400,10 +430,15 @@ class ReservaRepository:
             pontos_bonus_cupom = 0
             print(f"[CHECKOUT] Erro ao creditar pontos: {e}")
         
-        # Criar notificação de check-out
+        # Criar notificaÃ§Ã£o de check-out
         await NotificationService.notificar_checkout_realizado(self.db, updated_reserva)
+        await self._notificar_whatsapp_reserva(
+            updated_reserva,
+            "check-out realizado",
+            detalhe=f"Pontos ganhos: {pontos_ganhos or 0} | Bonus cupom: {pontos_bonus_cupom or 0}"
+        )
         
-        # Retornar reserva com informações de pontos
+        # Retornar reserva com informaÃ§Ãµes de pontos
         resultado = self._serialize_reserva(updated_reserva)
         resultado["pontos_ganhos"] = pontos_ganhos if pontos_ganhos > 0 else 0
         resultado["pontos_bonus_cupom"] = pontos_bonus_cupom if pontos_bonus_cupom > 0 else 0
@@ -412,13 +447,13 @@ class ReservaRepository:
     
     async def cancelar(self, reserva_id: int) -> Dict[str, Any]:
         """
-        Cancelar reserva com sistema de estornos automáticos
+        Cancelar reserva com sistema de estornos automÃ¡ticos
         
-        RES-003 FIX: Processa estornos automaticamente quando possível
+        RES-003 FIX: Processa estornos automaticamente quando possÃ­vel
         """
         reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
         
         if reserva.statusReserva not in ("PENDENTE", "CONFIRMADA", "HOSPEDADO"):
             raise ValueError("Apenas reservas pendentes, confirmadas ou hospedadas podem ser canceladas")
@@ -441,11 +476,11 @@ class ReservaRepository:
                 
                 for pagamento in pagamentos_aprovados:
                     try:
-                        # Verificar se pode estornar (prazo, método, etc.)
+                        # Verificar se pode estornar (prazo, mÃ©todo, etc.)
                         pode_estornar = await self._pode_processar_estorno(pagamento)
                         
                         if pode_estornar["permitido"]:
-                            # Processar estorno automático
+                            # Processar estorno automÃ¡tico
                             resultado_estorno = await self._processar_estorno_automatico(pagamento)
                             
                             if resultado_estorno["sucesso"]:
@@ -463,7 +498,7 @@ class ReservaRepository:
                                     "motivo": resultado_estorno["erro"]
                                 })
                         else:
-                            # Adicionar à lista de estornos manuais
+                            # Adicionar Ã  lista de estornos manuais
                             estornos_pendentes.append({
                                 "pagamento_id": pagamento.id,
                                 "valor": float(pagamento.valor),
@@ -472,7 +507,7 @@ class ReservaRepository:
                             })
                             
                     except Exception as e:
-                        print(f"⚠️ [RES-003] Erro ao processar estorno do pagamento {pagamento.id}: {e}")
+                        print(f"âš ï¸ [RES-003] Erro ao processar estorno do pagamento {pagamento.id}: {e}")
                         estornos_pendentes.append({
                             "pagamento_id": pagamento.id,
                             "valor": float(pagamento.valor),
@@ -481,7 +516,7 @@ class ReservaRepository:
                         })
                         
         except Exception as e:
-            print(f"⚠️ [RES-003] Erro geral no sistema de estornos: {e}")
+            print(f"âš ï¸ [RES-003] Erro geral no sistema de estornos: {e}")
             # Continua o cancelamento mesmo com erro nos estornos
         
         # Atualizar status da reserva
@@ -492,10 +527,10 @@ class ReservaRepository:
             }
         )
         
-        # CORREÇÃO CRÍTICA: Liberar quarto independente do status da reserva
+        # CORREÃ‡ÃƒO CRÃTICA: Liberar quarto independente do status da reserva
         # Se estava HOSPEDADO, CONFIRMADA ou qualquer outro status ativo, liberar o quarto
         if reserva.statusReserva in ["HOSPEDADO", "CONFIRMADA", "PENDENTE", "AGUARDANDO_PAGAMENTO"]:
-            # Verificar se o quarto realmente precisa ser liberado (não está LIVRE)
+            # Verificar se o quarto realmente precisa ser liberado (nÃ£o estÃ¡ LIVRE)
             quarto_numero_raw = (reserva.quartoNumero or "").strip()
             match = re.search(r"\d+", quarto_numero_raw)
             quarto_numero = match.group(0) if match else quarto_numero_raw
@@ -512,10 +547,18 @@ class ReservaRepository:
         if estornos_processados or estornos_pendentes:
             await self._notificar_estornos(reserva_id, estornos_processados, estornos_pendentes)
         
-        # Criar notificação de cancelamento
+        # Criar notificaÃ§Ã£o de cancelamento
         await NotificationService.notificar_reserva_cancelada(self.db, updated_reserva)
+        await self._notificar_whatsapp_reserva(
+            updated_reserva,
+            "cancelada",
+            detalhe=(
+                f"Estornos processados: {len(estornos_processados)} | "
+                f"Estornos pendentes: {len(estornos_pendentes)}"
+            )
+        )
         
-        # RES-003 FIX: Incluir informações de estorno no retorno
+        # RES-003 FIX: Incluir informaÃ§Ãµes de estorno no retorno
         resultado = self._serialize_reserva(updated_reserva)
         resultado["estornos"] = {
             "processados": estornos_processados,
@@ -530,10 +573,10 @@ class ReservaRepository:
         """
         RES-003 FIX: Verificar se pagamento pode ser estornado automaticamente
         
-        Regras de negócio para estorno:
-        - Cartão: até 120 dias após pagamento
-        - PIX: até 90 dias após pagamento  
-        - Dinheiro: não permite estorno automático
+        Regras de negÃ³cio para estorno:
+        - CartÃ£o: atÃ© 120 dias apÃ³s pagamento
+        - PIX: atÃ© 90 dias apÃ³s pagamento  
+        - Dinheiro: nÃ£o permite estorno automÃ¡tico
         """
         from datetime import timedelta
         from app.utils.datetime_utils import now_utc, to_utc
@@ -543,14 +586,14 @@ class ReservaRepository:
             pagamento_created_utc = to_utc(pagamento.createdAt)
             idade_pagamento = now_utc() - pagamento_created_utc
             
-            # Regras por método de pagamento
+            # Regras por mÃ©todo de pagamento
             if pagamento.metodo in ["credit_card", "debit_card"]:
                 if idade_pagamento.days > 120:
                     return {
                         "permitido": False,
-                        "motivo": f"Pagamento com cartão muito antigo ({idade_pagamento.days} dias). Limite: 120 dias."
+                        "motivo": f"Pagamento com cartÃ£o muito antigo ({idade_pagamento.days} dias). Limite: 120 dias."
                     }
-                return {"permitido": True, "motivo": "Cartão dentro do prazo"}
+                return {"permitido": True, "motivo": "CartÃ£o dentro do prazo"}
                 
             elif pagamento.metodo == "pix":
                 if idade_pagamento.days > 90:
@@ -563,13 +606,13 @@ class ReservaRepository:
             elif pagamento.metodo in ["dinheiro", "cash"]:
                 return {
                     "permitido": False,
-                    "motivo": "Pagamentos em dinheiro requerem estorno manual na recepção"
+                    "motivo": "Pagamentos em dinheiro requerem estorno manual na recepÃ§Ã£o"
                 }
                 
             else:
                 return {
                     "permitido": False,
-                    "motivo": f"Método {pagamento.metodo} não suporta estorno automático"
+                    "motivo": f"MÃ©todo {pagamento.metodo} nÃ£o suporta estorno automÃ¡tico"
                 }
                 
         except Exception as e:
@@ -580,7 +623,7 @@ class ReservaRepository:
     
     async def _processar_estorno_automatico(self, pagamento) -> Dict[str, Any]:
         """
-        RES-003 FIX: Processar estorno automático via gateway
+        RES-003 FIX: Processar estorno automÃ¡tico via gateway
         """
         try:
             # Integrar com gateway de pagamento (Cielo, etc.)
@@ -588,7 +631,7 @@ class ReservaRepository:
             
             cielo_api = CieloAPI()
             
-            # Processar estorno baseado no método
+            # Processar estorno baseado no mÃ©todo
             if pagamento.metodo in ["credit_card", "debit_card"]:
                 resultado = await cielo_api.estornar_pagamento_cartao(
                     payment_id=pagamento.cieloPaymentId,
@@ -603,7 +646,7 @@ class ReservaRepository:
             else:
                 return {
                     "sucesso": False,
-                    "erro": f"Método {pagamento.metodo} não implementado para estorno automático"
+                    "erro": f"MÃ©todo {pagamento.metodo} nÃ£o implementado para estorno automÃ¡tico"
                 }
             
             if resultado.get("success"):
@@ -635,55 +678,55 @@ class ReservaRepository:
         RES-003 FIX: Notificar equipe sobre estornos processados e pendentes
         """
         try:
-            # Notificação para equipe financeira
+            # NotificaÃ§Ã£o para equipe financeira
             total_estornado = sum(e["valor"] for e in estornos_processados)
             total_pendente = sum(e["valor"] for e in estornos_pendentes)
             
             mensagem_notificacao = f"""
-🔔 CANCELAMENTO COM ESTORNOS - Reserva #{reserva_id}
+ðŸ”” CANCELAMENTO COM ESTORNOS - Reserva #{reserva_id}
 
-✅ ESTORNOS PROCESSADOS AUTOMATICAMENTE:
+âœ… ESTORNOS PROCESSADOS AUTOMATICAMENTE:
 """
             
             for estorno in estornos_processados:
-                mensagem_notificacao += f"   • R$ {estorno['valor']:.2f} ({estorno['metodo']})\n"
+                mensagem_notificacao += f"   â€¢ R$ {estorno['valor']:.2f} ({estorno['metodo']})\n"
                 
             if estornos_pendentes:
                 mensagem_notificacao += f"""
-⚠️ ESTORNOS PENDENTES (AÇÃO MANUAL NECESSÁRIA):
+âš ï¸ ESTORNOS PENDENTES (AÃ‡ÃƒO MANUAL NECESSÃRIA):
 """
                 for estorno in estornos_pendentes:
-                    mensagem_notificacao += f"   • R$ {estorno['valor']:.2f} ({estorno['metodo']}) - {estorno['motivo']}\n"
+                    mensagem_notificacao += f"   â€¢ R$ {estorno['valor']:.2f} ({estorno['metodo']}) - {estorno['motivo']}\n"
             
             mensagem_notificacao += f"""
-💰 RESUMO:
-   • Total estornado: R$ {total_estornado:.2f}
-   • Total pendente: R$ {total_pendente:.2f}
+ðŸ’° RESUMO:
+   â€¢ Total estornado: R$ {total_estornado:.2f}
+   â€¢ Total pendente: R$ {total_pendente:.2f}
 """
 
-            # Enviar notificação (implementar conforme sistema de notificações)
+            # Enviar notificaÃ§Ã£o (implementar conforme sistema de notificaÃ§Ãµes)
             print(f"[RES-003] {mensagem_notificacao}")
             
-            # TODO: Integrar com sistema de notificações (email, Slack, etc.)
+            # TODO: Integrar com sistema de notificaÃ§Ãµes (email, Slack, etc.)
             
         except Exception as e:
-            print(f"⚠️ [RES-003] Erro ao enviar notificações de estorno: {e}")
+            print(f"âš ï¸ [RES-003] Erro ao enviar notificaÃ§Ãµes de estorno: {e}")
     
     async def confirmar(self, reserva_id: int) -> Dict[str, Any]:
         """
         Confirmar reserva
         
-        REGRA CRÍTICA: Não confirma sem pagamento autorizado!
+        REGRA CRÃTICA: NÃ£o confirma sem pagamento autorizado!
         """
         reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
         
         if reserva.statusReserva != "PENDENTE":
             raise ValueError("Apenas reservas pendentes podem ser confirmadas")
         
-        # ⚠️ VALIDAÇÃO CRÍTICA: Verificar se há pagamento autorizado
-        # NÃO CONFIRMAR RESERVA SEM PAGAMENTO!
+        # âš ï¸ VALIDAÃ‡ÃƒO CRÃTICA: Verificar se hÃ¡ pagamento autorizado
+        # NÃƒO CONFIRMAR RESERVA SEM PAGAMENTO!
         pagamentos = await self.db.pagamento.find_many(
             where={"reservaId": reserva_id}
         )
@@ -696,17 +739,17 @@ class ReservaRepository:
         
         if not pagamentos_aprovados:
             raise ValueError(
-                "❌ CONFIRMAÇÃO BLOQUEADA! Não é possível confirmar reserva sem pagamento autorizado. "
+                "âŒ CONFIRMAÃ‡ÃƒO BLOQUEADA! NÃ£o Ã© possÃ­vel confirmar reserva sem pagamento autorizado. "
                 "Realize o pagamento antes de confirmar a reserva."
             )
         
-        # Verificar análise anti-fraude se houver
+        # Verificar anÃ¡lise anti-fraude se houver
         from app.services.antifraude_service import AntifraaudeService
         analise = await AntifraaudeService.analisar_reserva(reserva_id)
         
-        # Se risco ALTO ou CRÍTICO, adicionar delay de confirmação
-        if analise.get("success") and analise.get("risco") in ["ALTO", "CRÍTICO"]:
-            # Verificar se já passou o período de delay (24h)
+        # Se risco ALTO ou CRÃTICO, adicionar delay de confirmaÃ§Ã£o
+        if analise.get("success") and analise.get("risco") in ["ALTO", "CRÃTICO"]:
+            # Verificar se jÃ¡ passou o perÃ­odo de delay (24h)
             from datetime import timedelta
             from app.utils.datetime_utils import now_utc, to_utc
             
@@ -716,8 +759,8 @@ class ReservaRepository:
             if tempo_desde_criacao < timedelta(hours=24):
                 horas_restantes = 24 - (tempo_desde_criacao.total_seconds() / 3600)
                 raise ValueError(
-                    f"⏳ CONFIRMAÇÃO EM ANÁLISE! Esta reserva possui risco {analise.get('risco')} "
-                    f"e está em período de análise anti-fraude. "
+                    f"â³ CONFIRMAÃ‡ÃƒO EM ANÃLISE! Esta reserva possui risco {analise.get('risco')} "
+                    f"e estÃ¡ em perÃ­odo de anÃ¡lise anti-fraude. "
                     f"Aguarde {horas_restantes:.1f} horas ou aprove manualmente. "
                     f"Score de risco: {analise.get('score')}"
                 )
@@ -732,7 +775,7 @@ class ReservaRepository:
         
         updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         
-        # Criar hospedagem se não existir
+        # Criar hospedagem se nÃ£o existir
         hospedagem_existente = await self.db.hospedagem.find_unique(
             where={"reservaId": reserva_id}
         )
@@ -744,18 +787,19 @@ class ReservaRepository:
                     "statusHospedagem": "NAO_INICIADA"
                 }
             )
-            print(f"✅ Hospedagem criada para reserva {reserva_id}")
+            print(f"âœ… Hospedagem criada para reserva {reserva_id}")
         
-        # Gerar voucher automaticamente após confirmação
+        # Gerar voucher automaticamente apÃ³s confirmaÃ§Ã£o
         try:
             from app.services.voucher_service import gerar_voucher
             voucher = await gerar_voucher(reserva_id)
-            print(f"✅ Voucher gerado: {voucher.get('codigo')}")
+            print(f"âœ… Voucher gerado: {voucher.get('codigo')}")
         except Exception as e:
-            print(f"⚠️ Erro ao gerar voucher: {e}")
+            print(f"âš ï¸ Erro ao gerar voucher: {e}")
         
-        # Criar notificação de confirmação (comentado até corrigir)
+        # Criar notificaÃ§Ã£o de confirmaÃ§Ã£o (comentado atÃ© corrigir)
         # await NotificationService.notificar_reserva_confirmada(updated_reserva)
+        await self._notificar_whatsapp_reserva(updated_reserva, "confirmada")
         
         return self._serialize_reserva(updated_reserva)
     
@@ -763,20 +807,20 @@ class ReservaRepository:
         """Atualizar dados gerais da reserva"""
         reserva = await self.db.reserva.find_unique(where={"id": reserva_id})
         if not reserva:
-            raise ValueError("Reserva não encontrada")
+            raise ValueError("Reserva nÃ£o encontrada")
         
-        # Não permite editar reservas já finalizadas
+        # NÃ£o permite editar reservas jÃ¡ finalizadas
         if reserva.statusReserva in ("CHECKED_OUT", "CANCELADO"):
-            raise ValueError("Não é possível editar reservas finalizadas ou canceladas")
+            raise ValueError("NÃ£o Ã© possÃ­vel editar reservas finalizadas ou canceladas")
         
-        # Mapear campos permitidos para atualização
+        # Mapear campos permitidos para atualizaÃ§Ã£o
         update_data = {}
         
         if "quarto_numero" in data:
             # Verificar se o novo quarto existe
             quarto = await self.db.quarto.find_unique(where={"numero": data["quarto_numero"]})
             if not quarto:
-                raise ValueError("Quarto não encontrado")
+                raise ValueError("Quarto nÃ£o encontrado")
             update_data["quartoNumero"] = data["quarto_numero"]
         
         if "tipo_suite" in data:
@@ -799,6 +843,8 @@ class ReservaRepository:
             checkin_previsto = data.get("checkin_previsto", reserva.checkinPrevisto)
             update_data["valorDiaria"] = await self._obter_tarifa_diaria(suite_tipo, checkin_previsto)
         
+        quarto_antigo = getattr(reserva, "quartoNumero", None)
+
         # Atualizar reserva
         await self.db.reserva.update(
             where={"id": reserva_id},
@@ -806,6 +852,12 @@ class ReservaRepository:
         )
         
         updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
+        if update_data:
+            if "quartoNumero" in update_data:
+                detalhe = f"Quarto alterado de {quarto_antigo} para {update_data['quartoNumero']}"
+                await self._notificar_whatsapp_reserva(updated_reserva, "quarto alterado", detalhe=detalhe)
+            else:
+                await self._notificar_whatsapp_reserva(updated_reserva, "atualizada")
         return self._serialize_reserva(updated_reserva)
     
     def _serialize_reserva(self, reserva) -> Dict[str, Any]:
@@ -816,7 +868,7 @@ class ReservaRepository:
         valor_desconto = 0.0
         valor_total_com_desconto = valor_total
 
-        # Serializar pagamentos para validação no frontend
+        # Serializar pagamentos para validaÃ§Ã£o no frontend
         pagamentos = []
         if hasattr(reserva, 'pagamentos') and reserva.pagamentos:
             pagamentos = [
@@ -829,7 +881,7 @@ class ReservaRepository:
                 } for p in reserva.pagamentos
             ]
         
-        # Serializar hospedagem para validação de checkout
+        # Serializar hospedagem para validaÃ§Ã£o de checkout
         hospedagem = None
         try:
             if hasattr(reserva, 'hospedagem') and reserva.hospedagem:
@@ -892,3 +944,4 @@ class ReservaRepository:
             "created_at": reserva.createdAt.isoformat() if reserva.createdAt else None,
             "updated_at": reserva.updatedAt.isoformat() if hasattr(reserva, 'updatedAt') and reserva.updatedAt else None
         }
+

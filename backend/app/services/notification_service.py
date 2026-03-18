@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from app.repositories.notificacao_repo import NotificacaoRepository
 from app.utils.datetime_utils import now_utc
 from app.services.email_service import EmailService
+from app.services.whatsapp_service import get_whatsapp_service
 
 
 class NotificationService:

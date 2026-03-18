@@ -4,7 +4,15 @@ export function middleware(request) {
   const { pathname } = request.nextUrl
 
   // Rotas protegidas
-  const protectedRoutes = ['/dashboard', '/admin', '/relatorios', '/configuracoes']
+  const protectedRoutes = [
+    '/dashboard',
+    '/admin',
+    '/relatorios',
+    '/configuracoes',
+    '/reservas',
+    '/comprovantes',
+    '/pagamentos',
+  ]
   
   // Verificar se a rota atual precisa de proteção
   const isProtectedRoute = protectedRoutes.some(route => 
@@ -34,6 +42,9 @@ export const config = {
     '/dashboard/:path*',
     '/admin/:path*',
     '/relatorios/:path*',
-    '/configuracoes/:path*'
+    '/configuracoes/:path*',
+    '/reservas/:path*',
+    '/comprovantes/:path*',
+    '/pagamentos/:path*',
   ]
 }

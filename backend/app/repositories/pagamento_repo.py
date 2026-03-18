@@ -3,12 +3,38 @@ from datetime import datetime, timedelta
 from prisma import Client
 from app.schemas.pagamento_schema import PagamentoCreate, PagamentoResponse, CieloWebhook
 from app.services.notification_service import NotificationService
+from app.services.whatsapp_service import get_whatsapp_service
 from app.utils.datetime_utils import to_utc, now_utc
 import uuid
+from pathlib import Path
 
 class PagamentoRepository:
     def __init__(self, db: Client):
         self.db = db
+
+    async def _notificar_whatsapp_pagamento(self, pagamento, evento: str) -> None:
+        try:
+            whatsapp_service = get_whatsapp_service()
+            reserva = getattr(pagamento, "reserva", None)
+            cliente = getattr(pagamento, "cliente", None)
+            serialized = self._serialize_pagamento(pagamento)
+            await whatsapp_service.enviar_notificacao_pagamento(
+                evento=evento,
+                codigo_reserva=getattr(reserva, "codigoReserva", None) or f"RES-{getattr(pagamento, 'reservaId', '')}",
+                cliente_nome=getattr(cliente, "nomeCompleto", None) or "Cliente nao identificado",
+                valor=float(getattr(pagamento, "valor", 0) or 0),
+                metodo=getattr(pagamento, "metodo", None),
+                status=getattr(pagamento, "statusPagamento", None),
+                nsu=getattr(pagamento, "cieloPaymentId", None),
+                reserva_id=getattr(pagamento, "reservaId", None),
+                pagamento_id=getattr(pagamento, "id", None),
+                tef_nsu=serialized.get("tef_nsu"),
+                tef_autorizacao=serialized.get("tef_autorizacao"),
+                tef_cupom_cliente_arquivo=serialized.get("tef_cupom_cliente_arquivo"),
+                tef_cupom_estabelecimento_arquivo=serialized.get("tef_cupom_estabelecimento_arquivo"),
+            )
+        except Exception as whatsapp_error:
+            print(f"[WHATSAPP] Erro ao notificar pagamento ({evento}): {whatsapp_error}")
 
     async def _obter_valor_esperado_reserva(self, reserva_id: int, reserva=None) -> float:
         reserva_obj = reserva or await self.db.reserva.find_unique(where={"id": reserva_id})
@@ -128,7 +154,7 @@ class PagamentoRepository:
 
         pago_com_relacoes = await self.db.pagamento.find_unique(
             where={"id": novo_pagamento.id},
-            include={"cliente": True, "reserva": True, "operacoesAntifraude": True}
+            include={"cliente": True, "reserva": True, "operacoesAntifraude": True, "comprovantes": True}
         )
         
         return self._serialize_pagamento(pago_com_relacoes or novo_pagamento)
@@ -140,7 +166,8 @@ class PagamentoRepository:
             include={
                 "cliente": True,
                 "reserva": True,
-                "operacoesAntifraude": True
+                "operacoesAntifraude": True,
+                "comprovantes": True
             }
         )
         return [self._serialize_pagamento(p) for p in registros]
@@ -152,7 +179,8 @@ class PagamentoRepository:
             include={
                 "cliente": True,
                 "reserva": True,
-                "operacoesAntifraude": True
+                "operacoesAntifraude": True,
+                "comprovantes": True
             }
         )
         if not pagamento:
@@ -173,14 +201,116 @@ class PagamentoRepository:
             include={
                 "cliente": True,
                 "reserva": True,
-                "operacoesAntifraude": True
+                "operacoesAntifraude": True,
+                "comprovantes": True
             }
         )
         if not pagamento:
             raise ValueError("Pagamento não encontrado")
         return self._serialize_pagamento(pagamento)
     
-    async def update_status(self, pagamento_id: int, status: str, cielo_payment_id: str = None, url_pagamento: str = None) -> Dict[str, Any]:
+    async def _salvar_comprovante_tef_texto(
+        self,
+        pagamento_id: int,
+        sufixo: str,
+        conteudo: str,
+        marcador: str,
+        valor_confirmado: float = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not conteudo:
+            return None
+
+        pasta = Path("media") / "comprovantes" / "tef"
+        pasta.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nome_arquivo = f"tef_pag{pagamento_id}_{sufixo}_{timestamp}.txt"
+        caminho = pasta / nome_arquivo
+        caminho.write_text(str(conteudo), encoding="utf-8")
+
+        existente = await self.db.comprovantepagamento.find_first(
+            where={
+                "pagamentoId": pagamento_id,
+                "observacoes": marcador
+            }
+        )
+
+        data_base = {
+            "tipoComprovante": "CARTAO",
+            "nomeArquivo": nome_arquivo,
+            "caminhoArquivo": str(caminho),
+            "observacoes": marcador,
+            "statusValidacao": "APROVADO",
+            "valorConfirmado": valor_confirmado,
+        }
+
+        if existente:
+            return await self.db.comprovantepagamento.update(
+                where={"id": existente.id},
+                data=data_base
+            )
+
+        return await self.db.comprovantepagamento.create(
+            data={
+                "pagamento": {"connect": {"id": pagamento_id}},
+                **data_base
+            }
+        )
+
+    async def _persistir_detalhes_tef(
+        self,
+        pagamento_id: int,
+        nsu: str = None,
+        autorizacao: str = None,
+        cupom_cliente: str = None,
+        cupom_estabelecimento: str = None,
+        valor_confirmado: float = None,
+    ) -> None:
+        meta = []
+        if nsu:
+            meta.append(f"NSU={nsu}")
+        if autorizacao:
+            meta.append(f"AUTORIZACAO={autorizacao}")
+        meta_texto = "; ".join(meta)
+
+        if cupom_cliente:
+            registro_cliente = await self._salvar_comprovante_tef_texto(
+                pagamento_id=pagamento_id,
+                sufixo="cliente",
+                conteudo=cupom_cliente,
+                marcador="TEF_CUPOM_CLIENTE",
+                valor_confirmado=valor_confirmado,
+            )
+            if registro_cliente and meta_texto:
+                await self.db.comprovantepagamento.update(
+                    where={"id": registro_cliente.id},
+                    data={"observacoesInternas": meta_texto}
+                )
+
+        if cupom_estabelecimento:
+            registro_estab = await self._salvar_comprovante_tef_texto(
+                pagamento_id=pagamento_id,
+                sufixo="estabelecimento",
+                conteudo=cupom_estabelecimento,
+                marcador="TEF_CUPOM_ESTABELECIMENTO",
+                valor_confirmado=valor_confirmado,
+            )
+            if registro_estab and meta_texto:
+                await self.db.comprovantepagamento.update(
+                    where={"id": registro_estab.id},
+                    data={"observacoesInternas": meta_texto}
+                )
+
+    async def update_status(
+        self,
+        pagamento_id: int,
+        status: str,
+        cielo_payment_id: str = None,
+        url_pagamento: str = None,
+        tef_autorizacao: str = None,
+        tef_cupom_cliente: str = None,
+        tef_cupom_estabelecimento: str = None
+    ) -> Dict[str, Any]:
         """Atualizar status do pagamento"""
         pagamento = await self.db.pagamento.find_unique(where={"id": pagamento_id})
         if not pagamento:
@@ -217,23 +347,41 @@ class PagamentoRepository:
             where={"id": pagamento_id},
             data=update_data
         )
+
+        pagamento_base = await self.db.pagamento.find_unique(where={"id": pagamento_id})
+        if (
+            pagamento_base and
+            (pagamento_base.metodo == "tef" or tef_cupom_cliente or tef_cupom_estabelecimento or tef_autorizacao)
+        ):
+            await self._persistir_detalhes_tef(
+                pagamento_id=pagamento_id,
+                nsu=cielo_payment_id,
+                autorizacao=tef_autorizacao,
+                cupom_cliente=tef_cupom_cliente,
+                cupom_estabelecimento=tef_cupom_estabelecimento,
+                valor_confirmado=float(pagamento_base.valor) if pagamento_base.valor is not None else None,
+            )
         
         updated_pagamento = await self.db.pagamento.find_unique(
             where={"id": pagamento_id},
             include={
                 "cliente": True,
                 "reserva": True,
-                "operacoesAntifraude": True
+                "operacoesAntifraude": True,
+                "comprovantes": True
             }
         )
         
         # Criar notificações baseadas no status
         if status == "APROVADO":
             await NotificationService.notificar_pagamento_aprovado(self.db, updated_pagamento, updated_pagamento.reserva)
+            await self._notificar_whatsapp_pagamento(updated_pagamento, "aprovado")
         elif status == "RECUSADO":
             await NotificationService.notificar_pagamento_recusado(self.db, updated_pagamento, updated_pagamento.reserva)
+            await self._notificar_whatsapp_pagamento(updated_pagamento, "recusado")
         elif status == "PENDENTE":
             await NotificationService.notificar_pagamento_pendente(self.db, updated_pagamento, updated_pagamento.reserva)
+            await self._notificar_whatsapp_pagamento(updated_pagamento, "pendente")
         
         return self._serialize_pagamento(updated_pagamento)
     
@@ -245,7 +393,8 @@ class PagamentoRepository:
             include={
                 "cliente": True,
                 "reserva": True,
-                "operacoesAntifraude": True
+                "operacoesAntifraude": True,
+                "comprovantes": True
             }
         )
         return [self._serialize_pagamento(p) for p in registros]
@@ -292,6 +441,7 @@ class PagamentoRepository:
         cliente = getattr(pagamento, "cliente", None)
         reserva = getattr(pagamento, "reserva", None)
         operacoes = getattr(pagamento, "operacoesAntifraude", []) or []
+        comprovantes = getattr(pagamento, "comprovantes", []) or []
 
         risk_score = None
         if operacoes:
@@ -303,6 +453,39 @@ class PagamentoRepository:
 
         # Obter o status do pagamento, usando statusPagamento como fallback para compatibilidade
         status = getattr(pagamento, "status", None) or getattr(pagamento, "statusPagamento", None)
+        nsu = getattr(pagamento, "cieloPaymentId", None) if getattr(pagamento, "metodo", None) == "tef" else None
+
+        tef_cupom_cliente = None
+        tef_cupom_estabelecimento = None
+        tef_cupom_cliente_arquivo = None
+        tef_cupom_estabelecimento_arquivo = None
+        tef_autorizacao = None
+
+        for comp in comprovantes:
+            marcador = (getattr(comp, "observacoes", "") or "").upper()
+            caminho = getattr(comp, "caminhoArquivo", None)
+            if not caminho:
+                continue
+
+            if not tef_autorizacao:
+                obs_int = getattr(comp, "observacoesInternas", "") or ""
+                if "AUTORIZACAO=" in obs_int:
+                    try:
+                        tef_autorizacao = obs_int.split("AUTORIZACAO=", 1)[1].split(";", 1)[0].strip()
+                    except Exception:
+                        tef_autorizacao = None
+
+            try:
+                texto = Path(caminho).read_text(encoding="utf-8")
+            except Exception:
+                texto = None
+
+            if marcador == "TEF_CUPOM_CLIENTE":
+                tef_cupom_cliente = texto
+                tef_cupom_cliente_arquivo = f"/api/v1/comprovantes/arquivo/{getattr(comp, 'nomeArquivo', '')}"
+            elif marcador == "TEF_CUPOM_ESTABELECIMENTO":
+                tef_cupom_estabelecimento = texto
+                tef_cupom_estabelecimento_arquivo = f"/api/v1/comprovantes/arquivo/{getattr(comp, 'nomeArquivo', '')}"
 
         return {
             "id": pagamento.id,
@@ -324,5 +507,13 @@ class PagamentoRepository:
             "data_criacao": pagamento.createdAt.isoformat() if hasattr(pagamento, 'createdAt') and pagamento.createdAt else None,
             "dataCriacao": pagamento.createdAt.isoformat() if hasattr(pagamento, 'createdAt') and pagamento.createdAt else None,
             "risk_score": risk_score,
-            "riskScore": risk_score
+            "riskScore": risk_score,
+            "nsu": nsu,
+            "authorization_code": tef_autorizacao,
+            "tef_nsu": nsu,
+            "tef_autorizacao": tef_autorizacao,
+            "tef_cupom_cliente": tef_cupom_cliente,
+            "tef_cupom_estabelecimento": tef_cupom_estabelecimento,
+            "tef_cupom_cliente_arquivo": tef_cupom_cliente_arquivo,
+            "tef_cupom_estabelecimento_arquivo": tef_cupom_estabelecimento_arquivo
         }
