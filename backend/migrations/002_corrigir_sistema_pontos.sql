@@ -68,41 +68,100 @@ ADD COLUMN IF NOT EXISTS saldo_posterior INTEGER;
 -- STEP 3: Atualizar dados existentes
 -- ============================================================
 
--- Preencher cliente_id baseado no usuario_id
-UPDATE transacoes_pontos tp
-SET cliente_id = up.cliente_id
-FROM usuarios_pontos up
-WHERE tp.usuario_id = up.id
-  AND tp.cliente_id IS NULL;
+-- Preencher cliente_id baseado no usuario_pontos_id (ou usuario_id legado)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transacoes_pontos'
+          AND column_name = 'usuario_pontos_id'
+    ) THEN
+        UPDATE transacoes_pontos tp
+        SET cliente_id = up.cliente_id
+        FROM usuarios_pontos up
+        WHERE tp.usuario_pontos_id = up.id
+          AND tp.cliente_id IS NULL;
+    ELSIF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transacoes_pontos'
+          AND column_name = 'usuario_id'
+    ) THEN
+        UPDATE transacoes_pontos tp
+        SET cliente_id = up.cliente_id
+        FROM usuarios_pontos up
+        WHERE tp.usuario_id = up.id
+          AND tp.cliente_id IS NULL;
+    END IF;
+END $$;
 
 -- ============================================================
 -- STEP 4: Adicionar constraints e foreign keys
 -- ============================================================
 
 -- Foreign key para cliente
-ALTER TABLE transacoes_pontos
-ADD CONSTRAINT IF NOT EXISTS fk_transacoes_pontos_cliente
-FOREIGN KEY (cliente_id) REFERENCES clientes(id)
-ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_transacoes_pontos_cliente'
+    ) THEN
+        ALTER TABLE transacoes_pontos
+        ADD CONSTRAINT fk_transacoes_pontos_cliente
+        FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+        ON DELETE CASCADE;
+    END IF;
+END $$;
 
--- Foreign key para funcionário (opcional)
-ALTER TABLE transacoes_pontos
-ADD CONSTRAINT IF NOT EXISTS fk_transacoes_pontos_funcionario
-FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id)
-ON DELETE SET NULL;
+-- Foreign key para funcionario (opcional)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_transacoes_pontos_funcionario'
+    ) THEN
+        ALTER TABLE transacoes_pontos
+        ADD CONSTRAINT fk_transacoes_pontos_funcionario
+        FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id)
+        ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- Foreign key para reserva (opcional)
-ALTER TABLE transacoes_pontos
-ADD CONSTRAINT IF NOT EXISTS fk_transacoes_pontos_reserva
-FOREIGN KEY (reserva_id) REFERENCES reservas(id)
-ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_transacoes_pontos_reserva'
+    ) THEN
+        ALTER TABLE transacoes_pontos
+        ADD CONSTRAINT fk_transacoes_pontos_reserva
+        FOREIGN KEY (reserva_id) REFERENCES reservas(id)
+        ON DELETE SET NULL;
+    END IF;
+END $$;
 
--- Tornar cliente_id obrigatório (após preencher dados existentes)
-ALTER TABLE transacoes_pontos
-ALTER COLUMN cliente_id SET NOT NULL;
+-- Tornar cliente_id obrigatorio (apos preencher dados existentes)
+DO $$
+DECLARE
+    null_count INTEGER;
+    v_is_nullable TEXT;
+BEGIN
+    SELECT is_nullable INTO v_is_nullable
+    FROM information_schema.columns
+    WHERE table_name = 'transacoes_pontos'
+      AND column_name = 'cliente_id';
+
+    IF v_is_nullable = 'YES' THEN
+        SELECT COUNT(*) INTO null_count
+        FROM transacoes_pontos
+        WHERE cliente_id IS NULL;
+
+        IF null_count = 0 THEN
+            ALTER TABLE transacoes_pontos
+            ALTER COLUMN cliente_id SET NOT NULL;
+        END IF;
+    END IF;
+END $$;
 
 -- ============================================================
--- STEP 5: Criar índices para performance
+-- STEP 5: Criar indices para performance
 -- ============================================================
 
 CREATE INDEX IF NOT EXISTS idx_transacoes_pontos_cliente_id 

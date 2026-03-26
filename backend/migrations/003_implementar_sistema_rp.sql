@@ -156,8 +156,8 @@ INSERT INTO premios_rp (nome, descricao, rp_necessario, categoria, ordem_exibica
 INSERT INTO clientes_rp (cliente_id, saldo_rp, total_pontos_ganhos)
 SELECT 
     up.cliente_id,
-    COALESCE(up.saldo_atual, 0) as saldo_rp,
-    COALESCE(up.saldo_atual, 0) as total_pontos_ganhos
+    COALESCE(up.saldo, 0) as saldo_rp,
+    COALESCE(up.saldo, 0) as total_pontos_ganhos
 FROM usuarios_pontos up
 WHERE up.cliente_id IS NOT NULL
 ON CONFLICT (cliente_id) DO UPDATE SET
@@ -201,7 +201,7 @@ CREATE OR REPLACE VIEW vw_historico_rp_detalhado AS
 SELECT 
     h.id,
     h.cliente_id,
-    c.nome_completo as cliente_nome,
+    c."nomeCompleto" as cliente_nome,
     h.reserva_id,
     r.codigo_reserva,
     h.tipo_suite,
@@ -245,5 +245,13 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO postgres;
 -- FINALIZAÇÃO
 -- ========================================
 -- Registrar execução da migration
-INSERT INTO schema_migrations (version, executed_at) VALUES ('003_implementar_sistema_rp', NOW())
-ON CONFLICT (version) DO UPDATE SET executed_at = NOW();
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'schema_migrations'
+    ) THEN
+        INSERT INTO schema_migrations (version, executed_at) VALUES ('003_implementar_sistema_rp', NOW())
+        ON CONFLICT (version) DO UPDATE SET executed_at = NOW();
+    END IF;
+END $$;
