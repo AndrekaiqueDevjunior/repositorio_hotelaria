@@ -1,5 +1,5 @@
-# ============================================================
-# DOCKER COMPOSE - PRODUÇÃO HOTEL CABO FRIO
+﻿# ============================================================
+# DOCKER COMPOSE - PRODUÃ‡ÃƒO HOTEL CABO FRIO
 # ============================================================
 # Uso: docker-compose -f docker-compose.production.yml --env-file .env.production up -d
 # ============================================================
@@ -8,7 +8,7 @@ version: '3.8'
 
 services:
   # ============================================================
-  # POSTGRESQL - BANCO DE DADOS PRODUÇÃO
+  # POSTGRESQL - BANCO DE DADOS PRODUÃ‡ÃƒO
   # ============================================================
   postgres:
     image: postgres:16-alpine
@@ -37,7 +37,7 @@ services:
         max-file: "3"
 
   # ============================================================
-  # REDIS - CACHE E SESSÕES
+  # REDIS - CACHE E SESSÃ•ES
   # ============================================================
   redis:
     image: redis:7-alpine
@@ -80,7 +80,7 @@ services:
       - hotel_network
 
   # ============================================================
-  # BACKEND - FASTAPI PRODUÇÃO
+  # BACKEND - FASTAPI PRODUÃ‡ÃƒO
   # ============================================================
   backend:
     build:
@@ -118,6 +118,25 @@ services:
       CIELO_TIMEOUT_MS: ${CIELO_TIMEOUT_MS}
       ANTIFRAUDE_RISK_THRESHOLD_AUTO: ${ANTIFRAUDE_RISK_THRESHOLD_AUTO}
       ANTIFRAUDE_RISK_THRESHOLD_REJECT: ${ANTIFRAUDE_RISK_THRESHOLD_REJECT}
+      TEF_AGENTE_URL: ${TEF_AGENTE_URL}
+      TEF_AGENTE_MODE: ${TEF_AGENTE_MODE}
+      TEF_AGENTE_VERIFY_SSL: ${TEF_AGENTE_VERIFY_SSL}
+      TEF_TIMEOUT: ${TEF_TIMEOUT}
+      TEF_SESSION_TIMEOUT: ${TEF_SESSION_TIMEOUT}
+      TEF_SITEF_IP: ${TEF_SITEF_IP}
+      TEF_STORE_ID: ${TEF_STORE_ID}
+      TEF_TERMINAL_ID: ${TEF_TERMINAL_ID}
+      TEF_CASHIER_OPERATOR: ${TEF_CASHIER_OPERATOR}
+      TEF_SESSION_PARAMETERS: ${TEF_SESSION_PARAMETERS}
+      TEF_TRN_INIT_PARAMETERS: ${TEF_TRN_INIT_PARAMETERS}
+      TEF_TRN_PARAMETERS: ${TEF_TRN_PARAMETERS}
+      TEF_PARMSCLIENT_PREFIX: ${TEF_PARMSCLIENT_PREFIX}
+      TEF_CNPJ_ESTAB: ${TEF_CNPJ_ESTAB}
+      TEF_CNPJ_AUTOMACAO: ${TEF_CNPJ_AUTOMACAO}
+      TEF_PARAMETROS_ADICIONAIS: ${TEF_PARAMETROS_ADICIONAIS}
+      TEF_AUTO_RESOLVE_PENDING: ${TEF_AUTO_RESOLVE_PENDING}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - backend_cache_prod:/app/.cache
       - ./uploads:/app/uploads
@@ -138,7 +157,7 @@ services:
         prisma generate &&
         echo '[BACKEND] Aplicando migrations (deploy)...' &&
         prisma migrate deploy &&
-        echo '[BACKEND] Iniciando servidor produção com Gunicorn...' &&
+        echo '[BACKEND] Iniciando servidor produÃ§Ã£o com Gunicorn...' &&
         gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile -
       "
     healthcheck:
@@ -154,7 +173,7 @@ services:
         max-file: "5"
 
   # ============================================================
-  # FRONTEND - NEXT.JS PRODUÇÃO
+  # FRONTEND - NEXT.JS PRODUÃ‡ÃƒO
   # ============================================================
   frontend:
     build:
@@ -240,7 +259,7 @@ services:
         max-file: "3"
 
   # ============================================================
-  # BACKUP AUTOMÁTICO
+  # BACKUP AUTOMÃTICO
   # ============================================================
   backup:
     image: postgres:16-alpine
@@ -265,7 +284,7 @@ services:
         while true; do
           echo '[BACKUP] Iniciando backup agendado...' &&
           sh /backup.sh &&
-          echo '[BACKUP] Backup concluído. Próximo em 24h.' &&
+          echo '[BACKUP] Backup concluÃ­do. PrÃ³ximo em 24h.' &&
           sleep 86400
         done
       "
@@ -292,3 +311,7 @@ volumes:
     driver: local
   backend_cache_prod:
     driver: local
+
+
+
+

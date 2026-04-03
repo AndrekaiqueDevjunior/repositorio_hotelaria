@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from app.schemas.pagamento_schema import PagamentoCreate, PagamentoResponse, CieloWebhook
 from app.services.pagamento_service import PagamentoService
+from app.services.email_service import EmailService
+from app.services.sms_service import SMSService
 from app.repositories.pagamento_repo import PagamentoRepository
 from app.core.database import get_db
 from app.middleware.auth_middleware import get_current_active_user, require_admin_or_manager
@@ -13,16 +15,29 @@ import ipaddress
 
 router = APIRouter(prefix="/pagamentos", tags=["pagamentos"])
 
-# IPs autorizados da Cielo para webhooks (produção)
-# Fonte: Documentação Cielo E-commerce
+# IPs autorizados da Cielo para webhooks (produÃ§Ã£o)
+# Fonte: DocumentaÃ§Ã£o Cielo E-commerce
 CIELO_ALLOWED_IPS = [
     "200.155.86.0/24",
     "200.155.87.0/24",
     "200.229.32.0/24",
 ]
 
+JUSTIFICATIVA_REQUIRED_FUNCTIONS = {112, 113, 114, 123}
+
+
+def _wrap_tef_param_fragment(value: object, prefix: str | None = None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if prefix and not raw.startswith(prefix) and not raw.startswith("{"):
+        raw = f"{prefix}{raw}"
+    if raw.startswith("{") and raw.endswith("}"):
+        return raw
+    return "{" + raw + "}"
+
 def is_cielo_ip_allowed(client_ip: str) -> bool:
-    """Verificar se IP do cliente está na lista de IPs autorizados da Cielo"""
+    """Verificar se IP do cliente estÃ¡ na lista de IPs autorizados da Cielo"""
     # Em desenvolvimento/sandbox, permitir qualquer IP
     if os.getenv("CIELO_MODE", "sandbox") == "sandbox":
         return True
@@ -50,7 +65,7 @@ async def listar_pagamentos(
     service: PagamentoService = Depends(get_pagamento_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Listar todos os pagamentos - Requer autenticação"""
+    """Listar todos os pagamentos - Requer autenticaÃ§Ã£o"""
     return await service.list_all()
 
 @router.post("", response_model=PagamentoResponse)
@@ -62,16 +77,16 @@ async def criar_pagamento(
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
     """
-    Criar novo pagamento com proteção de idempotência - P0-003
+    Criar novo pagamento com proteÃ§Ã£o de idempotÃªncia - P0-003
     
     Headers:
-        Idempotency-Key: UUID único (OBRIGATÓRIO para evitar pagamentos duplicados)
+        Idempotency-Key: UUID Ãºnico (OBRIGATÃ“RIO para evitar pagamentos duplicados)
     
     Retorna:
         201 Created com dados do pagamento
     """
     
-    # P0-003: CAMADA 1 - Verificar idempotência (CRÍTICO para pagamentos)
+    # P0-003: CAMADA 1 - Verificar idempotÃªncia (CRÃTICO para pagamentos)
     if idempotency_key:
         cached = await check_idempotency(f"pag:{idempotency_key}")
         if cached:
@@ -84,7 +99,7 @@ async def criar_pagamento(
     try:
         resultado = await service.create(pagamento)
         
-        # P0-003: CAMADA 3 - Cachear resultado da idempotência
+        # P0-003: CAMADA 3 - Cachear resultado da idempotÃªncia
         if idempotency_key:
             await store_idempotency_result(
                 f"pag:{idempotency_key}", 
@@ -113,9 +128,59 @@ async def iniciar_fluxo_tef(
 ):
     reserva_id = payload.get("reserva_id")
     valor = payload.get("valor")
+    function_id = payload.get("function_id", 0)
     if not reserva_id or valor is None:
         raise HTTPException(status_code=400, detail="reserva_id e valor sao obrigatorios")
-    return await service.iniciar_fluxo_tef(reserva_id=int(reserva_id), valor=float(valor))
+    try:
+        function_id_value = int(function_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="function_id invalido")
+    if function_id_value not in {0, 2, 3}:
+        raise HTTPException(status_code=400, detail="function_id invalido para /tef/iniciar. Use 0, 2 ou 3")
+    return await service.iniciar_fluxo_tef(
+        reserva_id=int(reserva_id),
+        valor=float(valor),
+        function_id=function_id_value,
+        cupom_fiscal=payload.get("cupom_fiscal"),
+        data_fiscal=payload.get("data_fiscal"),
+        hora_fiscal=payload.get("hora_fiscal"),
+        trn_additional_parameters=payload.get("trn_additional_parameters"),
+        trn_init_parameters=payload.get("trn_init_parameters"),
+        session_parameters=payload.get("session_parameters"),
+    )
+
+@router.post("/tef/iniciar-funcao", response_model=dict)
+async def iniciar_funcao_tef(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(require_admin_or_manager)
+):
+    function_id = payload.get("function_id")
+    if function_id is None:
+        raise HTTPException(status_code=400, detail="function_id e obrigatorio")
+
+    justificativa = (payload.get("justificativa") or "").strip()
+    if int(function_id) in JUSTIFICATIVA_REQUIRED_FUNCTIONS and not justificativa:
+        raise HTTPException(status_code=400, detail="justificativa obrigatoria para a funcao solicitada")
+
+    valor = payload.get("valor")
+    valor_float = float(valor) if valor is not None else None
+
+    return await service.iniciar_fluxo_tef_funcao(
+        function_id=int(function_id),
+        valor=valor_float,
+        cupom_fiscal=payload.get("cupom_fiscal"),
+        data_fiscal=payload.get("data_fiscal"),
+        hora_fiscal=payload.get("hora_fiscal"),
+        trn_additional_parameters=payload.get("trn_additional_parameters"),
+        trn_init_parameters=payload.get("trn_init_parameters"),
+        session_parameters=payload.get("session_parameters"),
+        cashier_operator=payload.get("cashier_operator"),
+        sitef_ip=payload.get("sitef_ip"),
+        store_id=payload.get("store_id"),
+        terminal_id=payload.get("terminal_id"),
+        justificativa=justificativa or None,
+    )
 
 @router.post("/tef/continuar", response_model=dict)
 async def continuar_fluxo_tef(
@@ -141,13 +206,54 @@ async def finalizar_fluxo_tef(
     session_id = payload.get("session_id")
     reserva_id = payload.get("reserva_id")
     valor = payload.get("valor")
-    if not session_id or not reserva_id or valor is None:
-        raise HTTPException(status_code=400, detail="session_id, reserva_id e valor sao obrigatorios")
+    function_id = payload.get("function_id", 0)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id e obrigatorio")
+
+    reserva_id_value = None
+    if reserva_id is not None:
+        try:
+            reserva_id_value = int(reserva_id)
+            if reserva_id_value <= 0:
+                reserva_id_value = None
+        except Exception:
+            reserva_id_value = None
+
+    valor_value = None
+    if valor is not None:
+        try:
+            valor_value = float(valor)
+        except Exception:
+            valor_value = None
+    param_fragments: list[str] = []
+
+    param_adic_base = payload.get("param_adic")
+    param_adic_base_str = str(param_adic_base or "")
+    if param_adic_base:
+        wrapped = _wrap_tef_param_fragment(param_adic_base)
+        if wrapped:
+            param_fragments.append(wrapped)
+
+    nfpag_raw = payload.get("nfpag_raw")
+    numero_pagamento_nfpag = payload.get("numero_pagamento_nfpag")
+    nfpag_raw_str = str(nfpag_raw or "")
+
+    if nfpag_raw and "NFPAG=" not in param_adic_base_str:
+        if numero_pagamento_nfpag not in (None, "") and "NumeroPagamentoNFPAG=" not in param_adic_base_str and "NumeroPagamentoNFPAG=" not in nfpag_raw_str:
+            wrapped_numero = _wrap_tef_param_fragment(numero_pagamento_nfpag, "NumeroPagamentoNFPAG=")
+            if wrapped_numero:
+                param_fragments.append(wrapped_numero)
+        wrapped_nfpag = _wrap_tef_param_fragment(nfpag_raw, "NFPAG=")
+        if wrapped_nfpag:
+            param_fragments.append(wrapped_nfpag)
+
+    param_adic = "".join(param_fragments) or None
     return await service.finalizar_fluxo_tef(
-        reserva_id=int(reserva_id),
-        valor=float(valor),
+        reserva_id=reserva_id_value,
+        valor=valor_value,
         session_id=str(session_id),
         confirm=bool(payload.get("confirm", True)),
+        param_adic=str(param_adic) if param_adic else None,
     )
 
 @router.post("/tef/cancelar", response_model=dict)
@@ -161,13 +267,108 @@ async def cancelar_fluxo_tef(
         raise HTTPException(status_code=400, detail="session_id e obrigatorio")
     return await service.cancelar_fluxo_tef(session_id=str(session_id))
 
+@router.delete("/tef/sessao", response_model=dict)
+async def limpar_sessao_tef(
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(get_current_active_user)
+):
+    return await service.limpar_sessao_tef()
+
+@router.post("/tef/cancelar-nsu", response_model=dict)
+async def cancelar_pagamento_tef_nsu(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(require_admin_or_manager)
+):
+    nsu = payload.get("nsu") or payload.get("cielo_payment_id")
+    if not nsu:
+        raise HTTPException(status_code=400, detail="nsu e obrigatorio")
+    justificativa = (payload.get("justificativa") or "").strip()
+    if not justificativa:
+        raise HTTPException(status_code=400, detail="justificativa obrigatoria para cancelamento")
+    print(f"[TEF] Justificativa cancelamento NSU {nsu}: {justificativa}")
+    return await service.cancelar_pagamento_tef_nsu(str(nsu))
+
+@router.post("/tef/pendencias", response_model=dict)
+async def resolver_pendencias_tef(
+    payload: dict,
+    service: PagamentoService = Depends(get_pagamento_service),
+    current_user: User = Depends(require_admin_or_manager)
+):
+    confirmar = bool(payload.get("confirmar", True))
+    return await service.resolver_pendencias_tef(confirmar=confirmar)
+
+@router.get("/tef/pendencias/status", response_model=dict)
+async def status_pendencias_tef(
+    clear: bool = True,
+    current_user: User = Depends(get_current_active_user)
+):
+    from app.services.tef_service import get_pending_status
+
+    status = get_pending_status(clear=clear)
+    return {"success": True, **status}
+
+@router.post("/tef/enviar-comprovante", response_model=dict)
+async def enviar_comprovante_tef(
+    payload: dict,
+    current_user: User = Depends(get_current_active_user)
+):
+    email = (payload.get("email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="email e obrigatorio")
+
+    cupom_cliente = payload.get("cupom_cliente") or ""
+    cupom_estabelecimento = payload.get("cupom_estabelecimento") or ""
+    nsu = payload.get("nsu")
+    autorizacao = payload.get("autorizacao")
+
+    email_service = EmailService()
+    enviado = await email_service.enviar_comprovante_tef(
+        email=email,
+        cupom_cliente=cupom_cliente,
+        cupom_estabelecimento=cupom_estabelecimento,
+        nsu=nsu,
+        autorizacao=autorizacao,
+    )
+    if not enviado:
+        raise HTTPException(status_code=400, detail="Falha ao enviar comprovante TEF")
+
+    return {"success": True}
+
+@router.post("/tef/enviar-sms", response_model=dict)
+async def enviar_comprovante_tef_sms(
+    payload: dict,
+    current_user: User = Depends(get_current_active_user)
+):
+    telefone = (payload.get("telefone") or "").strip()
+    if not telefone:
+        raise HTTPException(status_code=400, detail="telefone e obrigatorio")
+
+    cupom_cliente = payload.get("cupom_cliente") or ""
+    cupom_estabelecimento = payload.get("cupom_estabelecimento") or ""
+    nsu = payload.get("nsu")
+    autorizacao = payload.get("autorizacao")
+
+    sms_service = SMSService()
+    envio = sms_service.enviar_comprovante_tef(
+        telefone=telefone,
+        cupom_cliente=cupom_cliente,
+        cupom_estabelecimento=cupom_estabelecimento,
+        nsu=nsu,
+        autorizacao=autorizacao,
+    )
+    if not envio.get("success"):
+        raise HTTPException(status_code=400, detail=envio.get("error") or "Falha ao enviar SMS")
+
+    return {"success": True, "detail": envio}
+
 @router.get("/{pagamento_id}", response_model=PagamentoResponse)
 async def obter_pagamento(
     pagamento_id: int,
     service: PagamentoService = Depends(get_pagamento_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Obter pagamento por ID - Requer autenticação"""
+    """Obter pagamento por ID - Requer autenticaÃ§Ã£o"""
     return await service.get_by_id(pagamento_id)
 
 @router.get("/cielo/{payment_id}", response_model=PagamentoResponse)
@@ -176,7 +377,7 @@ async def obter_pagamento_por_cielo_id(
     service: PagamentoService = Depends(get_pagamento_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Obter pagamento pelo ID da Cielo - Requer autenticação"""
+    """Obter pagamento pelo ID da Cielo - Requer autenticaÃ§Ã£o"""
     return await service.get_by_payment_id(payment_id)
 
 @router.get("/reserva/{reserva_id}", response_model=List[PagamentoResponse])
@@ -185,7 +386,7 @@ async def listar_pagamentos_reserva(
     service: PagamentoService = Depends(get_pagamento_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Listar pagamentos de uma reserva - Requer autenticação"""
+    """Listar pagamentos de uma reserva - Requer autenticaÃ§Ã£o"""
     return await service.list_by_reserva(reserva_id)
 
 @router.post("/{pagamento_id}/cancelar", response_model=PagamentoResponse, deprecated=True)
@@ -203,7 +404,7 @@ async def verificar_status_pagamento(
     service: PagamentoService = Depends(get_pagamento_service),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Verificar status de pagamento PIX - Requer autenticação"""
+    """Verificar status de pagamento PIX - Requer autenticaÃ§Ã£o"""
     return await service.verificar_status_pix(pagamento_id)
 
 @router.post("/{pagamento_id}/confirmar-pix", response_model=dict)
@@ -225,7 +426,7 @@ async def atualizar_pagamento_parcial(
     """
     Atualizar pagamento parcialmente (REST-compliant)
     
-    Operações suportadas:
+    OperaÃ§Ãµes suportadas:
     - {"status": "CANCELADO"} - Cancelar pagamento
     - {"status": "APROVADO"} - Aprovar pagamento e creditar pontos
     """
@@ -236,7 +437,7 @@ async def atualizar_pagamento_parcial(
         elif status == "APROVADO":
             return await service.aprovar_pagamento(pagamento_id)
     
-    raise HTTPException(status_code=400, detail="Operação não suportada. Use status='APROVADO' ou status='CANCELADO'")
+    raise HTTPException(status_code=400, detail="OperaÃ§Ã£o nÃ£o suportada. Use status='APROVADO' ou status='CANCELADO'")
 
 
 @router.post("/{pagamento_id}/aprovar", response_model=PagamentoResponse)
@@ -268,7 +469,7 @@ async def cielo_webhook(
     """
     Processar webhook da Cielo
     
-    SEGURANÇA: Em produção, valida se a requisição vem de IPs autorizados da Cielo.
+    SEGURANÃ‡A: Em produÃ§Ã£o, valida se a requisiÃ§Ã£o vem de IPs autorizados da Cielo.
     Em sandbox, permite qualquer IP para facilitar testes.
     """
     client_ip = request.client.host if request.client else "unknown"
@@ -276,7 +477,12 @@ async def cielo_webhook(
     if not is_cielo_ip_allowed(client_ip):
         raise HTTPException(
             status_code=403, 
-            detail=f"IP {client_ip} não autorizado para webhooks Cielo"
+            detail=f"IP {client_ip} nÃ£o autorizado para webhooks Cielo"
         )
     
     return await service.process_webhook(webhook_data)
+
+
+
+
+

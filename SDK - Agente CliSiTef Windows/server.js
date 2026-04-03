@@ -258,24 +258,38 @@ function createTransactionLocal({
     authorization,
   });
 
-  const steps = [
-    { commandId: 30, data: 'Forneca o numero do cartao', fieldId: 0, fieldMinLength: 13, fieldMaxLength: 19 },
-    { commandId: 35, data: 'Aguarde, em processamento...(35)\nForneca a data de vencimento do cartao (MMAA)', fieldId: 0, fieldMinLength: 4, fieldMaxLength: 4 },
-    { commandId: 35, data: 'Aguarde, em processamento...(35)\nCodigo de Seguranca do cartao', fieldId: 0, fieldMinLength: 3, fieldMaxLength: 4 },
-    {
-      commandId: 30,
-      data: 'Selecione a forma de pagamento\n1:A Vista\n2:Parcelado pelo Estabelecimento\n3:Parcelado pela Administradora\n4:Consulta parcelamento\n5:Consulta AVS',
-      fieldId: 0,
-      fieldMinLength: 1,
-      fieldMaxLength: 1,
-    },
-    { commandId: 1, data: 'Aguarde, processando transacao...', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
-    { commandId: 23, data: 'Confirme no pinpad', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
-    { commandId: 2, data: 'Transacao em andamento', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
-    { commandId: 0, data: `FUNC=${functionId};VALOR=${valorCentavos};OPERADOR=${operator}`, fieldId: 100, fieldMinLength: 0, fieldMaxLength: 1024 },
-    { commandId: 0, data: coupons.cupomEstabelecimento, fieldId: 121, fieldMinLength: 0, fieldMaxLength: 8000 },
-    { commandId: 0, data: coupons.cupomCliente, fieldId: 122, fieldMinLength: 0, fieldMaxLength: 8000 },
-  ];
+  const menuGerencial = '1:Teste de comunicacao;2:Reimpressao de comprovante;3:Cancelamento de transacao;4:Carga de tabelas no pinpad;5:Envio de trace para o Servidor;6:Registro de Terminal';
+
+  const steps = Number(functionId) === 110
+    ? [
+        {
+          commandId: 21,
+          data: menuGerencial,
+          fieldId: 0,
+          fieldMinLength: 1,
+          fieldMaxLength: 1,
+        },
+        { commandId: 1, data: 'Menu gerencial apresentado', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
+        { commandId: 0, data: `FUNC=${functionId};OPERADOR=${operator}`, fieldId: 100, fieldMinLength: 0, fieldMaxLength: 1024 },
+      ]
+    : [
+        { commandId: 30, data: 'Forneca o numero do cartao', fieldId: 0, fieldMinLength: 13, fieldMaxLength: 19 },
+        { commandId: 35, data: 'Aguarde, em processamento...(35)\nForneca a data de vencimento do cartao (MMAA)', fieldId: 0, fieldMinLength: 4, fieldMaxLength: 4 },
+        { commandId: 35, data: 'Aguarde, em processamento...(35)\nCodigo de Seguranca do cartao', fieldId: 0, fieldMinLength: 3, fieldMaxLength: 4 },
+        {
+          commandId: 30,
+          data: 'Selecione a forma de pagamento\n1:A Vista\n2:Parcelado pelo Estabelecimento\n3:Parcelado pela Administradora\n4:Consulta parcelamento\n5:Consulta AVS',
+          fieldId: 0,
+          fieldMinLength: 1,
+          fieldMaxLength: 1,
+        },
+        { commandId: 1, data: 'Aguarde, processando transacao...', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
+        { commandId: 23, data: 'Confirme no pinpad', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
+        { commandId: 2, data: 'Transacao em andamento', fieldId: 0, fieldMinLength: 0, fieldMaxLength: 0 },
+        { commandId: 0, data: `FUNC=${functionId};VALOR=${valorCentavos};OPERADOR=${operator}`, fieldId: 100, fieldMinLength: 0, fieldMaxLength: 1024 },
+        { commandId: 0, data: coupons.cupomEstabelecimento, fieldId: 121, fieldMinLength: 0, fieldMaxLength: 8000 },
+        { commandId: 0, data: coupons.cupomCliente, fieldId: 122, fieldMinLength: 0, fieldMaxLength: 8000 },
+      ];
 
   const tx = {
     sessionId,

@@ -1,4 +1,4 @@
-services:
+﻿services:
   # ============================================================
   # BANCO DE DADOS - PostgreSQL
   # ============================================================
@@ -40,7 +40,8 @@ services:
       - ./backend/.env.docker.dev
     environment:
       CORS_ORIGINS: ${HOTEL_CORS_ORIGINS:-http://localhost:3000,http://localhost:18000,http://localhost:18080,http://127.0.0.1:3000,http://127.0.0.1:18000,http://127.0.0.1:18080}
-      
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       - backend_cache:/app/.cache
@@ -75,6 +76,7 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: "/api/v1"
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      NEXT_PUBLIC_TEF_TLS_TOKEN: ""
       BACKEND_URL: http://backend:8000
       NODE_ENV: development
       HOSTNAME: "0.0.0.0"
@@ -89,7 +91,7 @@ services:
       - backend
     networks:
       - hotel_network
-    # Aumentar memória disponível
+    # Aumentar mem?ria dispon?vel
     deploy:
       resources:
         limits:
@@ -138,7 +140,7 @@ services:
       - ngrok
 
   # ============================================================
-  # NGROK - Túnel para Acesso Externo (Frontend + Backend)
+  # NGROK - T?nel para Acesso Externo (Frontend + Backend)
   # ============================================================
   ngrok:
     image: ngrok/ngrok:latest
@@ -197,3 +199,4 @@ volumes:
 networks:
   hotel_network:
     driver: bridge
+

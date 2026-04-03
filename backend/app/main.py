@@ -141,6 +141,18 @@ async def startup_event():
     # Inicializar cache Redis
     from app.core.cache import cache
     await cache.connect()
+    if settings.TEF_AUTO_RESOLVE_PENDING:
+        try:
+            import asyncio
+            from app.services.tef_service import TefService
+
+            async def _resolver():
+                resultado = await TefService().resolver_pendencias(confirmar=True)
+                print(f"[TEF] Pendencias resolvidas: {resultado}")
+
+            asyncio.create_task(_resolver())
+        except Exception as exc:
+            print(f"[TEF] Falha ao agendar resolucao de pendencias: {exc}")
 
 @app.get("/")
 async def root():

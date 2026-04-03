@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { toast } from 'react-toastify'
 import { api } from '../../../lib/api'
 import { 
   StatusPagamento,
@@ -9,6 +10,7 @@ import {
   isPagamentoAprovado,
   isPagamentoNegado
 } from '../../../lib/constants/enums'
+import ModalTefGerencial from '../../../components/ModalTefGerencial'
 
 const formatCurrency = (value) => {
   const numero = Number(value || 0)
@@ -26,6 +28,8 @@ export default function PagamentosPage() {
   const [pagamentos, setPagamentos] = useState([])
   const [showPagamentoDetailsModal, setShowPagamentoDetailsModal] = useState(false)
   const [pagamentoDetalhes, setPagamentoDetalhes] = useState(null)
+  const [showTefGerencial, setShowTefGerencial] = useState(false)
+  const [pendenciaStatus, setPendenciaStatus] = useState('')
   const [stats, setStats] = useState({
     total: 0,
     pendentes: 0,
@@ -88,6 +92,19 @@ export default function PagamentosPage() {
 
   useEffect(() => {
     loadPagamentos()
+    const fetchPendenciasStatus = async () => {
+      try {
+        const res = await api.get('/pagamentos/tef/pendencias/status')
+        const message = res.data?.message
+        if (message) {
+          setPendenciaStatus(message)
+          toast.info(message)
+        }
+      } catch (err) {
+        console.error('Erro ao consultar pendencias TEF:', err)
+      }
+    }
+    fetchPendenciasStatus()
   }, [])
 
   const imprimirTexto = (titulo, texto) => {
@@ -125,6 +142,13 @@ export default function PagamentosPage() {
         </div>
         <div className="flex gap-3">
           <button
+            onClick={() => setShowTefGerencial(true)}
+            className="bg-sky-700 text-white px-4 py-2 rounded shadow hover:bg-sky-800 disabled:opacity-50"
+            disabled={loading}
+          >
+            TEF Gerencial
+          </button>
+          <button
             onClick={loadPagamentos}
             className="bg-real-blue text-white px-4 py-2 rounded shadow hover:bg-blue-800 disabled:opacity-50"
             disabled={loading}
@@ -137,6 +161,12 @@ export default function PagamentosPage() {
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
           {error}
+        </div>
+      )}
+
+      {pendenciaStatus && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded">
+          {pendenciaStatus}
         </div>
       )}
 
@@ -451,9 +481,7 @@ export default function PagamentosPage() {
                           </button>
                         </div>
                       </div>
-                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-52">
-                        {pagamentoDetalhes.tef_cupom_cliente || 'Nao disponivel'}
-                      </pre>
+                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-52">{pagamentoDetalhes.tef_cupom_cliente || 'Nao disponivel'}</pre>
                     </div>
 
                     <div className="bg-white p-3 rounded border">
@@ -478,9 +506,7 @@ export default function PagamentosPage() {
                           </button>
                         </div>
                       </div>
-                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-52">
-                        {pagamentoDetalhes.tef_cupom_estabelecimento || 'Nao disponivel'}
-                      </pre>
+                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-52">{pagamentoDetalhes.tef_cupom_estabelecimento || 'Nao disponivel'}</pre>
                     </div>
                   </div>
                 </div>
@@ -498,6 +524,10 @@ export default function PagamentosPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showTefGerencial && (
+        <ModalTefGerencial onClose={() => setShowTefGerencial(false)} />
       )}
     </div>
   )

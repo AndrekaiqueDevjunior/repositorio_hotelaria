@@ -19,6 +19,10 @@ class EmailService:
     def enabled(self) -> bool:
         return bool(self.api_key and self.from_email and self.reservas_to_email)
 
+    @property
+    def tef_enabled(self) -> bool:
+        return bool(self.api_key and self.from_email)
+
     async def enviar_notificacao_nova_reserva(
         self,
         reserva: Dict[str, Any],
@@ -112,4 +116,85 @@ class EmailService:
             return True
         except Exception as exc:
             print(f"[EMAIL] Falha ao enviar email de reserva: {exc}")
+            return False
+
+    async def enviar_comprovante_tef(
+        self,
+        email: str,
+        cupom_cliente: str,
+        cupom_estabelecimento: str,
+        nsu: Optional[str] = None,
+        autorizacao: Optional[str] = None,
+    ) -> bool:
+        if not self.tef_enabled:
+            print("[EMAIL] SendGrid desabilitado para comprovante TEF: variaveis de ambiente ausentes")
+            return False
+
+        email = (email or "").strip()
+        if not email or "@" not in email:
+            print("[EMAIL] Email de destino invalido para comprovante TEF")
+            return False
+
+        cupom_cliente = cupom_cliente or "Nao retornado"
+        cupom_estabelecimento = cupom_estabelecimento or "Nao retornado"
+        nsu_texto = nsu or "-"
+        autorizacao_texto = autorizacao or "-"
+
+        subject = "Comprovante TEF"
+        text_content = (
+            "Comprovante TEF\n\n"
+            f"NSU: {nsu_texto}\n"
+            f"Autorizacao: {autorizacao_texto}\n\n"
+            "Cupom Cliente:\n"
+            f"{cupom_cliente}\n\n"
+            "Cupom Estabelecimento:\n"
+            f"{cupom_estabelecimento}\n"
+        )
+        html_content = f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937">
+          <h2 style="margin-bottom:8px">Comprovante TEF</h2>
+          <p><strong>NSU:</strong> {nsu_texto}</p>
+          <p><strong>Autorizacao:</strong> {autorizacao_texto}</p>
+          <hr style="margin:16px 0" />
+          <h3 style="margin:0 0 8px 0">Cupom Cliente</h3>
+          <pre style="white-space:pre-wrap;font-family:monospace">{cupom_cliente}</pre>
+          <h3 style="margin:16px 0 8px 0">Cupom Estabelecimento</h3>
+          <pre style="white-space:pre-wrap;font-family:monospace">{cupom_estabelecimento}</pre>
+        </div>
+        """
+
+        payload = {
+            "personalizations": [
+                {
+                    "to": [{"email": email}],
+                    "subject": subject,
+                }
+            ],
+            "from": {
+                "email": self.from_email,
+                "name": self.from_name,
+            },
+            "content": [
+                {"type": "text/plain", "value": text_content},
+                {"type": "text/html", "value": html_content},
+            ],
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(self.SENDGRID_URL, headers=headers, json=payload)
+
+            if response.status_code >= 400:
+                print(f"[EMAIL] Erro SendGrid comprovante TEF {response.status_code}: {response.text[:500]}")
+                return False
+
+            print(f"[EMAIL] Comprovante TEF enviado para {email}")
+            return True
+        except Exception as exc:
+            print(f"[EMAIL] Falha ao enviar comprovante TEF: {exc}")
             return False

@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Hotel Real Cabo Frio"
     VERSION: str = "1.0.0"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
-    DESCRIPTION: str = "Sistema de Gestão Hoteleira - Arquitetura Modular"
+    DESCRIPTION: str = "Sistema de GestÃ£o Hoteleira - Arquitetura Modular"
     
-    # CRÍTICO: DATABASE_URL deve estar aqui para ser carregada do .env
+    # CRÃTICO: DATABASE_URL deve estar aqui para ser carregada do .env
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
     # Prisma / DB
@@ -38,7 +38,36 @@ class Settings(BaseSettings):
 
     # TEF (CliSiTef)
     TEF_AGENTE_URL: str = os.getenv("TEF_AGENTE_URL", "http://localhost:9999")
-    TEF_TIMEOUT: int = int(os.getenv("TEF_TIMEOUT", "30"))
+    TEF_AGENTE_MODE: str = os.getenv("TEF_AGENTE_MODE", "mock")
+    TEF_AGENTE_VERIFY_SSL: bool = os.getenv("TEF_AGENTE_VERIFY_SSL", "true").lower() == "true"
+    # Timeout de requisiÃ§Ã£o ao agente (segundos)
+    TEF_TIMEOUT: int = int(os.getenv("TEF_TIMEOUT", "60"))
+    # Timeout de inatividade de sessÃ£o TEF (segundos)
+    TEF_SESSION_TIMEOUT: int = int(os.getenv("TEF_SESSION_TIMEOUT", "60"))
+    # ParÃ¢metros de conexÃ£o/identificaÃ§Ã£o do terminal
+    TEF_SITEF_IP: str = os.getenv("TEF_SITEF_IP", "")
+    TEF_STORE_ID: str = os.getenv("TEF_STORE_ID", "")
+    TEF_TERMINAL_ID: str = os.getenv("TEF_TERMINAL_ID", "")
+    TEF_CASHIER_OPERATOR: str = os.getenv("TEF_CASHIER_OPERATOR", "")
+    # ParÃ¢metros de sessÃ£o/transaÃ§Ã£o enviados ao agente
+    TEF_SESSION_PARAMETERS: str = os.getenv("TEF_SESSION_PARAMETERS", "")
+    TEF_TRN_INIT_PARAMETERS: str = os.getenv(
+        "TEF_TRN_INIT_PARAMETERS",
+        "",
+    )
+    TEF_TRN_PARAMETERS: str = os.getenv("TEF_TRN_PARAMETERS", "")
+    # Envio de CNPJ via ParmsClient (parametrosAdicionais)
+    TEF_PARMSCLIENT_PREFIX: str = os.getenv("TEF_PARMSCLIENT_PREFIX", "ParmsClient=>")
+    TEF_CNPJ_ESTAB: str = os.getenv("TEF_CNPJ_ESTAB", "")
+    TEF_CNPJ_AUTOMACAO: str = os.getenv("TEF_CNPJ_AUTOMACAO", "")
+    TEF_PARAMETROS_ADICIONAIS: str = os.getenv("TEF_PARAMETROS_ADICIONAIS", "")
+    # Senha de supervisor para validaÃ§Ã£o do TipoCampo 500
+    TEF_SUPERVISOR_PASSWORD: str = os.getenv("TEF_SUPERVISOR_PASSWORD", os.getenv("ADMIN_PASSWORD", "admin123"))
+    TEF_AUTO_RESOLVE_PENDING: bool = os.getenv("TEF_AUTO_RESOLVE_PENDING", "false").lower() == "true"
+
+    SMS_TWILIO_ACCOUNT_SID: str = os.getenv("SMS_TWILIO_ACCOUNT_SID", "")
+    SMS_TWILIO_AUTH_TOKEN: str = os.getenv("SMS_TWILIO_AUTH_TOKEN", "")
+    SMS_TWILIO_FROM_NUMBER: str = os.getenv("SMS_TWILIO_FROM_NUMBER", "")
 
     # Admin
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -70,3 +99,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+

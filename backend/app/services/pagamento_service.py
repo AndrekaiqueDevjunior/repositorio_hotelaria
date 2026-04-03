@@ -1,4 +1,4 @@
-﻿from typing import Dict, Any, List
+from typing import Dict, Any, List
 from datetime import datetime
 from app.utils.datetime_utils import now_utc, to_utc
 from fastapi import HTTPException
@@ -216,13 +216,70 @@ class PagamentoService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao processar pagamento: {str(e)}")
 
-    async def iniciar_fluxo_tef(self, reserva_id: int, valor: float) -> Dict[str, Any]:
+    async def iniciar_fluxo_tef(
+        self,
+        reserva_id: int,
+        valor: float,
+        function_id: int = 0,
+        cupom_fiscal: str | None = None,
+        data_fiscal: str | None = None,
+        hora_fiscal: str | None = None,
+        trn_additional_parameters: str | None = None,
+        trn_init_parameters: str | None = None,
+        session_parameters: str | None = None,
+    ) -> Dict[str, Any]:
         try:
-            return await self.tef_service.iniciar_fluxo_interativo(valor=valor, reserva_id=reserva_id)
+            return await self.tef_service.iniciar_fluxo_interativo(
+                valor=valor,
+                reserva_id=reserva_id,
+                function_id=function_id,
+                cupom_fiscal=cupom_fiscal,
+                data_fiscal=data_fiscal,
+                hora_fiscal=hora_fiscal,
+                trn_additional_parameters=trn_additional_parameters,
+                trn_init_parameters=trn_init_parameters,
+                session_parameters=session_parameters,
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao iniciar fluxo TEF: {str(e)}")
+
+    async def iniciar_fluxo_tef_funcao(
+        self,
+        function_id: int,
+        valor: float | None = None,
+        cupom_fiscal: str | None = None,
+        data_fiscal: str | None = None,
+        hora_fiscal: str | None = None,
+        trn_additional_parameters: str | None = None,
+        trn_init_parameters: str | None = None,
+        session_parameters: str | None = None,
+        cashier_operator: str | None = None,
+        sitef_ip: str | None = None,
+        store_id: str | None = None,
+        terminal_id: str | None = None,
+        justificativa: str | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            return await self.tef_service.iniciar_fluxo_interativo(
+                valor=valor,
+                reserva_id=None,
+                function_id=function_id,
+                cupom_fiscal=cupom_fiscal,
+                data_fiscal=data_fiscal,
+                hora_fiscal=hora_fiscal,
+                trn_additional_parameters=trn_additional_parameters,
+                trn_init_parameters=trn_init_parameters,
+                session_parameters=session_parameters,
+                cashier_operator=cashier_operator,
+                sitef_ip=sitef_ip,
+                store_id=store_id,
+                terminal_id=terminal_id,
+                justificativa=justificativa,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao iniciar funcao TEF: {str(e)}")
 
     async def continuar_fluxo_tef(self, session_id: str, continue_flag: int = 0, data: str = "") -> Dict[str, Any]:
         try:
@@ -236,15 +293,17 @@ class PagamentoService:
 
     async def finalizar_fluxo_tef(
         self,
-        reserva_id: int,
-        valor: float,
+        reserva_id: int | None,
+        valor: float | None,
         session_id: str,
         confirm: bool,
+        param_adic: str | None = None,
     ) -> Dict[str, Any]:
         try:
             tef_response = await self.tef_service.finalizar_fluxo_interativo(
                 session_id=session_id,
                 confirm=confirm,
+                param_adic=param_adic,
             )
 
             if not tef_response.get("finalizado"):
@@ -253,7 +312,7 @@ class PagamentoService:
                     "error": tef_response.get("error") or "Fluxo TEF nao finalizado",
                 }
 
-            if tef_response.get("success"):
+            if reserva_id and valor is not None and tef_response.get("success"):
                 pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
                     reserva_id=reserva_id,
                     valor=valor,
@@ -264,26 +323,67 @@ class PagamentoService:
                     "success": True,
                     "autorizacao": tef_response.get("autorizacao"),
                     "nsu": tef_response.get("nsu"),
+                    "nsu_sitef": tef_response.get("nsu_sitef"),
+                    "nsu_host": tef_response.get("nsu_host"),
+                    "rede_autorizadora": tef_response.get("rede_autorizadora"),
+                    "bandeira": tef_response.get("bandeira"),
+                    "codigo_estabelecimento": tef_response.get("codigo_estabelecimento"),
+                    "data_hora_transacao": tef_response.get("data_hora_transacao"),
                     "cupom_cliente": tef_response.get("cupom_cliente"),
                     "cupom_estabelecimento": tef_response.get("cupom_estabelecimento"),
                     "tipo_campos": tef_response.get("tipo_campos", []),
+                    "nfpag": tef_response.get("nfpag", {}),
+                    "evento_atual": tef_response.get("evento_atual"),
+                    "eventos": tef_response.get("eventos", []),
+                    "reimpressao": tef_response.get("reimpressao"),
                     "message": tef_response.get("message"),
                 }
 
-            pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
-                reserva_id=reserva_id,
-                valor=valor,
-                tef_response=tef_response,
-            )
+            if reserva_id and valor is not None:
+                pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
+                    reserva_id=reserva_id,
+                    valor=valor,
+                    tef_response=tef_response,
+                )
+                return {
+                    **pagamento_atualizado,
+                    "success": False,
+                    "error": tef_response.get("error") or tef_response.get("message") or "Pagamento TEF recusado",
+                    "cupom_cliente": tef_response.get("cupom_cliente"),
+                    "cupom_estabelecimento": tef_response.get("cupom_estabelecimento"),
+                    "tipo_campos": tef_response.get("tipo_campos", []),
+                    "nsu": tef_response.get("nsu"),
+                    "nsu_sitef": tef_response.get("nsu_sitef"),
+                    "nsu_host": tef_response.get("nsu_host"),
+                    "rede_autorizadora": tef_response.get("rede_autorizadora"),
+                    "bandeira": tef_response.get("bandeira"),
+                    "codigo_estabelecimento": tef_response.get("codigo_estabelecimento"),
+                    "data_hora_transacao": tef_response.get("data_hora_transacao"),
+                    "autorizacao": tef_response.get("autorizacao"),
+                    "nfpag": tef_response.get("nfpag", {}),
+                    "evento_atual": tef_response.get("evento_atual"),
+                    "eventos": tef_response.get("eventos", []),
+                    "reimpressao": tef_response.get("reimpressao"),
+                }
+
             return {
-                **pagamento_atualizado,
-                "success": False,
-                "error": tef_response.get("error") or tef_response.get("message") or "Pagamento TEF recusado",
+                **tef_response,
+                "success": bool(tef_response.get("success")),
                 "cupom_cliente": tef_response.get("cupom_cliente"),
                 "cupom_estabelecimento": tef_response.get("cupom_estabelecimento"),
                 "tipo_campos": tef_response.get("tipo_campos", []),
                 "nsu": tef_response.get("nsu"),
+                "nsu_sitef": tef_response.get("nsu_sitef"),
+                "nsu_host": tef_response.get("nsu_host"),
+                "rede_autorizadora": tef_response.get("rede_autorizadora"),
+                "bandeira": tef_response.get("bandeira"),
+                "codigo_estabelecimento": tef_response.get("codigo_estabelecimento"),
+                "data_hora_transacao": tef_response.get("data_hora_transacao"),
                 "autorizacao": tef_response.get("autorizacao"),
+                "nfpag": tef_response.get("nfpag", {}),
+                "evento_atual": tef_response.get("evento_atual"),
+                "eventos": tef_response.get("eventos", []),
+                "reimpressao": tef_response.get("reimpressao"),
             }
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -295,6 +395,38 @@ class PagamentoService:
             return await self.tef_service.cancelar_fluxo_interativo(session_id=session_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao cancelar fluxo TEF: {str(e)}")
+
+    async def limpar_sessao_tef(self) -> Dict[str, Any]:
+        try:
+            return await self.tef_service.limpar_sessao_interativa()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao limpar sessao TEF: {str(e)}")
+
+    async def cancelar_pagamento_tef_nsu(self, nsu: str) -> Dict[str, Any]:
+        try:
+            resultado = await self.tef_service.cancelar_pagamento(nsu)
+            if not resultado.get("success"):
+                return resultado
+
+            pagamento_atualizado = None
+            try:
+                pagamento = await self.pagamento_repo.get_by_payment_id(nsu)
+                pagamento_atualizado = await self.pagamento_repo.update_status(pagamento["id"], "CANCELADO")
+            except Exception:
+                pagamento_atualizado = None
+
+            return {
+                **resultado,
+                "pagamento": pagamento_atualizado
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao cancelar pagamento TEF: {str(e)}")
+
+    async def resolver_pendencias_tef(self, confirmar: bool = True) -> Dict[str, Any]:
+        try:
+            return await self.tef_service.resolver_pendencias(confirmar=confirmar)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao resolver pendencias TEF: {str(e)}")
     
     async def get_by_id(self, pagamento_id: int) -> Dict[str, Any]:
         """Obter pagamento por ID"""
@@ -534,3 +666,4 @@ async def obter_pagamento(pagamento_id: int):
 async def listar_pagamentos_reserva(reserva_id: int):
     service = await get_pagamento_service()
     return await service.list_by_reserva(reserva_id)
+
