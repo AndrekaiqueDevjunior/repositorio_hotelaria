@@ -79,6 +79,26 @@ TEF_EVENT_LABELS: Dict[int, str] = {
     5074: "Assinatura em papel obrigatoria",
     5084: "Mensagem vinda do SiTef ou do autorizador",
 }
+TEF_FIELD_LABELS: Dict[int, str] = {
+    105: "Data/hora da transacao",
+    121: "Cupom Cliente",
+    122: "Cupom Estabelecimento",
+    131: "Rede autorizadora",
+    132: "Bandeira",
+    133: "NSU SiTef",
+    134: "NSU Host",
+    135: "Codigo de autorizacao",
+    157: "Codigo de estabelecimento",
+    4125: "Cupom Cliente disponivel para reimpressao",
+    4126: "Cupom Estabelecimento disponivel para reimpressao",
+    4127: "Prazo de disponibilidade na base do SiTef",
+    515: "Data da transacao a ser cancelada ou re-impressa (DDMMAAAA)",
+    516: "Numero do documento a ser cancelado ou re-impresso",
+}
+TEF_FIELD_HINTS: Dict[int, str] = {
+    515: "Use a data da transacao original no formato DDMMAAAA para cancelar ou reimprimir.",
+    516: "Copie o numero do Cupom Fiscal/documento da transacao original que voce quer cancelar ou reimprimir.",
+}
 NFPAG_TYPE_LABELS: Dict[str, str] = {
     "00": "Dinheiro",
     "01": "Cheque",
@@ -133,6 +153,42 @@ def _build_event_payload(field_id: int, data: Any) -> Dict[str, Any]:
     }
 
 
+def _sanitize_tef_log_data(field_id: int, data: Any) -> str:
+    if field_id == 500:
+        return "<masked>"
+    raw = "" if data is None else str(data)
+    normalized = " ".join(raw.split())
+    if len(normalized) > 160:
+        return f"{normalized[:157]}..."
+    return normalized
+def _log_tef_response(stage: str, function_id: int | None, response: Dict[str, Any], session_id: str | None = None) -> None:
+    command_id = int(response.get("commandId") or 0)
+    field_id = int(response.get("fieldId") or 0)
+    service_status = int(response.get("serviceStatus") or 0)
+    clisitef_status = int(response.get("clisitefStatus") or 0)
+    data_preview = _sanitize_tef_log_data(field_id, response.get("data"))
+    session_part = f" session={session_id}" if session_id else ""
+    function_part = f"{function_id}" if function_id is not None else "?"
+    data_part = f" data='{data_preview}'" if data_preview else ""
+    print(
+        f"[TEF][{stage}] funcao={function_part}{session_part} service={service_status} "
+        f"clisitef={clisitef_status} command={command_id} field={field_id}{data_part}"
+    )
+def _log_tef_input(
+    function_id: int | None,
+    session_id: str,
+    continue_flag: int,
+    expected_command_id: int,
+    expected_field_id: int,
+    data: Any,
+) -> None:
+    data_preview = _sanitize_tef_log_data(expected_field_id, data)
+    data_part = f" data='{data_preview}'" if data_preview else ""
+    function_part = f"{function_id}" if function_id is not None else "?"
+    print(
+        f"[TEF][input] funcao={function_part} session={session_id} continue={continue_flag} "
+        f"expected_command={expected_command_id} expected_field={expected_field_id}{data_part}"
+    )
 def _resolve_final_message(prompt: str, session: Dict[str, Any], clisitef_status: int, aprovado: bool) -> str:
     if str(prompt or "").strip():
         return str(prompt)
@@ -189,6 +245,74 @@ def _sanitize_nfpag(nfpag: Dict[str, Any] | None) -> Dict[str, Any]:
     return cleaned
 
 
+def _format_date_ddmmyyyy(value: Any) -> str:
+    raw = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(raw) < 8:
+        return ""
+    if len(raw) >= 14:
+        raw = raw[:8]
+    elif len(raw) > 8:
+        raw = raw[:8]
+    return f"{raw[6:8]}{raw[4:6]}{raw[0:4]}"
+
+
+def _build_tipo_campo_entry(field_id: int, valor: str) -> Dict[str, Any]:
+    entry: Dict[str, Any] = {
+        "TipoCampo": str(field_id),
+        "Valor": valor,
+    }
+    descricao = TEF_FIELD_LABELS.get(field_id)
+    if descricao:
+        entry["Descricao"] = descricao
+    dica = TEF_FIELD_HINTS.get(field_id)
+    if dica:
+        entry["Dica"] = dica
+    return entry
+
+
+def _build_reimpressao_reference(session: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not isinstance(session, dict):
+        return None
+
+    cupom_fiscal = str(session.get("tax_invoice_number") or "").strip()
+    data_fiscal = str(session.get("tax_invoice_date") or "").strip()
+    hora_fiscal = str(session.get("tax_invoice_time") or "").strip()
+    data_hora_transacao = str(session.get("data_hora_transacao") or "").strip()
+    campo_515 = _format_date_ddmmyyyy(data_hora_transacao or data_fiscal)
+    nsu_host = str(session.get("nsu_host") or session.get("nsu") or "").strip()
+    nsu_sitef = str(session.get("nsu_sitef") or "").strip()
+    codigo_estabelecimento = str(session.get("codigo_estabelecimento") or "").strip()
+    valor_original = session.get("valor")
+    valor_centavos = session.get("valor_centavos")
+    valor_formatado = None
+    if isinstance(valor_original, (int, float)):
+        valor_formatado = f"{float(valor_original):.2f}".replace(".", ",")
+    elif isinstance(valor_centavos, int):
+        valor_formatado = f"{valor_centavos / 100:.2f}".replace(".", ",")
+
+    if not any([cupom_fiscal, campo_515, nsu_host, nsu_sitef, codigo_estabelecimento, valor_formatado]):
+        return None
+
+    return {
+        "campo_146_label": "Campo 146 - Valor da transacao original",
+        "campo_146_valor": valor_formatado,
+        "campo_146_orientacao": "No cancelamento, o SiTef pode pedir o valor da transacao original.",
+        "campo_516_label": "Campo 516 - Numero do documento da transacao original",
+        "campo_516_valor": cupom_fiscal or None,
+        "campo_516_orientacao": "Use este numero quando o SiTef pedir o documento para cancelar ou reimprimir.",
+        "campo_515_label": "Campo 515 - Data da transacao original",
+        "campo_515_valor": campo_515 or None,
+        "campo_515_orientacao": "Use esta data no formato DDMMAAAA quando o SiTef pedir a data para cancelar ou reimprimir.",
+        "cupom_fiscal": cupom_fiscal or None,
+        "data_fiscal": data_fiscal or None,
+        "hora_fiscal": hora_fiscal or None,
+        "data_hora_transacao": data_hora_transacao or None,
+        "nsu_host": nsu_host or None,
+        "nsu_sitef": nsu_sitef or None,
+        "codigo_estabelecimento": codigo_estabelecimento or None,
+    }
+
+
 def _now_fiscal_date() -> str:
     now = datetime.now()
     return now.strftime("%Y%m%d")
@@ -220,7 +344,7 @@ def get_pending_status(clear: bool = False) -> Dict[str, Any]:
 
 class TefService:
     """
-    ServiÃƒÂ§o de integraÃƒÂ§ÃƒÂ£o com CliSiTef para pagamentos TEF.
+    ServiÃƒÆ’Ã‚Â§o de integraÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o com CliSiTef para pagamentos TEF.
     """
 
     def __init__(self):
@@ -332,8 +456,8 @@ class TefService:
             return None
 
         # Regra de homologacao: nao forcar TLS no fluxo de venda comum.
-        # O TokenRegistro padrao so deve ser enviado na funcao 699 (registro TLS).
-        if int(function_id) == 699:
+        # O TokenRegistro padrao so deve ser enviado apenas nas funcoes oficiais de registro TLS.
+        if int(function_id) in {669, 699}:
             return default_trn_init
 
         return None
@@ -456,6 +580,22 @@ class TefService:
 
         return ""
 
+    def _should_auto_continue_input_command(self, response: Dict[str, Any]) -> bool:
+        command_id = int(response.get("commandId") or 0)
+        if command_id not in (31, 35):
+            return False
+
+        field_min_length = int(response.get("fieldMinLength") or 0)
+        field_max_length = int(response.get("fieldMaxLength") or 0)
+        if field_min_length <= 0 and field_max_length <= 0:
+            return True
+
+        prompt = str(response.get("data") or "").lower()
+        if command_id == 35 and "aguarde" in prompt and "process" in prompt:
+            return True
+
+        return False
+
     def _register_response(self, session_id: str, response: Dict[str, Any]) -> Dict[str, Any]:
         session = TEF_INTERACTIVE_SESSIONS[session_id]
         command_id = int(response.get("commandId") or 0)
@@ -491,12 +631,7 @@ class TefService:
             valor = "" if data is None else str(data)
             if field_id == 500:
                 valor = "****"
-            session["tipo_campos"].append(
-                {
-                    "TipoCampo": str(field_id),
-                    "Valor": valor,
-                }
-            )
+            session["tipo_campos"].append(_build_tipo_campo_entry(field_id, valor))
 
         if command_id == 0 and 5000 <= field_id <= 5084:
             event_payload = _build_event_payload(field_id, data)
@@ -591,6 +726,8 @@ class TefService:
         messages.sort(key=lambda item: item["target"])
         receipt_required = command_id == 0 and field_id in (121, 122)
         receipt_kind = "cliente" if field_id == 121 else "estabelecimento" if field_id == 122 else ""
+        field_label = TEF_FIELD_LABELS.get(field_id)
+        field_hint = TEF_FIELD_HINTS.get(field_id)
 
         return {
             "success": True,
@@ -605,6 +742,8 @@ class TefService:
             "field_is_secret": field_id == 500 or command_id == 41,
             "field_min_length": int(response.get("fieldMinLength") or 0),
             "field_max_length": int(response.get("fieldMaxLength") or 0),
+            "field_label": field_label,
+            "field_hint": field_hint,
             "prompt": prompt,
             "default_value": self._default_input_value(response),
             "message": _resolve_final_message(prompt, session, clisitef_status, aprovado),
@@ -631,6 +770,7 @@ class TefService:
             "evento_atual": session.get("evento_atual"),
             "eventos": session.get("eventos", [])[-12:],
             "reimpressao": session.get("reimpressao") or None,
+            "referencia_reimpressao": _build_reimpressao_reference(session),
             "receipt_required": receipt_required,
             "receipt_kind": receipt_kind,
         }
@@ -755,6 +895,7 @@ class TefService:
                     "error": f"Falha ao reiniciar TEF apos sessao ocupada: {exc}",
                 }
 
+        _log_tef_response("start", function_id, start, start.get("sessionId"))
         if int(start.get("serviceStatus") or 0) != 0:
             return {
                 "success": False,
@@ -843,7 +984,9 @@ class TefService:
         next_data = "" if data is None else str(data)
 
         last_response = session.get("last_response") or {}
+        expected_command_id = int(last_response.get("commandId") or 0)
         last_field_id = int(last_response.get("fieldId") or 0)
+        _log_tef_input(session.get("function_id"), session_id, next_continue, expected_command_id, last_field_id, next_data)
         if last_field_id == 500:
             if not next_data:
                 return {
@@ -875,6 +1018,7 @@ class TefService:
                     "error": f"Falha no continueTransaction: {exc}",
                 }
 
+            _log_tef_response("continue", session.get("function_id"), response, session_id)
             if int(response.get("serviceStatus") or 0) != 0:
                 return {
                     "success": False,
@@ -904,6 +1048,10 @@ class TefService:
                 continue
 
             if command_id in INPUT_COMMANDS:
+                if self._should_auto_continue_input_command(response):
+                    next_continue = 0
+                    next_data = self._default_input_value(response)
+                    continue
                 return self._build_interactive_payload(session_id, response)
 
             if command_id in AUTO_ADVANCE_COMMANDS:
@@ -993,6 +1141,7 @@ class TefService:
             "evento_atual": session.get("evento_atual"),
             "eventos": session.get("eventos", [])[-12:],
             "reimpressao": session.get("reimpressao") or None,
+            "referencia_reimpressao": _build_reimpressao_reference(session),
             "message": finish.get("serviceMessage") or ("Transacao aprovada" if aprovado else "Transacao nao aprovada"),
             "detail": finish,
         }
@@ -1107,6 +1256,7 @@ class TefService:
                 "error": f"Falha ao iniciar pendencias TEF: {exc}",
             }
 
+        _log_tef_response("start", function_id, start, start.get("sessionId"))
         if int(start.get("serviceStatus") or 0) != 0:
             _set_pending_status("Agente retornou erro ao iniciar pendencias TEF", start)
             return {
@@ -1154,6 +1304,7 @@ class TefService:
                     "error": f"Falha no continueTransaction: {exc}",
                 }
 
+            _log_tef_response("continue", session.get("function_id"), response, session_id)
             if int(response.get("serviceStatus") or 0) != 0:
                 _set_pending_status("Erro no continueTransaction pendencias", response)
                 return {
@@ -1217,8 +1368,12 @@ class TefService:
             "success": int(finish.get("serviceStatus") or 0) == 0,
             "session_id": session_id,
             "clisitef_status": int((last_response or {}).get("clisitefStatus") or 0),
+            "message": message,
+            "confirmar": confirmar,
             "detail": finish,
         }
+
+
 
 
 

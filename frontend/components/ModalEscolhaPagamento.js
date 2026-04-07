@@ -907,7 +907,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
           <div className="bg-zinc-300 min-h-[420px] p-6">
                 <div className="mb-4 rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-                  Este fluxo cobre as sequencias de venda do roteiro (4 a 11 e 22 a 24). Para menu 110, reimpressao,
+                  Este fluxo cobre as sequencias de venda e multiplos pagamentos do roteiro (4 a 10 e 21 a 23). Para menu 110, reimpressao,
                   cancelamento, QR Code, pendencias e TLS, use o modal `TEF Gerencial` em `Pagamentos`.
                 </div>
                 {tefResultado ? (

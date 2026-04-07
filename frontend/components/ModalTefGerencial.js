@@ -1,9 +1,23 @@
-﻿'use client'
+'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-toastify'
 import { api } from '../lib/api'
-import { getClisitefStatusDescription, getTefEventDescription, getTefEventTone, normalizeTefFlag } from '../lib/tefHelpers'
+import {
+  NFPAG_COLLECTION_LABELS,
+  NFPAG_FIELD_OPTIONS,
+  NFPAG_TYPE_LABELS,
+  buildNfpagExtras,
+  buildNfpagString,
+  getClisitefStatusDescription,
+  getNfpagFieldPlaceholder,
+  getNfpagTypeDetail,
+  getNfpagTypeOptions,
+  getTefEventDescription,
+  getTefEventTone,
+  normalizeTefFlag,
+  parseNfpagValor
+} from '../lib/tefHelpers'
 
 const escapeTipoCampo = (value) => String(value || '').replace(/\n/g, '\\n')
 
@@ -106,6 +120,14 @@ const toneClasses = {
   sky: 'border-sky-200 bg-sky-50 text-sky-800'
 }
 
+const tefFlowActionBaseClass = 'w-full sm:w-auto sm:min-w-[9rem] rounded px-4 py-2.5 text-sm sm:text-base lg:text-lg font-semibold transition-colors disabled:opacity-60'
+const tefFlowPrimaryButtonClass = `${tefFlowActionBaseClass} bg-sky-600 hover:bg-sky-700 text-white`
+const tefFlowSecondaryButtonClass = `${tefFlowActionBaseClass} bg-zinc-500 hover:bg-zinc-600 text-white`
+const tefFlowMidButtonClass = `${tefFlowActionBaseClass} bg-zinc-600 hover:bg-zinc-700 text-white`
+const tefFlowMutedButtonClass = `${tefFlowActionBaseClass} bg-zinc-400 hover:bg-zinc-500 text-white`
+const tefFlowDarkButtonClass = `${tefFlowActionBaseClass} bg-zinc-700 hover:bg-zinc-800 text-white`
+const tefFlowWarningButtonClass = `${tefFlowActionBaseClass} bg-amber-500 hover:bg-amber-600 text-white`
+
 const renderTefEventInfo = (payload) => {
   const eventoAtual = payload?.evento_atual
   const eventos = Array.isArray(payload?.eventos) ? payload.eventos.slice(-6) : []
@@ -160,23 +182,101 @@ const renderTefReimpressaoInfo = (reimpressao) => {
   )
 }
 
+const renderFieldGuidanceInfo = (payload) => {
+  const fieldId = Number(payload?.field_id)
+  const fieldLabel = String(payload?.field_label || '').trim()
+  const fieldHint = String(payload?.field_hint || '').trim()
+
+  if (!fieldLabel && !fieldHint) return null
+
+  return (
+    <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+      <p className="font-semibold">Campo solicitado{fieldId > 0 ? ` (${fieldId})` : ''}</p>
+      {fieldLabel && <p className="mt-1 text-sm">{fieldLabel}</p>}
+      {fieldHint && <p className="mt-1 text-sm">{fieldHint}</p>}
+    </div>
+  )
+}
+
+const renderReferenciaReimpressao = (referencia) => {
+  const campo146 = String(referencia?.campo_146_valor || '').trim()
+  const campo516 = String(referencia?.campo_516_valor || '').trim()
+  const campo515 = String(referencia?.campo_515_valor || '').trim()
+  const nsuHost = String(referencia?.nsu_host || '').trim()
+  const nsuSitef = String(referencia?.nsu_sitef || '').trim()
+  const codigoEstabelecimento = String(referencia?.codigo_estabelecimento || '').trim()
+  const dataHora = String(referencia?.data_hora_transacao || '').trim()
+
+  const itens = [
+    {
+      label: referencia?.campo_146_label || 'Campo 146',
+      value: campo146,
+      hint: referencia?.campo_146_orientacao || ''
+    },
+    {
+      label: referencia?.campo_516_label || 'Campo 516',
+      value: campo516,
+      hint: referencia?.campo_516_orientacao || ''
+    },
+    {
+      label: referencia?.campo_515_label || 'Campo 515',
+      value: campo515,
+      hint: referencia?.campo_515_orientacao || ''
+    },
+    {
+      label: 'NSU Host',
+      value: nsuHost
+    },
+    {
+      label: 'NSU SiTef',
+      value: nsuSitef
+    },
+    {
+      label: 'Codigo de estabelecimento',
+      value: codigoEstabelecimento
+    },
+    {
+      label: 'Data/hora da transacao',
+      value: dataHora
+    }
+  ].filter((item) => item.value)
+
+  if (itens.length === 0) return null
+
+  return (
+    <div className="mb-4 rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sky-900">
+      <p className="font-semibold">Referencia para copiar em reimpressao/cancelamento</p>
+      <p className="mt-1 text-sm">Guarde estes dados da transacao gerada para usar depois no fluxo gerencial.</p>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        {itens.map((item) => (
+          <div key={item.label} className="rounded border border-sky-200 bg-white/90 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">{item.label}</p>
+            <p className="mt-1 break-all font-mono text-sm text-zinc-900">{item.value}</p>
+            {item.hint && <p className="mt-1 text-xs text-zinc-600">{item.hint}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const FUNCTION_OPTIONS = [
   { id: 110, label: '110 - Menu Gerencial' },
   { id: 112, label: '112 - Reimpressao (menu)' },
-  { id: 113, label: '113 - Reimpressao especifica / cancelamento' },
-  { id: 114, label: '114 - Reimpressao ultimo comprovante' },
+  { id: 113, label: '113 - Reimpressao especifica' },
+  { id: 114, label: '114 - Reimpressao do ultimo comprovante' },
   { id: 121, label: '121 - Envio de trace' },
   { id: 122, label: '122 - Venda QR Code' },
   { id: 123, label: '123 - Cancelamento QR Code' },
   { id: 130, label: '130 - Tratamento de pendencias' },
-  { id: 699, label: '699 - Registro de Terminal (TLS)' },
-  { id: 669, label: '669 - Registro TLS (legado)' },
+  { id: 669, label: '669 - Registro TLS (roteiro oficial)' },
+  { id: 699, label: '699 - Registro TLS (extra/diagnostico)' },
   { id: 0, label: '0 - Venda (menu geral)' },
   { id: 2, label: '2 - Venda Debito' },
   { id: 3, label: '3 - Venda Credito' }
 ]
 
-const JUSTIFICATIVA_REQUIRED_FUNCTIONS = new Set([112, 113, 114, 123])
+const JUSTIFICATIVA_REQUIRED_FUNCTIONS = new Set()
 
 const DEFAULT_TLS_TOKEN = process.env.NEXT_PUBLIC_TEF_TLS_TOKEN || ''
 const PRE_HOMO_TLS_TOKEN = '1111-2222-3333-4444'
@@ -255,117 +355,123 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 10 - Voltar ao menu anterior',
     functionId: 0,
     guidance: 'Selecione credito, use MENU INICIAL ou VOLTAR e refaca o fluxo em debito.',
-    expected: 'O retorno ao menu anterior deve funcionar com continua = 1 e a transacao final deve concluir.'
+    expected: 'O retorno ao menu anterior deve funcionar com continua = 1, a transacao final deve ser autorizada e deve haver impressao de cupom.'
   },
   {
     id: '11',
-    label: 'Seq. 11 - Timeout de 60 segundos por tela',
-    functionId: 3,
-    guidance: 'Inicie uma venda e interrompa o fluxo em qualquer tela por 60 segundos ou mais.',
-    expected: 'A automacao deve cancelar por inatividade e nao imprimir cupom.'
+    label: 'Seq. 11 - Reimpressao do ultimo comprovante',
+    functionId: 114,
+    guidance: 'Use a funcao 114 ou o menu 110/112 para solicitar o ultimo comprovante sem informar manualmente os dados da transacao.',
+    expected: 'A reimpressao deve ser autorizada com cupom e senha de supervisor mascarada.'
   },
   {
     id: '12',
-    label: 'Seq. 12 - Reimpressao do ultimo comprovante',
-    functionId: 114,
-    guidance: 'Use a funcao 114 ou o menu 110/112 para solicitar o ultimo comprovante.',
-    expected: 'A reimpressao deve ser autorizada com cupom e senha de supervisor mascarada.'
+    label: 'Seq. 12 - Reimpressao especifica via menu',
+    functionId: 112,
+    guidance: 'Use o comprovante da seq. 5, abra o menu de reimpressao pela funcao 112 (ou 110 > Reimpressao) e selecione a opcao Especifica(o).',
+    expected: 'A reimpressao especifica deve ser autorizada com mensagens ao operador, cupom e senha de supervisor mascarada.'
   },
   {
     id: '13',
-    label: 'Seq. 13 - Reimpressao especifica',
-    functionId: 113,
-    guidance: 'Use os dados do comprovante anterior para solicitar a reimpressao especifica.',
-    expected: 'A reimpressao deve ser autorizada com cupom e senha de supervisor mascarada.'
+    label: 'Seq. 13 - Cancelamento da transacao de debito',
+    functionId: 110,
+    guidance: 'Utilize o comprovante da seq. 5 e realize o cancelamento da transacao de debito pelo menu gerencial.',
+    expected: 'O cancelamento deve ser autorizado com cupom, mensagens ao operador e senha de supervisor mascarada.'
   },
   {
     id: '14',
-    label: 'Seq. 14 - Cancelamento da transacao de debito',
+    label: 'Seq. 14 - Cancelamento da transacao de credito',
     functionId: 110,
-    guidance: 'Abra o menu 110 e escolha o cancelamento da venda de debito usando o comprovante da seq. 5.',
-    expected: 'O cancelamento deve ser autorizado com cupom e mensagens exibidas.'
+    guidance: 'Utilize o comprovante da seq. 6 e realize o cancelamento da transacao de credito pelo menu gerencial.',
+    expected: 'O cancelamento deve ser autorizado com cupom, mensagens ao operador e senha de supervisor mascarada.'
   },
   {
     id: '15',
-    label: 'Seq. 15 - Cancelamento da transacao de credito',
-    functionId: 110,
-    guidance: 'Abra o menu 110 e escolha o cancelamento da venda de credito usando o comprovante da seq. 6.',
-    expected: 'O cancelamento deve ser autorizado com cupom e mensagens exibidas.'
+    label: 'Seq. 15 - Reimpressao do cancelamento',
+    functionId: 113,
+    guidance: 'Separe o comprovante da seq. 13 e solicite a reimpressao especifica pelo menu 110/112 ou diretamente pela funcao 113.',
+    expected: 'A reimpressao do cancelamento deve ser autorizada com cupom e senha de supervisor mascarada.'
   },
   {
     id: '16',
-    label: 'Seq. 16 - Reimpressao do cancelamento',
-    functionId: 113,
-    guidance: 'Solicite a reimpressao especifica usando os dados do cancelamento anterior.',
-    expected: 'A reimpressao do cancelamento deve ser autorizada com cupom.'
-  },
-  {
-    id: '17',
-    label: 'Seq. 17 - Venda QR Code',
+    label: 'Seq. 16 - Venda QR Code',
     functionId: 122,
     valor: '10',
     trnInitParameters: '{TransacoesAdicionaisHabilitadas=7;8;9;38;37}',
-    guidance: 'Execute a venda por QR Code pelo menu generico ou diretamente pela funcao 122.',
+    guidance: 'Realize a venda por QR Code pelo menu generico (funcao 0) ou diretamente pela funcao 122.',
     expected: 'A transacao deve ser autorizada com mensagens e impressao de cupom.'
   },
   {
-    id: '18',
-    label: 'Seq. 18 - Cancelamento QR Code',
+    id: '17',
+    label: 'Seq. 17 - Cancelamento QR Code',
     functionId: 123,
     valor: '10',
     trnInitParameters: '{TransacoesAdicionaisHabilitadas=7;8;9;38;37}',
-    guidance: 'Cancele a venda QR Code anterior informando valor, documento e data solicitados.',
-    expected: 'O cancelamento deve ser autorizado com cupom e justificativa registrada.'
+    guidance: 'Separe o comprovante da seq. 16 e realize o cancelamento pelo menu 110 ou diretamente pela funcao 123, informando valor, documento e data.',
+    expected: 'O cancelamento deve ser autorizado com cupom, mensagens ao operador e senha de supervisor mascarada.'
   },
   {
-    id: '19',
-    label: 'Seq. 19 - Tratamento de transacoes pendentes',
+    id: '18',
+    label: 'Seq. 18 - Tratamento de transacoes pendentes',
     functionId: 130,
-    guidance: 'Apos simular a queda da aplicacao, execute o tratamento de pendencias ou valide o tratamento automatico na inicializacao.',
+    guidance: 'Depois da mensagem Retire o Cartao, encerre a aplicacao ou desligue o equipamento antes de remover o cartao e valide o tratamento automatico/manual da pendencia ao retornar.',
     expected: 'A automacao deve confirmar ou desfazer a pendencia automaticamente e informar o resultado ao operador.'
   },
   {
-    id: '20',
-    label: 'Seq. 20 - Reimpressao apos pendencia confirmada',
+    id: '19',
+    label: 'Seq. 19 - Reimpressao apos pendencia confirmada',
     functionId: 114,
-    guidance: 'Reimprima o ultimo comprovante apos confirmar a pendencia anterior.',
+    guidance: 'Apos confirmar a pendencia anterior, solicite a reimpressao do ultimo comprovante via 110/112 ou diretamente pela funcao 114.',
     expected: 'A reimpressao deve ser autorizada com cupom.'
   },
   {
-    id: '21',
-    label: 'Seq. 21 - TLS Fiserv',
-    functionId: 699,
+    id: '20',
+    label: 'Seq. 20 - TLS Fiserv',
+    functionId: 669,
     showAdvanced: true,
-    guidance: 'Preencha o token TLS e execute o registro manual do terminal ou demonstre o envio dos parametros na configuracao.',
-    expected: 'A tela deve evidenciar o envio do token e o fluxo de registro do terminal.'
+    guidance: 'Demonstre o envio do TokenRegistro na startTransaction e, se usar registro manual, execute o fluxo pela funcao 669 ou pelo menu 110.',
+    expected: 'A tela deve evidenciar o envio dos parametros TLS e/ou o menu de registro do terminal.'
   },
   {
-    id: '22',
-    label: 'Seq. 22 - Multiplos pagamentos com troco em dinheiro',
+    id: '21',
+    label: 'Seq. 21 - Multiplos pagamentos com troco em dinheiro',
     functionId: 3,
     valor: '20',
-    guidance: 'Realize a parte TEF da venda e conclua o restante em dinheiro, sempre lancando o dinheiro por ultimo.',
+    guidance: 'Autorize a parte TEF e conclua o restante em dinheiro, lancando o dinheiro por ultimo no cupom fiscal.',
     expected: 'A transacao TEF deve ser autorizada, com cupom e registro do troco na aplicacao.'
   },
   {
-    id: '23',
-    label: 'Seq. 23 - Multiplos pagamentos com dois cartoes',
+    id: '22',
+    label: 'Seq. 22 - Multiplos pagamentos com dois cartoes',
     functionId: 3,
     valor: '40',
-    guidance: 'Autorize a primeira parte no credito e conclua a segunda parte em debito com o mesmo cupom fiscal.',
+    guidance: 'Autorize a primeira parte no credito a vista e conclua a segunda parte em debito com o mesmo TaxInvoiceNumber/DataFiscal.',
     expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
   {
-    id: '24',
-    label: 'Seq. 24 - Multiplos pagamentos com carteira digital',
+    id: '23',
+    label: 'Seq. 23 - Multiplos pagamentos com carteira digital',
     functionId: 3,
     valor: '100',
-    guidance: 'Autorize a primeira parte no credito e conclua o restante com carteira digital usando o mesmo cupom fiscal.',
+    guidance: 'Autorize a primeira parte no credito a vista e conclua o restante com carteira digital no mesmo TaxInvoiceNumber/DataFiscal.',
     expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
+  },
+  {
+    id: '99',
+    label: 'Extra - Timeout de 60 segundos por tela',
+    functionId: 3,
+    guidance: 'Teste interno fora do roteiro: interrompa o fluxo em qualquer tela por 60 segundos ou mais.',
+    expected: 'A automacao deve cancelar por inatividade e nao imprimir cupom.'
   }
 ]
 
+const SEQUENCES_AUTOGENERATE_FISCAL_DOCUMENT = new Set(['5', '6', '7', '8', '10', '16', '21', '22', '23'])
+const SEQUENCES_REQUIRE_ORIGINAL_DOCUMENT_REFERENCE = new Set(['12', '13', '14', '15', '17'])
+
 const getSequencePreset = (sequenceId) => SEQUENCE_PRESETS.find((item) => item.id === String(sequenceId || ''))
+const sequenceAutogeneratesFiscalDocument = (sequenceId) => SEQUENCES_AUTOGENERATE_FISCAL_DOCUMENT.has(String(sequenceId || ''))
+const sequenceRequiresOriginalDocumentReference = (sequenceId) => SEQUENCES_REQUIRE_ORIGINAL_DOCUMENT_REFERENCE.has(String(sequenceId || ''))
+const onlyDigits = (value) => String(value || '').replace(/\D/g, '')
 
 const buildSeq3Conformance = (sequenceId, tefResultado, tefErro) => {
   if (String(sequenceId || '') !== '3') return null
@@ -416,6 +522,24 @@ const isSessionLostError = (message) => {
   return raw.includes('sessao tef nao encontrada') || raw.includes('sessao tef expirada') || raw.includes('sessao tef n?o encontrada') || raw.includes('sessao tef n?o encontrada')
 }
 
+const normalizeValidationText = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+const APPROVED_SEQUENCE_FAILURE_HINTS = [
+  'cartao nao configurado',
+  'trn. nao habilitada',
+  'trn nao habilitada',
+  'nao habilitada',
+  'erro pinpad',
+  'sem comunicacao com o sitef',
+  'modo invalido',
+  'transacao negada',
+  'nao autorizada'
+]
+
 const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro, pendenciaStatus) => {
   const seq = String(sequenceId || '')
   if (!seq) return null
@@ -426,10 +550,10 @@ const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro
     tefResultado?.cupom_cliente || tefResultado?.tef_cupom_cliente ||
     tefResultado?.cupom_estabelecimento || tefResultado?.tef_cupom_estabelecimento
   )
-  const message = String(tefResultado?.message || tefPrompt?.prompt || tefErro || '').toLowerCase()
+  const message = normalizeValidationText(tefResultado?.message || tefPrompt?.prompt || tefErro || '')
 
-  const approvedSeq = new Set(['5', '6', '7', '8', '12', '13', '14', '15', '16', '17', '18', '20', '22', '23', '24'])
-  const deniedSeq = new Set(['2', '3', '4', '9', '10', '11'])
+  const approvedSeq = new Set(['5', '6', '7', '8', '10', '11', '12', '13', '14', '15', '16', '17', '19', '21', '22', '23'])
+  const deniedSeq = new Set(['2', '3', '4', '9', '99'])
 
   if (seq === '1') {
     const menuOk = ['teste de comunicacao', 'reimpress', 'cancelamento', 'registro'].every((k) => message.includes(k))
@@ -462,7 +586,19 @@ const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro
     }
   }
 
-  if (seq === '19') {
+  if (seq === '18') {
+    if (typeof tefResultado?.success === 'boolean') {
+      const actionLabel = tefResultado?.confirmar === false ? 'desfazimento' : 'confirmacao'
+      const ok = Boolean(tefResultado?.success)
+      return {
+        status: ok ? 'pass' : 'fail',
+        title: ok ? 'PASS' : 'FAIL',
+        detail: ok
+          ? `Tratamento automatico de pendencias concluido com ${actionLabel}.`
+          : 'O tratamento automatico de pendencias retornou falha no backend/agente.'
+      }
+    }
+
     const pendenciaOk = String(pendenciaStatus || tefResultado?.message || '').toLowerCase().includes('pendenc')
     return {
       status: pendenciaOk ? 'pass' : 'pending',
@@ -473,6 +609,14 @@ const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro
 
   if (approvedSeq.has(seq)) {
     if (!tefResultado) {
+      const explicitFailure = APPROVED_SEQUENCE_FAILURE_HINTS.some((hint) => message.includes(hint))
+      if (explicitFailure) {
+        return {
+          status: 'fail',
+          title: 'FAIL',
+          detail: 'Retorno do ambiente indica bloqueio/nao habilitacao (ex.: cartao nao configurado), antes da autorizacao com cupom.'
+        }
+      }
       return { status: 'pending', title: 'PENDENTE', detail: 'Aguardando resultado final da transacao.' }
     }
     const ok = aprovado && hasCupom
@@ -511,15 +655,15 @@ const buildSequenceEvidenceChecklist = (sequenceId, tefResultado, tefPrompt, man
   const hasNsuHost = Boolean(tefResultado?.nsu_host || tefResultado?.nsu)
   const hasNsuSitef = Boolean(tefResultado?.nsu_sitef)
 
-  const requiresCupom = new Set(['5', '6', '7', '8', '12', '13', '14', '15', '16', '17', '18', '20', '22', '23', '24'])
-  const requiresNoCupom = new Set(['2', '3', '4', '9', '10', '11'])
-  const requiresSupervisorMask = new Set(['12', '13', '14', '15', '16'])
+  const requiresCupom = new Set(['5', '6', '7', '8', '10', '11', '12', '13', '14', '15', '16', '17', '19', '21', '22', '23'])
+  const requiresNoCupom = new Set(['2', '3', '4', '9', '99'])
+  const requiresSupervisorMask = new Set(['11', '12', '13', '14', '15'])
 
   return [
     { id: 'msg', label: 'Mensagem exibida ao operador', required: true, done: Boolean(message), manual: false },
     { id: 'datahora', label: 'Data/hora da transacao registrada', required: true, done: hasDataHora, manual: false },
     { id: 'nsu_host', label: 'NSU Host registrado', required: requiresCupom.has(seq), done: hasNsuHost, manual: false },
-    { id: 'nsu_sitef', label: 'NSU SiTef registrado', required: seq === '10' || seq === '17' || seq === '21', done: hasNsuSitef, manual: false },
+    { id: 'nsu_sitef', label: 'NSU SiTef registrado', required: false, done: hasNsuSitef, manual: false },
     { id: 'cupom', label: 'Cupom TEF conforme esperado', required: requiresCupom.has(seq) || requiresNoCupom.has(seq), done: requiresNoCupom.has(seq) ? !hasCupom : hasCupom, manual: false },
     { id: 'supervisor_mask', label: 'Senha supervisor mascarada (FieldId 500)', required: requiresSupervisorMask.has(seq), done: Boolean(manualEvidence?.supervisor_mask), manual: true },
     { id: 'print', label: 'Print de evidencia capturado', required: true, done: Boolean(manualEvidence?.print), manual: true },
@@ -558,9 +702,18 @@ export default function ModalTefGerencial({ onClose }) {
   const [manualEvidence, setManualEvidence] = useState({ print: false, supervisor_mask: false })
   const [diagRunning, setDiagRunning] = useState(false)
   const [diagReport, setDiagReport] = useState(null)
+  const [nfpagRaw, setNfpagRaw] = useState('')
+  const [nfpagItems, setNfpagItems] = useState([])
+  const [nfpagTipo, setNfpagTipo] = useState('')
+  const [nfpagValor, setNfpagValor] = useState('')
+  const [nfpagExtraFields, setNfpagExtraFields] = useState({})
+  const [nfpagError, setNfpagError] = useState('')
 
   const tefSessionRef = useRef(null)
   const tefIdleTimerRef = useRef(null)
+
+  const nfpagTypeOptions = useMemo(() => getNfpagTypeOptions(tefResultado?.nfpag), [tefResultado])
+  const nfpagSelectedType = useMemo(() => getNfpagTypeDetail(tefResultado?.nfpag, nfpagTipo), [tefResultado, nfpagTipo])
 
   const resetTefFlow = () => {
     if (tefIdleTimerRef.current) {
@@ -575,7 +728,14 @@ export default function ModalTefGerencial({ onClose }) {
     setTefErro('')
     setTefResultado(null)
     setTefProcessando(false)
+    setPendenciaStatus('')
     setManualEvidence({ print: false, supervisor_mask: false })
+    setNfpagRaw('')
+    setNfpagItems([])
+    setNfpagTipo('')
+    setNfpagValor('')
+    setNfpagExtraFields({})
+    setNfpagError('')
   }
 
   const aplicarPresetSequencia = (sequenceId) => {
@@ -647,6 +807,112 @@ export default function ModalTefGerencial({ onClose }) {
 
   const marcarEvidenciaManual = (key) => {
     setManualEvidence((prev) => ({ ...prev, [key]: !prev?.[key] }))
+  }
+
+  const formatarDataHostNfpag = (value) => {
+    const digits = String(value || '').replace(/\D/g, '')
+    if (digits.length >= 8) {
+      return `${digits.slice(6, 8)}${digits.slice(4, 6)}${digits.slice(0, 4)}`
+    }
+    return ''
+  }
+
+  const buildDefaultNfpagFields = (typeCode) => {
+    const detail = getNfpagTypeDetail(tefResultado?.nfpag, typeCode)
+    const defaults = {}
+    ;(detail?.coletas_detalhes || []).forEach((coleta) => {
+      const codigo = String(coleta?.codigo || '').padStart(2, '0')
+      if (codigo === '03') defaults[codigo] = tefResultado?.rede_autorizadora || ''
+      if (codigo === '04') defaults[codigo] = tefResultado?.nsu_sitef || ''
+      if (codigo === '07') defaults[codigo] = tefResultado?.nsu_host || tefResultado?.nsu || ''
+      if (codigo === '08') defaults[codigo] = formatarDataHostNfpag(tefResultado?.data_hora_transacao)
+      if (codigo === '09') defaults[codigo] = tefResultado?.codigo_estabelecimento || ''
+      if (codigo === '11') defaults[codigo] = tefResultado?.autorizacao || ''
+      if (codigo === '14') defaults[codigo] = tefResultado?.bandeira || ''
+    })
+    return defaults
+  }
+
+  const atualizarCampoNfpag = (codigo, valorCampo) => {
+    setNfpagExtraFields((prev) => ({
+      ...prev,
+      [String(codigo || '').padStart(2, '0')]: valorCampo
+    }))
+  }
+
+  const selecionarTipoNfpag = (tipo) => {
+    const rawTipo = String(tipo || '').trim()
+    if (!rawTipo) {
+      setNfpagTipo('')
+      setNfpagExtraFields({})
+      setNfpagError('')
+      return
+    }
+    const codigo = rawTipo.padStart(2, '0')
+    setNfpagTipo(codigo)
+    setNfpagExtraFields(buildDefaultNfpagFields(codigo))
+    setNfpagError('')
+  }
+
+  const adicionarNfpagItem = () => {
+    const rawTipo = String(nfpagTipo || '').trim()
+    const tipo = rawTipo ? rawTipo.padStart(2, '0') : ''
+    const valorCentavos = parseNfpagValor(nfpagValor)
+    const maxFormas = Number(tefResultado?.nfpag?.max_formas)
+
+    if (!tipo || !valorCentavos) {
+      setNfpagError('Informe a forma de pagamento e o valor antes de adicionar.')
+      return
+    }
+
+    if (Number.isFinite(maxFormas) && maxFormas > 0 && nfpagItems.length >= maxFormas) {
+      setNfpagError(`A CliSiTef limitou o NFPAG a ${maxFormas} forma(s).`)
+      return
+    }
+
+    const detalhesTipo = getNfpagTypeDetail(tefResultado?.nfpag, tipo)
+    const coletasObrigatorias = (detalhesTipo?.coletas_detalhes || []).filter((coleta) => {
+      const codigo = String(coleta?.codigo || '').padStart(2, '0')
+      return !['00', '05', '13'].includes(codigo)
+    })
+    const faltantes = coletasObrigatorias.filter((coleta) => !String(nfpagExtraFields?.[coleta.codigo] || '').trim())
+
+    if (faltantes.length > 0) {
+      const nomes = faltantes
+        .map((coleta) => coleta.descricao || NFPAG_COLLECTION_LABELS[coleta.codigo] || coleta.codigo)
+        .join(', ')
+      setNfpagError(`Preencha os campos obrigatorios do NFPAG: ${nomes}.`)
+      return
+    }
+
+    const novo = {
+      tipo,
+      descricao: detalhesTipo?.descricao || NFPAG_TYPE_LABELS[tipo] || 'Forma nao mapeada',
+      valor: valorCentavos,
+      extras: buildNfpagExtras(nfpagExtraFields),
+      extra_fields: { ...nfpagExtraFields },
+      coletas_detalhes: detalhesTipo?.coletas_detalhes || []
+    }
+
+    setNfpagItems((prev) => [...prev, novo])
+    setNfpagTipo('')
+    setNfpagValor('')
+    setNfpagExtraFields({})
+    setNfpagError('')
+  }
+
+  const removerNfpagItem = (index) => {
+    setNfpagItems((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const aplicarNfpagGerado = () => {
+    const gerado = buildNfpagString(nfpagItems)
+    if (!gerado) {
+      setNfpagError('Nenhuma forma de pagamento adicionada.')
+      return
+    }
+    setNfpagRaw(`NFPAG=${gerado}`)
+    setNfpagError('')
   }
 
   const tratarSessaoPerdida = async (mensagem) => {
@@ -924,6 +1190,15 @@ export default function ModalTefGerencial({ onClose }) {
       setCupomQueue(fila.slice(1))
       setCupomDialog({ open: true, titulo: fila[0].titulo, conteudo: fila[0].conteudo })
     }
+
+    const tipos = getNfpagTypeOptions(tefResultado?.nfpag)
+    if (tipos.length === 1) {
+      setNfpagTipo(tipos[0].codigo)
+      setNfpagExtraFields(buildDefaultNfpagFields(tipos[0].codigo))
+    } else {
+      setNfpagTipo('')
+      setNfpagExtraFields({})
+    }
   }, [tefResultado])
 
   const fecharCupomDialog = () => {
@@ -941,7 +1216,11 @@ export default function ModalTefGerencial({ onClose }) {
       ? resultado.tipo_campos.filter((item) => String(item?.TipoCampo) !== '500')
       : []
     if (tipoCampos.length > 0) {
-      return tipoCampos.map((item) => `{"TipoCampo":"${item.TipoCampo}","Valor":"${escapeTipoCampo(item.Valor)}"}`).join(',\n')
+      return tipoCampos.map((item) => {
+        const descricao = item?.Descricao ? `,"Descricao":"${escapeTipoCampo(item.Descricao)}"` : ''
+        const dica = item?.Dica ? `,"Dica":"${escapeTipoCampo(item.Dica)}"` : ''
+        return `{"TipoCampo":"${item.TipoCampo}"${descricao}${dica},"Valor":"${escapeTipoCampo(item.Valor)}"}`
+      }).join(',\n')
     }
 
     const rede = resultado?.rede_autorizadora || ''
@@ -1017,11 +1296,33 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     iniciarTimeoutInatividade()
   }
 
+  const resolverPendenciasAutomaticamente = async () => {
+    const res = await api.post('/pagamentos/tef/pendencias', {}, { timeout: TEF_REQUEST_TIMEOUT_MS })
+    const message = String(res.data?.message || res.data?.detail?.message || 'Tratamento de pendencias executado.')
+    setPendenciaStatus(message)
+    tefSessionRef.current = null
+    setTefSessionId(null)
+    setTefPrompt(null)
+    setTefInput('')
+    setTefResultado({
+      ...res.data,
+      pendencia_automatica: true,
+      aprovado: Boolean(res.data?.success),
+      message,
+    })
+    setShowTefFlow(true)
+  }
+
   const iniciarFluxoTef = async () => {
     try {
       resetTefFlow()
       setTefErro('')
       setTefProcessando(true)
+
+      if (String(selectedSequence || '') === '18' && functionId === 130) {
+        await resolverPendenciasAutomaticamente()
+        return
+      }
 
       if (JUSTIFICATIVA_REQUIRED_FUNCTIONS.has(functionId) && !justificativa.trim()) {
         setTefErro('Justificativa obrigatoria para esta funcao.')
@@ -1040,13 +1341,57 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
       const trnInitLower = String(trnInitParameters || '').toLowerCase()
       const sessionParamsLower = String(sessionParameters || '').toLowerCase()
-      const tlsObrigatorio = functionId === 699 || selectedSequence === '21'
+      const tlsObrigatorio = functionId === 669 || functionId === 699 || selectedSequence === '20'
       const tlsJaInformadoNoInit = trnInitLower.includes('tokenregistro') || trnInitLower.includes('tipocomunicacaoexterna=tlsgwp')
       const tlsJaInformadoNaSessao = sessionParamsLower.includes('tokenregistro') || sessionParamsLower.includes('tipocomunicacaoexterna=tlsgwp')
       if (tlsObrigatorio && !tlsToken.trim() && !tlsJaInformadoNoInit && !tlsJaInformadoNaSessao) {
         setTefErro('Token TLS obrigatorio para a sequencia TLS.')
         setTefProcessando(false)
         return
+      }
+
+      const normalizedCupomFiscal = String(cupomFiscal || '').trim()
+      const normalizedDataFiscal = onlyDigits(dataFiscal)
+      const normalizedHoraFiscal = onlyDigits(horaFiscal)
+      const originalDocumentReferenceRequired = sequenceRequiresOriginalDocumentReference(selectedSequence)
+
+      if (originalDocumentReferenceRequired) {
+        if (!normalizedCupomFiscal) {
+          setTefErro('Conforme a documentacao da CliSiTef, esta sequencia exige o documento fiscal original da transacao.')
+          setTefProcessando(false)
+          return
+        }
+        if (normalizedCupomFiscal.length > 20) {
+          setTefErro('Cupom Fiscal deve ter no maximo 20 caracteres, conforme a documentacao da CliSiTef.')
+          setTefProcessando(false)
+          return
+        }
+        if (normalizedDataFiscal.length !== 8) {
+          setTefErro('Data Fiscal obrigatoria no formato AAAAMMDD para esta sequencia.')
+          setTefProcessando(false)
+          return
+        }
+        if (normalizedHoraFiscal.length !== 6) {
+          setTefErro('Hora Fiscal obrigatoria no formato HHMMSS para esta sequencia.')
+          setTefProcessando(false)
+          return
+        }
+      } else {
+        if (normalizedCupomFiscal && normalizedCupomFiscal.length > 20) {
+          setTefErro('Cupom Fiscal deve ter no maximo 20 caracteres, conforme a documentacao da CliSiTef.')
+          setTefProcessando(false)
+          return
+        }
+        if (normalizedDataFiscal && normalizedDataFiscal.length !== 8) {
+          setTefErro('Data Fiscal deve estar no formato AAAAMMDD quando informada manualmente.')
+          setTefProcessando(false)
+          return
+        }
+        if (normalizedHoraFiscal && normalizedHoraFiscal.length !== 6) {
+          setTefErro('Hora Fiscal deve estar no formato HHMMSS quando informada manualmente.')
+          setTefProcessando(false)
+          return
+        }
       }
 
       let trnInitParametersValue = trnInitParameters || undefined
@@ -1065,9 +1410,10 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       const payload = {
         function_id: functionId,
         valor: valor ? Number(valor) : undefined,
-        cupom_fiscal: cupomFiscal || undefined,
-        data_fiscal: dataFiscal || undefined,
-        hora_fiscal: horaFiscal || undefined,
+        cupom_fiscal: normalizedCupomFiscal || undefined,
+        data_fiscal: normalizedDataFiscal || undefined,
+        hora_fiscal: normalizedHoraFiscal || undefined,
+        enforce_fiscal_document: originalDocumentReferenceRequired || undefined,
         trn_additional_parameters: trnAdditionalParameters || undefined,
         trn_init_parameters: trnInitParametersValue,
         session_parameters: sessionParameters || undefined,
@@ -1146,6 +1492,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
   const concluirFluxoTef = async () => {
     try {
+      if (tefResultado?.pendencia_automatica) {
+        await encerrarFluxoTef()
+        return
+      }
+
       const sessionIdAtual = tefSessionRef.current || tefSessionId || tefResultado?.session_id
       if (!sessionIdAtual) {
         await tratarSessaoPerdida('Sessao TEF nao encontrada. Reinicie a sequencia.')
@@ -1157,7 +1508,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
       const res = await api.post('/pagamentos/tef/finalizar', {
         session_id: sessionIdAtual,
-        confirm: Boolean(tefResultado?.aprovado)
+        confirm: Boolean(tefResultado?.aprovado),
+        numero_pagamento_nfpag: tefResultado?.nfpag?.numero_pagamento || undefined,
+        nfpag_raw: nfpagRaw || undefined
       }, { timeout: TEF_REQUEST_TIMEOUT_MS })
 
       setTefResultado(res.data)
@@ -1178,6 +1531,8 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
   const justificativaObrigatoria = JUSTIFICATIVA_REQUIRED_FUNCTIONS.has(functionId)
   const selectedSequencePreset = getSequencePreset(selectedSequence)
+  const originalDocumentReferenceRequired = sequenceRequiresOriginalDocumentReference(selectedSequence)
+  const autogeneratedFiscalDocument = sequenceAutogeneratesFiscalDocument(selectedSequence)
   const seq3Conformance = buildSeq3Conformance(selectedSequence, tefResultado, tefErro)
   const seq3ConformancePrompt = buildSeq3Conformance(
     selectedSequence,
@@ -1200,6 +1555,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
   if (showTefFlow) {
     const isAprovado = Boolean(tefResultado?.aprovado)
+    const isAutomaticPendingResolution = Boolean(tefResultado?.pendencia_automatica)
     const cupomEstabelecimento = tefResultado?.cupom_estabelecimento || tefResultado?.tef_cupom_estabelecimento || ''
     const cupomCliente = tefResultado?.cupom_cliente || tefResultado?.tef_cupom_cliente || ''
     const prompt = tefPrompt?.prompt || ''
@@ -1220,18 +1576,18 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const retornoCliSiTef = Number(tefResultado?.clisitef_status ?? tefResultado?.detail?.clisitefStatus ?? (isAprovado ? 0 : -1))
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-2 sm:items-center sm:p-4"
         onMouseMove={registrarAtividadeTef}
         onKeyDown={registrarAtividadeTef}
         onClick={registrarAtividadeTef}
         onTouchStart={registrarAtividadeTef}
       >
-        <div className="w-full max-w-5xl rounded-lg overflow-hidden shadow-xl">
-          <div className="bg-sky-700 text-white px-6 py-5">
-            <h2 className="text-3xl font-semibold">TEF Gerencial</h2>
+        <div className="my-2 flex max-h-[calc(100vh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg shadow-xl sm:my-0 sm:max-h-[92vh]">
+          <div className="bg-sky-700 px-4 py-4 text-white sm:px-6 sm:py-5">
+            <h2 className="text-xl font-semibold sm:text-2xl lg:text-3xl">TEF Gerencial</h2>
           </div>
 
-          <div className="bg-zinc-200 min-h-[420px] p-6">
+          <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-200 p-3 sm:p-6">
             {tefResultado ? (
               <div className="space-y-4">
                 {pendenciaStatus && (
@@ -1241,7 +1597,8 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 )}
                 {renderTefEventInfo(tefResultado)}
                 {renderTefReimpressaoInfo(tefResultado?.reimpressao)}
-                <h3 className="text-3xl font-bold text-zinc-900">Transacao {isAprovado ? 'Aprov.' : 'Nao Aprov.'}</h3>
+                {renderReferenciaReimpressao(tefResultado?.referencia_reimpressao)}
+                <h3 className="text-xl font-bold text-zinc-900 sm:text-2xl lg:text-3xl">{isAutomaticPendingResolution ? 'Tratamento de Pendencias' : `Transacao ${isAprovado ? 'Aprov.' : 'Nao Aprov.'}`}</h3>
 
                 {selectedSequencePreset && sequenceValidation && (
                   <div className={`rounded border px-4 py-3 ${sequenceValidation.status === 'pass' ? 'border-green-300 bg-green-50 text-green-800' : sequenceValidation.status === 'fail' ? 'border-red-300 bg-red-50 text-red-800' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
@@ -1251,7 +1608,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       <div className="mt-3 text-sm space-y-2">
                         <p className="font-semibold">Checklist de evidencias {pendingEvidence > 0 ? `(pendentes: ${pendingEvidence})` : '(completo)'}</p>
                         {sequenceEvidence.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between gap-2">
+                          <div key={item.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <span>{item.done ? 'OK' : 'PEND'} {item.label}{item.required ? '' : ' (opcional)'}</span>
                             {item.manual && (
                               <button
@@ -1290,11 +1647,150 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </pre>
                 </div>
 
+                {tefResultado?.nfpag && (tefResultado.nfpag.max_formas || nfpagTypeOptions.length > 0) && (
+                  <div className="rounded border bg-white p-4 space-y-3">
+                    <p className="font-semibold">NFPAG (multiplas formas de pagamento)</p>
+                    <div className="text-xs text-zinc-600 space-y-1">
+                      {tefResultado.nfpag.numero_pagamento && (
+                        <p>NumeroPagamentoNFPAG: {tefResultado.nfpag.numero_pagamento}</p>
+                      )}
+                      {tefResultado.nfpag.max_formas != null && (
+                        <p>Max formas permitidas: {tefResultado.nfpag.max_formas}</p>
+                      )}
+                      {nfpagTypeOptions.length > 0 && (
+                        <p>Formas habilitadas: {nfpagTypeOptions.map((item) => `${item.codigo} - ${item.descricao}`).join(' | ')}</p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <label className="text-xs text-zinc-600">Forma de pagamento (campo 731)</label>
+                        {nfpagTypeOptions.length > 0 ? (
+                          <select
+                            value={nfpagTipo}
+                            onChange={(e) => selecionarTipoNfpag(e.target.value)}
+                            className="w-full border border-zinc-300 rounded px-2 py-2 text-xs"
+                          >
+                            <option value="">Selecione...</option>
+                            {nfpagTypeOptions.map((item) => (
+                              <option key={item.codigo} value={item.codigo}>{item.codigo} - {item.descricao}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            value={nfpagTipo}
+                            onChange={(e) => selecionarTipoNfpag(e.target.value)}
+                            placeholder="00, 02, 03..."
+                            className="w-full border border-zinc-300 rounded px-2 py-2 text-xs"
+                          />
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-600">Valor usado na forma (R$)</label>
+                        <input
+                          type="text"
+                          value={nfpagValor}
+                          onChange={(e) => setNfpagValor(e.target.value)}
+                          placeholder="Ex: 20,00"
+                          className="w-full border border-zinc-300 rounded px-2 py-2 text-xs"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={adicionarNfpagItem}
+                        className="px-3 py-2 text-xs rounded bg-emerald-600 text-white"
+                      >
+                        Adicionar forma
+                      </button>
+                    </div>
+
+                    {nfpagSelectedType?.coletas_detalhes?.length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded border border-zinc-200 bg-zinc-50 p-3">
+                        {nfpagSelectedType.coletas_detalhes.map((coleta) => {
+                          const codigo = String(coleta?.codigo || '').padStart(2, '0')
+                          const options = NFPAG_FIELD_OPTIONS[codigo] || []
+                          const optional = ['00', '05', '13'].includes(codigo)
+                          return (
+                            <div key={`${nfpagSelectedType.codigo}-${codigo}`}>
+                              <label className="text-xs text-zinc-600">
+                                {codigo} - {coleta?.descricao || NFPAG_COLLECTION_LABELS[codigo] || 'Campo'}{optional ? ' (opcional)' : ''}
+                              </label>
+                              {options.length > 0 ? (
+                                <select
+                                  value={nfpagExtraFields?.[codigo] || ''}
+                                  onChange={(e) => atualizarCampoNfpag(codigo, e.target.value)}
+                                  className="w-full border border-zinc-300 rounded px-2 py-2 text-xs"
+                                >
+                                  <option value="">Selecione...</option>
+                                  {options.map((option) => (
+                                    <option key={`${codigo}-${option.value}`} value={option.value}>{option.value} - {option.label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={nfpagExtraFields?.[codigo] || ''}
+                                  onChange={(e) => atualizarCampoNfpag(codigo, e.target.value)}
+                                  placeholder={getNfpagFieldPlaceholder(codigo)}
+                                  className="w-full border border-zinc-300 rounded px-2 py-2 text-xs"
+                                />
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {nfpagItems.length > 0 && (
+                      <div className="space-y-2">
+                        {nfpagItems.map((item, idx) => (
+                          <div key={`${item.tipo}-${idx}`} className="flex items-start justify-between gap-3 text-xs bg-zinc-50 border border-zinc-200 rounded px-3 py-2">
+                            <div className="space-y-1">
+                              <div className="font-semibold">{item.tipo} - {item.descricao}</div>
+                              <div>Valor em centavos: <span className="font-mono">{item.valor}</span></div>
+                              {item.extras && <div>Extras: <span className="font-mono break-all">{item.extras}</span></div>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removerNfpagItem(idx)}
+                              className="text-red-600"
+                            >
+                              remover
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={aplicarNfpagGerado}
+                          className="px-3 py-2 text-xs rounded bg-sky-600 text-white"
+                        >
+                          Gerar NFPAG
+                        </button>
+                      </div>
+                    )}
+
+                    {nfpagError && (
+                      <div className="text-xs text-red-600">{nfpagError}</div>
+                    )}
+
+                    <textarea
+                      value={nfpagRaw}
+                      onChange={(e) => setNfpagRaw(e.target.value)}
+                      placeholder="Ex: NFPAG=00:3000;02:2000:03:5-07:123456789-08:15122008-09:000000000000001;"
+                      className="w-full border border-zinc-300 rounded px-3 py-2 min-h-[80px] text-xs"
+                    />
+                    <p className="text-xs text-zinc-500">
+                      O backend envia automaticamente <span className="font-mono">NumeroPagamentoNFPAG</span> quando a CliSiTef retornar o campo 161. Use este bloco para fechar as sequencias 21, 22 e 23 no proprio TEF Gerencial.
+                    </p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="rounded border bg-white p-4">
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <p className="font-semibold">Cupom Estabelecimento (122)</p>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => abrirCupomDialog('Cupom Estabelecimento', cupomEstabelecimento)}
@@ -1315,9 +1811,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
 
                   <div className="rounded border bg-white p-4">
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <p className="font-semibold">Cupom Cliente (121)</p>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => abrirCupomDialog('Cupom Cliente', cupomCliente)}
@@ -1351,20 +1847,20 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
 
-                <div className="pt-2 flex gap-3">
+                <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap">
                   <button
                     type="button"
-                    onClick={concluirFluxoTef}
+                    onClick={isAutomaticPendingResolution ? () => encerrarFluxoTef() : concluirFluxoTef}
                     disabled={tefProcessando}
-                    className="bg-sky-600 hover:bg-sky-700 text-white font-semibold px-6 py-2 rounded disabled:opacity-60"
+                    className={tefFlowPrimaryButtonClass}
                   >
-                    {tefProcessando ? '...' : 'Concluir'}
+                    {tefProcessando ? '...' : isAutomaticPendingResolution ? 'OK' : 'Concluir'}
                   </button>
                   <button
                     type="button"
                     onClick={() => encerrarFluxoTef()}
                     disabled={tefProcessando}
-                    className="bg-zinc-500 hover:bg-zinc-600 text-white font-semibold px-6 py-2 rounded disabled:opacity-60"
+                    className={tefFlowSecondaryButtonClass}
                   >
                     ENCERRAR
                   </button>
@@ -1372,16 +1868,16 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     type="button"
                     onClick={() => encerrarFluxoTef()}
                     disabled={tefProcessando}
-                    className="bg-zinc-400 hover:bg-zinc-500 text-white font-semibold px-6 py-2 rounded disabled:opacity-60"
+                    className={tefFlowMutedButtonClass}
                   >
                     MENU INICIAL
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="max-w-xl">
+              <div className="mx-auto w-full max-w-3xl">
                 {menuTitle && (
-                  <div className="text-xl font-semibold text-zinc-900 mb-2">{menuTitle}</div>
+                  <div className="mb-2 text-lg font-semibold text-zinc-900 sm:text-xl">{menuTitle}</div>
                 )}
                 {pendenciaStatus && (
                   <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded text-sm mb-2">
@@ -1389,11 +1885,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
                 {headerText && (
-                  <pre className="text-sm text-zinc-800 whitespace-pre-wrap mb-2">{headerText}</pre>
+                  <pre className="mb-2 whitespace-pre-wrap break-words text-sm text-zinc-800 sm:text-base">{headerText}</pre>
                 )}
                 {renderMensagens(mensagens)}
                 {renderTefEventInfo(tefPrompt)}
                 {renderTefReimpressaoInfo(tefPrompt?.reimpressao)}
+                {renderFieldGuidanceInfo(tefPrompt)}
                 {selectedSequencePreset && sequenceValidation && (
                   <div className={`mb-3 rounded border px-3 py-2 ${sequenceValidation.status === 'pass' ? 'border-green-300 bg-green-50 text-green-800' : sequenceValidation.status === 'fail' ? 'border-red-300 bg-red-50 text-red-800' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
                     <p className="font-semibold">Validacao automatica da {selectedSequencePreset.label}: {sequenceValidation.title}</p>
@@ -1401,7 +1898,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     {sequenceEvidence.length > 0 && (
                       <div className="mt-2 text-xs space-y-1">
                         {sequenceEvidence.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between gap-2">
+                          <div key={item.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <span>{item.done ? 'OK' : 'PEND'} {item.label}</span>
                             {item.manual && (
                               <button
@@ -1426,7 +1923,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     <pre className="text-xs whitespace-pre-wrap bg-zinc-50 p-2 rounded max-h-60 overflow-auto">
                       {prompt || 'Nao retornado'}
                     </pre>
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                       <button
                         type="button"
                         onClick={() => imprimirTexto(tefPrompt?.receipt_kind === 'cliente' ? 'Cupom Cliente' : 'Cupom Estabelecimento', prompt)}
@@ -1446,9 +1943,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                           type="button"
                           onClick={() => continuarFluxoTef(0, String(opt.index))}
                           disabled={tefProcessando}
-                          className="text-left px-4 py-3 rounded border border-zinc-300 bg-white hover:bg-zinc-50 disabled:opacity-60"
+                          className="rounded border border-zinc-300 bg-white px-4 py-3 text-left hover:bg-zinc-50 disabled:opacity-60"
                         >
-                          <div className="text-lg font-semibold text-zinc-900">{opt.index}. {opt.text}</div>
+                          <div className="text-base font-semibold text-zinc-900 sm:text-lg">{opt.index}. {opt.text}</div>
                           {opt.code && (
                             <div className="text-xs text-zinc-600 mt-1">
                               Codigo: {opt.code} {opt.type ? `| Tipo: ${opt.type}` : ''} {opt.classe ? `| Classe: ${opt.classe}` : ''}
@@ -1460,7 +1957,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 ) : (
                   (prompt || (!menuTitle && !headerText && mensagens.length === 0)) && (
-                    <pre className="text-2xl text-zinc-900 whitespace-pre-wrap mb-4">{prompt || '-'}</pre>
+                    <pre className="mb-4 whitespace-pre-wrap break-words text-lg text-zinc-900 sm:text-xl lg:text-2xl">{prompt || '-'}</pre>
                   )
                 )}
 
@@ -1540,7 +2037,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       setTefInput(e.target.value)
                     }}
                     autoComplete="off"
-                    className="w-full md:w-[420px] border border-zinc-400 bg-zinc-100 text-2xl px-3 py-2 mb-4"
+                    className="mb-4 w-full rounded border border-zinc-400 bg-zinc-100 px-3 py-2.5 text-lg sm:max-w-md sm:text-xl"
                   />
                 )}
 
@@ -1550,14 +2047,14 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
 
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                   {ehPerguntaSimNao ? (
                     <>
                       <button
                         type="button"
                         onClick={() => continuarFluxoTef(0, '0')}
                         disabled={tefProcessando}
-                        className="w-36 bg-sky-600 hover:bg-sky-700 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowPrimaryButtonClass}
                       >
                         Sim
                       </button>
@@ -1565,7 +2062,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(0, '1')}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-500 hover:bg-zinc-600 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowSecondaryButtonClass}
                       >
                         Nao
                       </button>
@@ -1576,7 +2073,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(0, '')}
                         disabled={tefProcessando}
-                        className="w-40 bg-sky-600 hover:bg-sky-700 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowPrimaryButtonClass}
                       >
                         Continuar
                       </button>
@@ -1584,7 +2081,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(-1, '')}
                         disabled={tefProcessando}
-                        className="w-40 bg-zinc-600 hover:bg-zinc-700 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowMidButtonClass}
                       >
                         ENCERRAR
                       </button>
@@ -1592,7 +2089,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(1, '1')}
                         disabled={tefProcessando}
-                        className="w-40 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowMutedButtonClass}
                       >
                         MENU INICIAL
                       </button>
@@ -1603,7 +2100,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(0, '')}
                         disabled={tefProcessando}
-                        className="w-36 bg-sky-600 hover:bg-sky-700 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowPrimaryButtonClass}
                       >
                         {tefProcessando ? '...' : 'OK'}
                       </button>
@@ -1611,7 +2108,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => encerrarFluxoTef()}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-500 hover:bg-zinc-600 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowSecondaryButtonClass}
                       >
                         ENCERRAR
                       </button>
@@ -1619,7 +2116,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(1, '1')}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowMutedButtonClass}
                       >
                         MENU INICIAL
                       </button>
@@ -1630,7 +2127,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => encerrarFluxoTef()}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-500 hover:bg-zinc-600 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowSecondaryButtonClass}
                       >
                         ENCERRAR
                       </button>
@@ -1638,7 +2135,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(1, '1')}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowMutedButtonClass}
                       >
                         MENU INICIAL
                       </button>
@@ -1649,7 +2146,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(0, tefInput)}
                         disabled={tefProcessando}
-                        className="w-36 bg-sky-600 hover:bg-sky-700 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowPrimaryButtonClass}
                       >
                         {tefProcessando ? '...' : 'OK'}
                       </button>
@@ -1658,7 +2155,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                           type="button"
                           onClick={() => continuarFluxoTef(0, '2:')}
                           disabled={tefProcessando}
-                          className="w-40 bg-amber-500 hover:bg-amber-600 text-white text-xl font-semibold py-2 rounded disabled:opacity-60"
+                          className={tefFlowWarningButtonClass}
                         >
                           Cancelar leitura
                         </button>
@@ -1667,7 +2164,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => encerrarFluxoTef()}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-500 hover:bg-zinc-600 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowSecondaryButtonClass}
                       >
                         ENCERRAR
                       </button>
@@ -1675,7 +2172,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         type="button"
                         onClick={() => continuarFluxoTef(1, '1')}
                         disabled={tefProcessando}
-                        className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        className={tefFlowMutedButtonClass}
                       >
                         MENU INICIAL
                       </button>
@@ -1683,12 +2180,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   )}
                 </div>
                 {ehPerguntaSimNao && (
-                  <div className="mt-3 flex gap-2">
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                     <button
                       type="button"
                       onClick={() => encerrarFluxoTef()}
                       disabled={tefProcessando}
-                      className="w-36 bg-zinc-700 hover:bg-zinc-800 text-white text-xl font-semibold py-2 rounded disabled:opacity-60"
+                      className={tefFlowDarkButtonClass}
                     >
                       ENCERRAR
                     </button>
@@ -1696,7 +2193,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       type="button"
                       onClick={() => continuarFluxoTef(1, '1')}
                       disabled={tefProcessando}
-                      className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-xl font-semibold py-2 rounded disabled:opacity-60"
+                      className={tefFlowMutedButtonClass}
                     >
                       MENU INICIAL
                     </button>
@@ -1708,14 +2205,14 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         </div>
 
         {cupomDialog.open && (
-          <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-[60] p-4">
-            <div className="bg-zinc-100 w-full max-w-xl rounded-2xl border shadow-2xl overflow-hidden">
-              <div className="px-6 py-4 text-3xl font-semibold">Essa pagina diz</div>
-              <div className="px-6 py-2 max-h-[360px] overflow-auto">
-                <pre className="whitespace-pre-wrap text-base leading-6">{cupomDialog.titulo}:
+          <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black bg-opacity-40 p-2 sm:items-center sm:p-4">
+            <div className="flex max-h-[calc(100vh-1rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border bg-zinc-100 shadow-2xl">
+              <div className="px-4 py-4 text-xl font-semibold sm:px-6 sm:text-2xl lg:text-3xl">Essa pagina diz</div>
+              <div className="flex-1 overflow-auto px-4 py-2 sm:px-6">
+                <pre className="whitespace-pre-wrap break-words text-sm leading-6 sm:text-base">{cupomDialog.titulo}:
 {cupomDialog.conteudo}</pre>
               </div>
-              <div className="px-6 py-4 flex justify-end">
+              <div className="flex justify-end px-4 py-4 sm:px-6">
                 <button
                   type="button"
                   onClick={fecharCupomDialog}
@@ -1732,14 +2229,14 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-        <div className="bg-gradient-to-r from-sky-700 to-sky-900 text-white p-6 rounded-t-lg">
-          <div className="flex justify-between items-start">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-2 sm:items-center sm:p-4">
+      <div className="flex max-h-[calc(100vh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-white shadow-xl sm:max-h-[90vh]">
+        <div className="rounded-t-lg bg-gradient-to-r from-sky-700 to-sky-900 p-4 text-white sm:p-6">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-bold mb-2">TEF Gerencial</h2>
+              <h2 className="mb-2 text-xl font-bold sm:text-2xl">TEF Gerencial</h2>
               <p className="text-sky-100">
-                FunÃ§Ãµes administrativas e testes de homologaÃ§Ã£o
+                Funções administrativas e testes de homologação
               </p>
             </div>
             <button
@@ -1757,7 +2254,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
           </div>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
           <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 space-y-3">
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Sequencia do roteiro</label>
@@ -1782,10 +2279,26 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
               </div>
             )}
 
+            {originalDocumentReferenceRequired && (
+              <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm space-y-2 text-amber-900">
+                <p className="font-semibold">Documento fiscal original obrigatorio nesta sequencia</p>
+                <p>Conforme a documentacao da CliSiTef, informe o mesmo Cupom Fiscal, Data Fiscal e Hora Fiscal usados na transacao original.</p>
+                <p className="text-xs">Para cancelamento/reimpressao, use exatamente os dados da transacao original que sera localizada pelo SiTef.</p>
+              </div>
+            )}
+
+            {!originalDocumentReferenceRequired && autogeneratedFiscalDocument && (
+              <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm space-y-2 text-emerald-900">
+                <p className="font-semibold">Documento fiscal gerado pela automacao</p>
+                <p>Conforme a documentacao da CliSiTef, a automacao pode gerar o Cupom Fiscal antes de iniciar a venda e reutilizar esse mesmo documento depois.</p>
+                <p className="text-xs">Se estes campos ficarem vazios, a automacao gerara os dados fiscais automaticamente para abrir o TEF.</p>
+              </div>
+            )}
+
             <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm space-y-2">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="font-semibold text-amber-900">Diagnostico Operacional (Seq. 2/3)</p>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={runOperationalDiagnostics}
@@ -1860,39 +2373,49 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Cupom Fiscal</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Cupom Fiscal{originalDocumentReferenceRequired ? ' *' : ''}</label>
               <input
                 type="text"
                 value={cupomFiscal}
                 onChange={(e) => setCupomFiscal(e.target.value)}
-                placeholder="Opcional"
+                placeholder={originalDocumentReferenceRequired ? 'Obrigatorio nesta sequencia' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Data Fiscal (AAAAMMDD)</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Data Fiscal (AAAAMMDD){originalDocumentReferenceRequired ? ' *' : ''}</label>
               <input
                 type="text"
                 value={dataFiscal}
                 onChange={(e) => setDataFiscal(e.target.value)}
-                placeholder="Opcional"
+                placeholder={originalDocumentReferenceRequired ? 'Obrigatorio nesta sequencia' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Hora Fiscal (HHMMSS)</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Hora Fiscal (HHMMSS){originalDocumentReferenceRequired ? ' *' : ''}</label>
               <input
                 type="text"
                 value={horaFiscal}
                 onChange={(e) => setHoraFiscal(e.target.value)}
-                placeholder="Opcional"
+                placeholder={originalDocumentReferenceRequired ? 'Obrigatorio nesta sequencia' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               />
             </div>
           </div>
           <p className="text-xs text-gray-500">
-            Use um Cupom Fiscal unico por transacao (ex.: AAAAMMDDHHMMSS), exceto em multiplos pagamentos.
+            Conforme a documentacao da CliSiTef, o Cupom Fiscal deve ter no maximo 20 caracteres e ser mantido igual ao documento fiscal da venda.
           </p>
+          {originalDocumentReferenceRequired && (
+            <p className="text-xs text-amber-700">
+              Esta sequencia usa o documento original da transacao anterior. Nao utilize um novo documento sintetico nesta etapa.
+            </p>
+          )}
+          {!originalDocumentReferenceRequired && autogeneratedFiscalDocument && (
+            <p className="text-xs text-emerald-700">
+              Se os campos estiverem vazios, a automacao gerara automaticamente o documento fiscal antes de iniciar o TEF.
+            </p>
+          )}
 
           <div>
             <button
@@ -1900,7 +2423,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
               onClick={() => setShowAdvanced(!showAdvanced)}
               className="text-sm text-sky-700 underline"
             >
-              {showAdvanced ? 'Ocultar' : 'Mostrar'} parÃ¢metros avanÃ§ados
+              {showAdvanced ? 'Ocultar' : 'Mostrar'} parâmetros avançados
             </button>
           </div>
 
@@ -1970,7 +2493,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">ParÃ¢metros de sessÃ£o (TLS/ParmsClient)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Parâmetros de sessão (TLS/ParmsClient)</label>
                 <input
                   type="text"
                   value={sessionParameters}
@@ -2034,25 +2557,27 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
           )}
         </div>
 
-        <div className="p-6 bg-gray-50 rounded-b-lg border-t flex justify-between gap-3">
+        <div className="flex flex-col-reverse gap-3 border-t bg-gray-50 p-4 sm:flex-row sm:justify-between sm:p-6">
           <button
             onClick={onClose}
-            className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-medium transition-colors"
+            className="w-full rounded-lg bg-gray-300 px-6 py-3 font-medium text-gray-700 transition-colors hover:bg-gray-400 sm:w-auto"
             disabled={tefProcessando}
           >
             Fechar
           </button>
           <button
             onClick={iniciarFluxoTef}
-            className="px-6 py-3 bg-sky-700 text-white rounded-lg hover:bg-sky-800 font-medium transition-colors disabled:opacity-60"
+            className="w-full rounded-lg bg-sky-700 px-6 py-3 font-medium text-white transition-colors hover:bg-sky-800 disabled:opacity-60 sm:w-auto"
             disabled={tefProcessando}
           >
-            {tefProcessando ? 'Iniciando...' : 'Iniciar FunÃ§Ã£o'}
+            {tefProcessando ? 'Iniciando...' : 'Iniciar Função'}
           </button>
         </div>
       </div>
     </div>
   )
 }
+
+
 
 

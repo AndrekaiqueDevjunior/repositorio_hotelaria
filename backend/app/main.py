@@ -147,7 +147,7 @@ async def startup_event():
             from app.services.tef_service import TefService
 
             async def _resolver():
-                resultado = await TefService().resolver_pendencias(confirmar=True)
+                resultado = await TefService().resolver_pendencias(confirmar=settings.TEF_AUTO_RESOLVE_PENDING_CONFIRM)
                 print(f"[TEF] Pendencias resolvidas: {resultado}")
 
             asyncio.create_task(_resolver())

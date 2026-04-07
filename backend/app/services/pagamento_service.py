@@ -336,6 +336,7 @@ class PagamentoService:
                     "evento_atual": tef_response.get("evento_atual"),
                     "eventos": tef_response.get("eventos", []),
                     "reimpressao": tef_response.get("reimpressao"),
+                    "referencia_reimpressao": tef_response.get("referencia_reimpressao"),
                     "message": tef_response.get("message"),
                 }
 
@@ -364,6 +365,7 @@ class PagamentoService:
                     "evento_atual": tef_response.get("evento_atual"),
                     "eventos": tef_response.get("eventos", []),
                     "reimpressao": tef_response.get("reimpressao"),
+                    "referencia_reimpressao": tef_response.get("referencia_reimpressao"),
                 }
 
             return {
@@ -384,6 +386,7 @@ class PagamentoService:
                 "evento_atual": tef_response.get("evento_atual"),
                 "eventos": tef_response.get("eventos", []),
                 "reimpressao": tef_response.get("reimpressao"),
+                "referencia_reimpressao": tef_response.get("referencia_reimpressao"),
             }
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

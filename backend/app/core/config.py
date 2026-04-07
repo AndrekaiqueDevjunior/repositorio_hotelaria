@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # Senha de supervisor para validaÃ§Ã£o do TipoCampo 500
     TEF_SUPERVISOR_PASSWORD: str = os.getenv("TEF_SUPERVISOR_PASSWORD", os.getenv("ADMIN_PASSWORD", "admin123"))
     TEF_AUTO_RESOLVE_PENDING: bool = os.getenv("TEF_AUTO_RESOLVE_PENDING", "false").lower() == "true"
+    TEF_AUTO_RESOLVE_PENDING_ACTION: str = os.getenv("TEF_AUTO_RESOLVE_PENDING_ACTION", "confirm").strip().lower()
+
+    @property
+    def TEF_AUTO_RESOLVE_PENDING_CONFIRM(self) -> bool:
+        return self.TEF_AUTO_RESOLVE_PENDING_ACTION not in {"undo", "desfazer", "0", "false", "cancel", "cancelar"}
 
     SMS_TWILIO_ACCOUNT_SID: str = os.getenv("SMS_TWILIO_ACCOUNT_SID", "")
     SMS_TWILIO_AUTH_TOKEN: str = os.getenv("SMS_TWILIO_AUTH_TOKEN", "")

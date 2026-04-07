@@ -7,6 +7,7 @@ from app.repositories.pagamento_repo import PagamentoRepository
 from app.core.database import get_db
 from app.middleware.auth_middleware import get_current_active_user, require_admin_or_manager
 from app.core.security import User
+from app.core.config import settings
 from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from typing import List, Optional
 from starlette.responses import JSONResponse
@@ -23,7 +24,29 @@ CIELO_ALLOWED_IPS = [
     "200.229.32.0/24",
 ]
 
-JUSTIFICATIVA_REQUIRED_FUNCTIONS = {112, 113, 114, 123}
+JUSTIFICATIVA_REQUIRED_FUNCTIONS: set[int] = set()
+
+
+def _only_digits(value: object) -> str:
+    return ''.join(ch for ch in str(value or '') if ch.isdigit())
+
+
+def _normalize_tef_fiscal_payload(payload: dict) -> tuple[str | None, str | None, str | None]:
+    cupom_fiscal = str(payload.get('cupom_fiscal') or '').strip() or None
+    data_fiscal = _only_digits(payload.get('data_fiscal')) or None
+    hora_fiscal = _only_digits(payload.get('hora_fiscal')) or None
+
+    if payload.get('enforce_fiscal_document'):
+        if not cupom_fiscal:
+            raise HTTPException(status_code=400, detail='Cupom Fiscal obrigatorio para esta sequencia, conforme a documentacao da CliSiTef.')
+        if len(cupom_fiscal) > 20:
+            raise HTTPException(status_code=400, detail='Cupom Fiscal deve ter no maximo 20 caracteres, conforme a documentacao da CliSiTef.')
+        if not data_fiscal or len(data_fiscal) != 8:
+            raise HTTPException(status_code=400, detail='Data Fiscal obrigatoria no formato AAAAMMDD para esta sequencia.')
+        if not hora_fiscal or len(hora_fiscal) != 6:
+            raise HTTPException(status_code=400, detail='Hora Fiscal obrigatoria no formato HHMMSS para esta sequencia.')
+
+    return cupom_fiscal, data_fiscal, hora_fiscal
 
 
 def _wrap_tef_param_fragment(value: object, prefix: str | None = None) -> str | None:
@@ -137,13 +160,16 @@ async def iniciar_fluxo_tef(
         raise HTTPException(status_code=400, detail="function_id invalido")
     if function_id_value not in {0, 2, 3}:
         raise HTTPException(status_code=400, detail="function_id invalido para /tef/iniciar. Use 0, 2 ou 3")
+
+    cupom_fiscal, data_fiscal, hora_fiscal = _normalize_tef_fiscal_payload(payload)
+
     return await service.iniciar_fluxo_tef(
         reserva_id=int(reserva_id),
         valor=float(valor),
         function_id=function_id_value,
-        cupom_fiscal=payload.get("cupom_fiscal"),
-        data_fiscal=payload.get("data_fiscal"),
-        hora_fiscal=payload.get("hora_fiscal"),
+        cupom_fiscal=cupom_fiscal,
+        data_fiscal=data_fiscal,
+        hora_fiscal=hora_fiscal,
         trn_additional_parameters=payload.get("trn_additional_parameters"),
         trn_init_parameters=payload.get("trn_init_parameters"),
         session_parameters=payload.get("session_parameters"),
@@ -165,13 +191,14 @@ async def iniciar_funcao_tef(
 
     valor = payload.get("valor")
     valor_float = float(valor) if valor is not None else None
+    cupom_fiscal, data_fiscal, hora_fiscal = _normalize_tef_fiscal_payload(payload)
 
     return await service.iniciar_fluxo_tef_funcao(
         function_id=int(function_id),
         valor=valor_float,
-        cupom_fiscal=payload.get("cupom_fiscal"),
-        data_fiscal=payload.get("data_fiscal"),
-        hora_fiscal=payload.get("hora_fiscal"),
+        cupom_fiscal=cupom_fiscal,
+        data_fiscal=data_fiscal,
+        hora_fiscal=hora_fiscal,
         trn_additional_parameters=payload.get("trn_additional_parameters"),
         trn_init_parameters=payload.get("trn_init_parameters"),
         session_parameters=payload.get("session_parameters"),
@@ -295,7 +322,11 @@ async def resolver_pendencias_tef(
     service: PagamentoService = Depends(get_pagamento_service),
     current_user: User = Depends(require_admin_or_manager)
 ):
-    confirmar = bool(payload.get("confirmar", True))
+    confirmar_payload = payload.get("confirmar")
+    if confirmar_payload is None:
+        confirmar = settings.TEF_AUTO_RESOLVE_PENDING_CONFIRM
+    else:
+        confirmar = bool(confirmar_payload)
     return await service.resolver_pendencias_tef(confirmar=confirmar)
 
 @router.get("/tef/pendencias/status", response_model=dict)
@@ -306,7 +337,8 @@ async def status_pendencias_tef(
     from app.services.tef_service import get_pending_status
 
     status = get_pending_status(clear=clear)
-    return {"success": True, **status}
+    default_action = "confirm" if settings.TEF_AUTO_RESOLVE_PENDING_CONFIRM else "undo"
+    return {"success": True, "default_action": default_action, **status}
 
 @router.post("/tef/enviar-comprovante", response_model=dict)
 async def enviar_comprovante_tef(
