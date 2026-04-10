@@ -26,8 +26,11 @@ const resolveTimeoutMs = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const TEF_IDLE_TIMEOUT_MS = Math.max(resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_IDLE_TIMEOUT_MS, 60000), 60000)
-const TEF_REQUEST_TIMEOUT_MS = resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS, 60000)
+const TEF_IDLE_TIMEOUT_MS = Math.max(resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_IDLE_TIMEOUT_MS, 300000), 60000)
+const TEF_IDLE_TIMEOUT_SECONDS = Math.max(Math.round(TEF_IDLE_TIMEOUT_MS / 1000), 60)
+const TEF_REQUEST_TIMEOUT_MS = resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS, 180000)
+const TEF_PROCESSING_POLL_DELAY_MS = 800
+const REPRINT_LOOKUP_ERROR_PATTERNS = ['documento inexistente', 'doc inexistente', 'doc nao encontrado', 'doc nao encontrando', 'transacao nao encontrada na log', 'transacao nao encontrada no log', 'rede nao existe']
 
 const defaultValorPrompt = (prompt) => {
   if (Number(prompt?.command_id) === 22) {
@@ -52,32 +55,60 @@ const resolveInputMode = (commandId) => {
   return 'manual'
 }
 
+const isAutoProcessingPrompt = (prompt) => Number(prompt?.command_id) === 3
+
+const splitMenuEntries = (value) =>
+  String(value || '')
+    .split(/\r?\n|;/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+const parseSimpleMenuEntry = (entry) => {
+  const match = String(entry || '').trim().match(/^(\d+)\s*(?:[:.)-]\s*|\s+)(.+)$/)
+  if (!match) return null
+  const index = String(match[1] || '').trim()
+  const text = String(match[2] || '').trim()
+  if (!index || !text) return null
+  return { index, text }
+}
+
 const parseMenuOptions = (commandId, promptText) => {
   const raw = String(promptText || '').trim()
   if (!raw) return []
 
   if (commandId === 21) {
-    return raw
-      .split(';')
-      .map((part) => part.trim())
-      .filter(Boolean)
+    return splitMenuEntries(raw)
       .map((part) => {
         const [index, ...textParts] = part.split(':')
-        const text = textParts.join(':').trim()
-        if (!index || !text) return null
-        return { index: index.trim(), text }
+        if (index && textParts.length > 0) {
+          const text = textParts.join(':').trim()
+          if (!text) return null
+          return { index: index.trim(), text }
+        }
+        return parseSimpleMenuEntry(part)
       })
       .filter(Boolean)
   }
 
   if (commandId === 42) {
     const [classePart, rest] = raw.split('|')
-    const classe = (classePart || '').trim()
-    if (!rest) return []
-    return rest
-      .split(';')
-      .map((part) => part.trim())
-      .filter(Boolean)
+    const classe = rest ? (classePart || '').trim() : ''
+    if (!rest) {
+      return splitMenuEntries(raw)
+        .map((part) => {
+          const [index, ...textParts] = part.split(':')
+          if (index && textParts.length > 0) {
+            const text = textParts.join(':').trim()
+            if (!text) return null
+            return { index: index.trim(), text, classe }
+          }
+          const parsed = parseSimpleMenuEntry(part)
+          if (!parsed) return null
+          return { ...parsed, classe }
+        })
+        .filter(Boolean)
+    }
+    return splitMenuEntries(rest)
       .map((part) => {
         const [index, text, code, type] = part.split(':').map((value) => (value || '').trim())
         if (!index || !text) return null
@@ -91,6 +122,7 @@ const parseMenuOptions = (commandId, promptText) => {
 
 const buildInputValue = (prompt, value, inputMode) => {
   const commandId = Number(prompt?.command_id)
+  const fieldId = Number(prompt?.field_id)
   if (commandId === 31) {
     const prefix = inputMode === 'cmc7_leitor' ? '1' : inputMode === 'cmc7_digitado' ? '2' : '0'
     return `${prefix}:${value}`
@@ -98,6 +130,10 @@ const buildInputValue = (prompt, value, inputMode) => {
   if (commandId === 35) {
     const prefix = inputMode === 'leitor' ? '1' : '0'
     return `${prefix}:${value}`
+  }
+  if (fieldId === 601) {
+    const digits = String(value || '').replace(/\D/g, '')
+    return digits || value
   }
   return value
 }
@@ -200,8 +236,13 @@ const renderFieldGuidanceInfo = (payload) => {
 
 const renderReferenciaReimpressao = (referencia) => {
   const campo146 = String(referencia?.campo_146_valor || '').trim()
+  const campo146Bruto = String(referencia?.campo_146_valor_bruto || '').trim()
   const campo516 = String(referencia?.campo_516_valor || '').trim()
   const campo515 = String(referencia?.campo_515_valor || '').trim()
+  const campo515Mmdd = String(referencia?.campo_515_valor_mmdd || '').trim()
+  const campo146Informado = String(referencia?.campo_146_informado || '').trim()
+  const campo516Informado = String(referencia?.campo_516_informado || '').trim()
+  const campo515Informado = String(referencia?.campo_515_informado || '').trim()
   const nsuHost = String(referencia?.nsu_host || '').trim()
   const nsuSitef = String(referencia?.nsu_sitef || '').trim()
   const codigoEstabelecimento = String(referencia?.codigo_estabelecimento || '').trim()
@@ -222,6 +263,28 @@ const renderReferenciaReimpressao = (referencia) => {
       label: referencia?.campo_515_label || 'Campo 515',
       value: campo515,
       hint: referencia?.campo_515_orientacao || ''
+    },
+    {
+      label: 'Campo 515 sugerido (MMDD / Rede)',
+      value: campo515Mmdd,
+      hint: 'Na reimpressao especifica da Rede, a data original deve seguir MMDD. Ex.: 8 de abril = 0408.'
+    },
+    {
+      label: 'Campo 601 sugerido (valor bruto)',
+      value: campo146Bruto,
+      hint: 'Use este numero sem virgula ou ponto quando o SiTef pedir Valor da Venda.'
+    },
+    {
+      label: 'Campo 146 informado ao SiTef',
+      value: campo146Informado
+    },
+    {
+      label: 'Campo 516 informado ao SiTef',
+      value: campo516Informado
+    },
+    {
+      label: 'Campo 515 informado ao SiTef',
+      value: campo515Informado
     },
     {
       label: 'NSU Host',
@@ -261,6 +324,9 @@ const renderReferenciaReimpressao = (referencia) => {
 }
 
 const FUNCTION_OPTIONS = [
+  { id: 0, label: '0 - Venda (menu geral)' },
+  { id: 2, label: '2 - Venda Debito' },
+  { id: 3, label: '3 - Venda Credito' },
   { id: 110, label: '110 - Menu Gerencial' },
   { id: 112, label: '112 - Reimpressao (menu)' },
   { id: 113, label: '113 - Reimpressao especifica' },
@@ -270,10 +336,7 @@ const FUNCTION_OPTIONS = [
   { id: 123, label: '123 - Cancelamento QR Code' },
   { id: 130, label: '130 - Tratamento de pendencias' },
   { id: 669, label: '669 - Registro TLS (roteiro oficial)' },
-  { id: 699, label: '699 - Registro TLS (extra/diagnostico)' },
-  { id: 0, label: '0 - Venda (menu geral)' },
-  { id: 2, label: '2 - Venda Debito' },
-  { id: 3, label: '3 - Venda Credito' }
+  { id: 699, label: '699 - Registro TLS (extra/diagnostico)' }
 ]
 
 const JUSTIFICATIVA_REQUIRED_FUNCTIONS = new Set()
@@ -366,10 +429,10 @@ const SEQUENCE_PRESETS = [
   },
   {
     id: '12',
-    label: 'Seq. 12 - Reimpressao especifica via menu',
-    functionId: 112,
-    guidance: 'Use o comprovante da seq. 5, abra o menu de reimpressao pela funcao 112 (ou 110 > Reimpressao) e selecione a opcao Especifica(o).',
-    expected: 'A reimpressao especifica deve ser autorizada com mensagens ao operador, cupom e senha de supervisor mascarada.'
+    label: 'Seq. 12 - Reimpressao especifica',
+    functionId: 113,
+    guidance: 'Use o comprovante da seq. 5 e realize a reimpressao especifica. A abertura da funcao 113 deve usar um novo documento fiscal da operacao atual; quando o SiTef solicitar a transacao original, informe o NSU Host no Campo 516.',
+    expected: 'A reimpressao especifica deve ser autorizada com mensagens ao operador, cupom e senha de supervisor mascarada (FieldId 500).'
   },
   {
     id: '13',
@@ -437,23 +500,47 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 21 - Multiplos pagamentos com troco em dinheiro',
     functionId: 3,
     valor: '20',
-    guidance: 'Autorize a parte TEF e conclua o restante em dinheiro, lancando o dinheiro por ultimo no cupom fiscal.',
-    expected: 'A transacao TEF deve ser autorizada, com cupom e registro do troco na aplicacao.'
+    guidance: 'Valor total da venda: R$ 50,00. Inicie uma transacao de credito no valor de R$ 20,00, realize o pagamento exclusivamente com chip, selecione A Vista e finalize a venda em dinheiro no valor de R$ 50,00, registrando o troco na aplicacao. O dinheiro deve ser lancado por ultimo no cupom fiscal.',
+    expected: 'A transacao TEF deve ser autorizada, com cupom e registro do troco em dinheiro na aplicacao.'
   },
   {
     id: '22',
     label: 'Seq. 22 - Multiplos pagamentos com dois cartoes',
     functionId: 3,
     valor: '40',
-    guidance: 'Autorize a primeira parte no credito a vista e conclua a segunda parte em debito com o mesmo TaxInvoiceNumber/DataFiscal.',
-    expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
+    guidance: 'Valor total da venda: R$ 100,00. Realize a primeira transacao de credito no valor de R$ 40,00, selecione A Vista e conclua a segunda parte no debito, no valor de R$ 60,00, com o mesmo TaxInvoiceNumber/DataFiscal e usando chip.',
+    expected: 'As duas transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
   {
     id: '23',
     label: 'Seq. 23 - Multiplos pagamentos com carteira digital',
     functionId: 3,
     valor: '100',
-    guidance: 'Autorize a primeira parte no credito a vista e conclua o restante com carteira digital no mesmo TaxInvoiceNumber/DataFiscal.',
+    guidance: 'Valor total da venda: R$ 150,00. Realize a primeira transacao de credito no valor de R$ 100,00, selecione A Vista e conclua o restante, no valor de R$ 50,00, com carteira digital no mesmo TaxInvoiceNumber/DataFiscal.',
+    expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
+  },
+  {
+    id: '28',
+    label: 'Seq. 28 - Multiplos pagamentos com troco em dinheiro',
+    functionId: 3,
+    valor: '20',
+    guidance: 'Valor total da venda: R$ 50,00. Autorize a parte TEF de R$ 20,00 e conclua a venda com dinheiro por ultimo, registrando o troco na aplicacao.',
+    expected: 'A transacao TEF deve ser autorizada, com cupom e registro do troco na aplicacao.'
+  },
+  {
+    id: '29',
+    label: 'Seq. 29 - Multiplos pagamentos com dois cartoes',
+    functionId: 3,
+    valor: '40',
+    guidance: 'Valor total da venda: R$ 100,00. Autorize a primeira parte no credito a vista (R$ 40,00) e conclua a segunda parte no debito (R$ 60,00) com o mesmo TaxInvoiceNumber/DataFiscal.',
+    expected: 'As duas transacoes devem ser autorizadas e o cupom deve ser impresso.'
+  },
+  {
+    id: '30',
+    label: 'Seq. 30 - Multiplos pagamentos com carteira digital',
+    functionId: 3,
+    valor: '100',
+    guidance: 'Valor total da venda: R$ 150,00. Autorize a primeira parte no credito a vista (R$ 100,00) e conclua o restante (R$ 50,00) com carteira digital no mesmo TaxInvoiceNumber/DataFiscal.',
     expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
   {
@@ -465,13 +552,216 @@ const SEQUENCE_PRESETS = [
   }
 ]
 
-const SEQUENCES_AUTOGENERATE_FISCAL_DOCUMENT = new Set(['5', '6', '7', '8', '10', '16', '21', '22', '23'])
+const SEQUENCES_AUTOGENERATE_FISCAL_DOCUMENT = new Set(['5', '6', '7', '8', '10', '16', '21', '22', '23', '28', '29', '30'])
 const SEQUENCES_REQUIRE_ORIGINAL_DOCUMENT_REFERENCE = new Set(['12', '13', '14', '15', '17'])
 
 const getSequencePreset = (sequenceId) => SEQUENCE_PRESETS.find((item) => item.id === String(sequenceId || ''))
 const sequenceAutogeneratesFiscalDocument = (sequenceId) => SEQUENCES_AUTOGENERATE_FISCAL_DOCUMENT.has(String(sequenceId || ''))
 const sequenceRequiresOriginalDocumentReference = (sequenceId) => SEQUENCES_REQUIRE_ORIGINAL_DOCUMENT_REFERENCE.has(String(sequenceId || ''))
+const SEQUENCES_PREFER_NSU_HOST_DOCUMENT = new Set(['12'])
+const MULTIPLE_PAYMENT_TOTALS = {
+  '21': 50,
+  '28': 50
+}
+
+const MULTIPLE_PAYMENT_CASH_DEFAULTS = {
+  '21': '50,00',
+  '28': '50,00'
+}
+const SEQUENCES_WITH_CASH_CHANGE = new Set(['21', '28'])
+
+const parseCurrencyInputValue = (value) => {
+  const normalized = String(value || '').replace(',', '.').trim()
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const formatCurrencyDisplay = (value) =>
+  Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const currencyToCentavos = (value) => Math.max(Math.round((Number(value) || 0) * 100), 0)
+
+const resolvePrimaryTefNfpagType = (functionIdValue) => {
+  const normalized = Number(functionIdValue)
+  if (normalized === 2) return '02'
+  if (normalized === 122) return '12'
+  return '03'
+}
+
+const buildCashChangeReceiptComplement = (registration) => {
+  if (!registration || typeof registration !== 'object') return ''
+  const total = Number(registration.total_sale || 0)
+  const tef = Number(registration.tef_amount || 0)
+  const cashDue = Number(registration.cash_due || 0)
+  const cashReceived = Number(registration.cash_received || 0)
+  const cashChange = Number(registration.cash_change || 0)
+  return [
+    '=== PAGAMENTO COMPLEMENTAR ===',
+    `Total da venda: R$ ${formatCurrencyDisplay(total)}`,
+    `TEF aprovado: R$ ${formatCurrencyDisplay(tef)}`,
+    `Dinheiro lancado no cupom: R$ ${formatCurrencyDisplay(cashDue)}`,
+    `Dinheiro recebido: R$ ${formatCurrencyDisplay(cashReceived)}`,
+    `Troco em dinheiro: R$ ${formatCurrencyDisplay(cashChange)}`
+  ].join('\n')
+}
+
+const buildAutoCashChangeNfpag = ({
+  sequenceId,
+  functionIdValue,
+  nfpagRawValue,
+  firstTefAmount,
+  totalSaleAmount,
+  cashReceivedAmount
+}) => {
+  const sequence = String(sequenceId || '')
+  const raw = String(nfpagRawValue || '').trim()
+  const total = Number(totalSaleAmount || 0)
+  const tef = Math.max(Number(firstTefAmount || 0), 0)
+  const cashDue = Math.max(total - tef, 0)
+  const cashReceivedInput = Math.max(Number(cashReceivedAmount || 0), 0)
+  const cashReceived = SEQUENCES_WITH_CASH_CHANGE.has(sequence) && cashReceivedInput <= 0
+    ? Math.max(total, 0)
+    : cashReceivedInput
+  const cashChange = Math.max(cashReceived - cashDue, 0)
+
+  const registration =
+    total > 0
+      ? {
+          total_sale: total,
+          tef_amount: tef,
+          cash_due: cashDue,
+          cash_received: cashReceived,
+          cash_change: cashChange
+        }
+      : null
+
+  if (!SEQUENCES_WITH_CASH_CHANGE.has(sequence)) {
+    return { nfpagRawToSend: raw, registration, error: '' }
+  }
+
+  if (raw) {
+    return { nfpagRawToSend: raw, registration, error: '' }
+  }
+
+  if (total <= 0 || tef <= 0 || cashDue <= 0) {
+    return { nfpagRawToSend: '', registration, error: '' }
+  }
+
+  if (cashReceived < cashDue) {
+    return {
+      nfpagRawToSend: '',
+      registration,
+      error: `Dinheiro recebido (R$ ${formatCurrencyDisplay(cashReceived)}) menor que o restante da venda (R$ ${formatCurrencyDisplay(cashDue)}).`
+    }
+  }
+
+  const generatedNfpag = buildNfpagString([
+    { tipo: resolvePrimaryTefNfpagType(functionIdValue), valor: String(currencyToCentavos(tef)), extras: '' },
+    { tipo: '00', valor: String(currencyToCentavos(cashDue)), extras: '' }
+  ])
+
+  return {
+    nfpagRawToSend: generatedNfpag ? `NFPAG=${generatedNfpag}` : '',
+    registration,
+    error: ''
+  }
+}
+
+const MULTIPLE_PAYMENT_VALUE_HINTS = {
+  '21': 'Este campo representa apenas a 1a parcela TEF do roteiro: R$ 20,00. O total da venda e R$ 50,00, com fechamento em dinheiro e troco.',
+  '22': 'Este campo representa apenas a 1a parcela TEF do roteiro: R$ 40,00. O total da venda e R$ 100,00; a 2a parcela e R$ 60,00 no debito.',
+  '23': 'Este campo representa apenas a 1a parcela TEF do roteiro: R$ 100,00. O total da venda e R$ 150,00; a 2a parcela e R$ 50,00 na carteira digital.',
+  '28': 'Este campo representa apenas a 1a parcela TEF do roteiro: R$ 20,00. O total da venda e R$ 50,00, com fechamento em dinheiro e troco.',
+  '29': 'Este campo representa apenas a 1a parcela TEF do roteiro: R$ 40,00. O total da venda e R$ 100,00; a 2a parcela e R$ 60,00 no debito.',
+  '30': 'Este campo representa apenas a 1a parcela TEF do roteiro: R$ 100,00. O total da venda e R$ 150,00; a 2a parcela e R$ 50,00 na carteira digital.'
+}
+
+const GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG = {
+  '22': {
+    firstFunctionId: 3,
+    firstAmount: 40,
+    firstLabel: 'Credito',
+    firstInstallmentLabel: 'A vista',
+    secondFunctionId: 2,
+    secondAmount: 60,
+    secondLabel: 'Debito com chip',
+    secondExecutionText: 'com o segundo cartao de debito',
+    secondRequirementText: 'O pagamento da 2a etapa deve ser realizado exclusivamente com chip, mantendo o mesmo Cupom/Data/Hora.'
+  },
+  '23': {
+    firstFunctionId: 3,
+    firstAmount: 100,
+    firstLabel: 'Credito',
+    firstInstallmentLabel: 'A vista',
+    secondFunctionId: 122,
+    secondAmount: 50,
+    secondLabel: 'Carteira digital',
+    secondExecutionText: 'utilizando carteira digital (QR Code)',
+    secondRequirementText: 'Conclua a 2a etapa na carteira digital e mantenha o mesmo Cupom/Data/Hora da 1a etapa.',
+    secondTrnInitParameters: '{TransacoesAdicionaisHabilitadas=7;8;9;38;37}'
+  },
+  '29': {
+    firstFunctionId: 3,
+    firstAmount: 40,
+    firstLabel: 'Credito',
+    firstInstallmentLabel: 'A vista',
+    secondFunctionId: 2,
+    secondAmount: 60,
+    secondLabel: 'Debito com chip',
+    secondExecutionText: 'com o segundo cartao de debito',
+    secondRequirementText: 'O pagamento da 2a etapa deve ser realizado exclusivamente com chip, mantendo o mesmo Cupom/Data/Hora.'
+  },
+  '30': {
+    firstFunctionId: 3,
+    firstAmount: 100,
+    firstLabel: 'Credito',
+    firstInstallmentLabel: 'A vista',
+    secondFunctionId: 122,
+    secondAmount: 50,
+    secondLabel: 'Carteira digital',
+    secondExecutionText: 'utilizando carteira digital (QR Code)',
+    secondRequirementText: 'Conclua a 2a etapa na carteira digital e mantenha o mesmo Cupom/Data/Hora da 1a etapa.',
+    secondTrnInitParameters: '{TransacoesAdicionaisHabilitadas=7;8;9;38;37}'
+  }
+}
+
+const sequencePrefersNsuHostDocument = (sequenceId) => SEQUENCES_PREFER_NSU_HOST_DOCUMENT.has(String(sequenceId || ''))
 const onlyDigits = (value) => String(value || '').replace(/\D/g, '')
+const extractFiscalDateTime = (reference) => {
+  const dataHoraDigits = onlyDigits(reference?.data_hora_transacao)
+  if (dataHoraDigits.length >= 14) {
+    return {
+      data_fiscal: dataHoraDigits.slice(0, 8),
+      hora_fiscal: dataHoraDigits.slice(8, 14)
+    }
+  }
+  return {
+    data_fiscal: '',
+    hora_fiscal: ''
+  }
+}
+const normalizeFiscalReference = (reference) => {
+  if (!reference) return null
+  const cupomFiscal = String(reference?.cupom_fiscal || reference?.campo_516_valor || '').trim()
+  const nsuHost = String(reference?.nsu_host || reference?.nsu || '').trim()
+  const nsuSitef = String(reference?.nsu_sitef || '').trim()
+  const redeAutorizadora = String(reference?.rede_autorizadora || '').trim()
+  const bandeira = String(reference?.bandeira || '').trim()
+  const fiscalDateTime = extractFiscalDateTime(reference)
+  const dataFiscal = fiscalDateTime.data_fiscal || onlyDigits(reference?.data_fiscal)
+  const horaFiscal = fiscalDateTime.hora_fiscal || onlyDigits(reference?.hora_fiscal)
+  if ((!cupomFiscal && !nsuHost && !nsuSitef) || dataFiscal.length !== 8 || horaFiscal.length !== 6) return null
+  return {
+    ...reference,
+    cupom_fiscal: cupomFiscal || nsuHost || nsuSitef,
+    nsu_host: nsuHost || null,
+    nsu_sitef: nsuSitef || null,
+    data_fiscal: dataFiscal,
+    hora_fiscal: horaFiscal,
+    rede_autorizadora: redeAutorizadora || null,
+    bandeira: bandeira || null,
+  }
+}
 
 const buildSeq3Conformance = (sequenceId, tefResultado, tefErro) => {
   if (String(sequenceId || '') !== '3') return null
@@ -528,6 +818,25 @@ const normalizeValidationText = (value) =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
 
+const inferSpecificReprintMenuOption = (menuOptions, reference) => {
+  if (!Array.isArray(menuOptions) || menuOptions.length === 0 || !reference) return null
+
+  const networkCode = String(reference?.rede_autorizadora || '').replace(/\D/g, '').replace(/^0+/, '')
+  const networkLabel = normalizeValidationText(`${reference?.rede_autorizadora || ''} ${reference?.bandeira || ''}`)
+
+  let targetLabel = ''
+  if (networkCode === '229' || networkLabel.includes('rede') || networkLabel.includes('redecard') || networkLabel.includes('redeshop')) {
+    targetLabel = 'rede'
+  } else if (networkCode === '5' || networkCode === '2' || networkLabel.includes('cielo') || networkLabel.includes('visanet')) {
+    targetLabel = 'cielo'
+  } else if (networkCode || networkLabel) {
+    targetLabel = 'outros'
+  }
+
+  if (!targetLabel) return null
+  return menuOptions.find((item) => normalizeValidationText(item?.text).includes(targetLabel)) || null
+}
+
 const APPROVED_SEQUENCE_FAILURE_HINTS = [
   'cartao nao configurado',
   'trn. nao habilitada',
@@ -552,7 +861,7 @@ const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro
   )
   const message = normalizeValidationText(tefResultado?.message || tefPrompt?.prompt || tefErro || '')
 
-  const approvedSeq = new Set(['5', '6', '7', '8', '10', '11', '12', '13', '14', '15', '16', '17', '19', '21', '22', '23'])
+  const approvedSeq = new Set(['5', '6', '7', '8', '10', '11', '12', '13', '14', '15', '16', '17', '19', '21', '22', '23', '28', '29', '30'])
   const deniedSeq = new Set(['2', '3', '4', '9', '99'])
 
   if (seq === '1') {
@@ -702,18 +1011,81 @@ export default function ModalTefGerencial({ onClose }) {
   const [manualEvidence, setManualEvidence] = useState({ print: false, supervisor_mask: false })
   const [diagRunning, setDiagRunning] = useState(false)
   const [diagReport, setDiagReport] = useState(null)
+  const [lastFiscalReference, setLastFiscalReference] = useState(null)
   const [nfpagRaw, setNfpagRaw] = useState('')
   const [nfpagItems, setNfpagItems] = useState([])
   const [nfpagTipo, setNfpagTipo] = useState('')
   const [nfpagValor, setNfpagValor] = useState('')
+  const [cashReceivedValue, setCashReceivedValue] = useState('')
   const [nfpagExtraFields, setNfpagExtraFields] = useState({})
   const [nfpagError, setNfpagError] = useState('')
 
   const tefSessionRef = useRef(null)
   const tefIdleTimerRef = useRef(null)
+  const tefAutoMenuRef = useRef('')
 
   const nfpagTypeOptions = useMemo(() => getNfpagTypeOptions(tefResultado?.nfpag), [tefResultado])
   const nfpagSelectedType = useMemo(() => getNfpagTypeDetail(tefResultado?.nfpag, nfpagTipo), [tefResultado, nfpagTipo])
+
+  const aplicarReferenciaFiscal = (reference, options = {}) => {
+    const normalized = normalizeFiscalReference(reference)
+    if (!normalized) return false
+    const preferNsuHostDocument = Boolean(options?.preferNsuHostDocument)
+    const preferNsuSitefDocument = Boolean(options?.preferNsuSitefDocument)
+    const documentNumber = (preferNsuHostDocument && normalized.nsu_host)
+      ? normalized.nsu_host
+      : (preferNsuSitefDocument && normalized.nsu_sitef)
+        ? normalized.nsu_sitef
+        : normalized.cupom_fiscal
+    setCupomFiscal(documentNumber)
+    setDataFiscal(normalized.data_fiscal)
+    setHoraFiscal(normalized.hora_fiscal)
+    return true
+  }
+
+  const resolvePromptDefaultInput = (payload, fallbackValue) => {
+    if (!sequenceRequiresOriginalDocumentReference(selectedSequence)) return fallbackValue
+
+    const fieldId = Number(payload?.field_id)
+    const reference = payload?.referencia_reimpressao
+    const promptNormalized = String(payload?.prompt || '').toLowerCase()
+    const networkCode = String(reference?.rede_autorizadora || '').replace(/\D/g, '').replace(/^0+/, '')
+    const isRedeSpecificReprint = fieldId === 515 && (
+      networkCode === '229' ||
+      (Array.isArray(payload?.tipo_campos) && payload.tipo_campos.some((item) => String(item?.TipoCampo || item?.codigo || '').trim() === '3006'))
+    )
+
+    if (fieldId === 601) {
+      const suggestedRawValue = String(reference?.campo_146_valor_bruto || '').trim() || String(reference?.campo_146_valor || '').replace(/\D/g, '')
+      return suggestedRawValue || ''
+    }
+
+    if (fieldId === 146) {
+      return String(reference?.campo_146_valor || reference?.campo_146_informado || '').trim()
+    }
+
+    if (fieldId === 516) {
+      const preferNsuHostDocument = sequencePrefersNsuHostDocument(selectedSequence)
+      return String(
+        (preferNsuHostDocument && reference?.nsu_host) ||
+        reference?.campo_516_valor ||
+        reference?.campo_516_informado ||
+        ''
+      ).trim()
+    }
+
+    if (fieldId === 515) {
+      if (isRedeSpecificReprint) {
+        return String(reference?.campo_515_valor_mmdd || reference?.campo_515_valor || reference?.campo_515_informado || '').trim()
+      }
+      if (promptNormalized.includes('ddmm') && !promptNormalized.includes('ddmmaaaa')) {
+        return String(reference?.campo_515_valor_ddmm || reference?.campo_515_valor || reference?.campo_515_informado || '').trim()
+      }
+      return String(reference?.campo_515_valor || reference?.campo_515_informado || '').trim()
+    }
+
+    return fallbackValue
+  }
 
   const resetTefFlow = () => {
     if (tefIdleTimerRef.current) {
@@ -734,8 +1106,10 @@ export default function ModalTefGerencial({ onClose }) {
     setNfpagItems([])
     setNfpagTipo('')
     setNfpagValor('')
+    setCashReceivedValue('')
     setNfpagExtraFields({})
     setNfpagError('')
+    tefAutoMenuRef.current = ''
   }
 
   const aplicarPresetSequencia = (sequenceId) => {
@@ -751,6 +1125,18 @@ export default function ModalTefGerencial({ onClose }) {
     setTrnInitParameters(preset.trnInitParameters || '')
     setSessionParameters(preset.sessionParameters || '')
     setShowAdvanced(Boolean(preset.showAdvanced))
+    setCashReceivedValue(MULTIPLE_PAYMENT_CASH_DEFAULTS[nextId] || '')
+
+    if (String(nextId) === '12') {
+      const fiscal = buildFiscalStamp()
+      setCupomFiscal(fiscal.cupom)
+      setDataFiscal(fiscal.data)
+      setHoraFiscal(fiscal.hora)
+    } else if (sequenceRequiresOriginalDocumentReference(nextId)) {
+      aplicarReferenciaFiscal(lastFiscalReference, {
+        preferNsuHostDocument: sequencePrefersNsuHostDocument(nextId)
+      })
+    }
 
     if (JUSTIFICATIVA_REQUIRED_FUNCTIONS.has(preset.functionId)) {
       setJustificativa(`Homologacao TEF - ${preset.label}`)
@@ -796,11 +1182,62 @@ export default function ModalTefGerencial({ onClose }) {
       clearTimeout(tefIdleTimerRef.current)
     }
     tefIdleTimerRef.current = setTimeout(() => {
-      encerrarFluxoTef('Sessao TEF expirada por inatividade (60s).')
+      encerrarFluxoTef(`Sessao TEF expirada por inatividade (${TEF_IDLE_TIMEOUT_SECONDS}s).`)
     }, TEF_IDLE_TIMEOUT_MS)
   }
 
+  useEffect(() => {
+    const normalized = normalizeFiscalReference(tefResultado?.referencia_reimpressao || tefPrompt?.referencia_reimpressao)
+    if (!normalized) return
+    if (!normalized.nsu_host && !normalized.nsu_sitef) return
+    setLastFiscalReference(normalized)
+  }, [tefResultado, tefPrompt])
+
+  useEffect(() => {
+    if (!showTefFlow || tefResultado || tefProcessando || !isAutoProcessingPrompt(tefPrompt)) {
+      return undefined
+    }
+
+    const timer = setTimeout(() => {
+      continuarFluxoTef(0, '')
+    }, TEF_PROCESSING_POLL_DELAY_MS)
+
+    return () => clearTimeout(timer)
+  }, [showTefFlow, tefResultado, tefProcessando, tefPrompt])
+
+
+  useEffect(() => {
+    if (!showTefFlow || tefResultado || tefProcessando || String(selectedSequence || '') !== '12') {
+      return undefined
+    }
+
+    const isSpecificReceiptTypeMenu = Number(tefPrompt?.command_id) === 21 &&
+      normalizeValidationText(tefPrompt?.menu_title || '').includes('tipo do comprovante')
+
+    if (!isSpecificReceiptTypeMenu) {
+      tefAutoMenuRef.current = ''
+      return undefined
+    }
+
+    const menuOptions = parseMenuOptions(Number(tefPrompt?.command_id), tefPrompt?.prompt || '')
+    const reference = normalizeFiscalReference(tefPrompt?.referencia_reimpressao) || lastFiscalReference
+    const autoOption = inferSpecificReprintMenuOption(menuOptions, reference)
+
+    if (!autoOption) return undefined
+
+    const signature = `${tefPrompt?.session_id || ''}:${tefPrompt?.menu_title || ''}:${tefPrompt?.prompt || ''}:${autoOption.index}`
+    if (tefAutoMenuRef.current === signature) return undefined
+    tefAutoMenuRef.current = signature
+
+    const timer = setTimeout(() => {
+      continuarFluxoTef(0, String(autoOption.index))
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [showTefFlow, tefResultado, tefProcessando, tefPrompt, selectedSequence, lastFiscalReference])
+
   const registrarAtividadeTef = () => {
+
     if (!showTefFlow) return
     iniciarTimeoutInatividade()
   }
@@ -1177,13 +1614,21 @@ export default function ModalTefGerencial({ onClose }) {
     if (!tefResultado) return
     const cupomEstabelecimento = tefResultado?.cupom_estabelecimento || tefResultado?.tef_cupom_estabelecimento || ''
     const cupomCliente = tefResultado?.cupom_cliente || tefResultado?.tef_cupom_cliente || ''
+    const cashChangeComplement = buildCashChangeReceiptComplement(tefResultado?.cash_change_registration)
+
+    const appendComplement = (text) => {
+      const base = String(text || '')
+      if (!base) return base
+      if (!cashChangeComplement) return base
+      return `${base}\n\n${cashChangeComplement}`
+    }
 
     const fila = []
     if (cupomEstabelecimento) {
-      fila.push({ titulo: 'Cupom Estabelecimento', conteudo: cupomEstabelecimento })
+      fila.push({ titulo: 'Cupom Estabelecimento', conteudo: appendComplement(cupomEstabelecimento) })
     }
     if (cupomCliente) {
-      fila.push({ titulo: 'Cupom Cliente', conteudo: cupomCliente })
+      fila.push({ titulo: 'Cupom Cliente', conteudo: appendComplement(cupomCliente) })
     }
 
     if (fila.length > 0) {
@@ -1265,6 +1710,19 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       setTefSessionId(payload.session_id)
     }
 
+    const payloadCupomFiscal = String(payload?.cupom_fiscal || '').trim()
+    const payloadDataFiscal = onlyDigits(payload?.data_fiscal)
+    const payloadHoraFiscal = onlyDigits(payload?.hora_fiscal)
+    if (payloadCupomFiscal) {
+      setCupomFiscal(payloadCupomFiscal)
+    }
+    if (payloadDataFiscal.length === 8) {
+      setDataFiscal(payloadDataFiscal)
+    }
+    if (payloadHoraFiscal.length === 6) {
+      setHoraFiscal(payloadHoraFiscal)
+    }
+
     if (payload?.success === false) {
       if (tefIdleTimerRef.current) {
         clearTimeout(tefIdleTimerRef.current)
@@ -1291,7 +1749,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     setTefPrompt(payload)
     const fieldId = Number(payload?.field_id)
     const tokenRegistroSolicitado = fieldId === 2988 && tlsToken.trim()
-    setTefInput(tokenRegistroSolicitado ? tlsToken.trim() : defaultValorPrompt(payload))
+    const fallbackPromptValue = defaultValorPrompt(payload)
+    const promptValue = tokenRegistroSolicitado
+      ? tlsToken.trim()
+      : resolvePromptDefaultInput(payload, fallbackPromptValue)
+    setTefInput(promptValue)
     setTefInputMode(resolveInputMode(Number(payload?.command_id)))
     iniciarTimeoutInatividade()
   }
@@ -1350,14 +1812,31 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         return
       }
 
-      const normalizedCupomFiscal = String(cupomFiscal || '').trim()
-      const normalizedDataFiscal = onlyDigits(dataFiscal)
-      const normalizedHoraFiscal = onlyDigits(horaFiscal)
+      let normalizedCupomFiscal = String(cupomFiscal || '').trim()
+      let normalizedDataFiscal = onlyDigits(dataFiscal)
+      let normalizedHoraFiscal = onlyDigits(horaFiscal)
       const originalDocumentReferenceRequired = sequenceRequiresOriginalDocumentReference(selectedSequence)
+      const useCurrentFiscalStartForSeq12 = String(selectedSequence || '') === '12'
+
+      if (useCurrentFiscalStartForSeq12 && (
+        !normalizedCupomFiscal ||
+        normalizedDataFiscal.length !== 8 ||
+        normalizedHoraFiscal.length !== 6
+      )) {
+        const fiscal = buildFiscalStamp()
+        normalizedCupomFiscal = fiscal.cupom
+        normalizedDataFiscal = fiscal.data
+        normalizedHoraFiscal = fiscal.hora
+        setCupomFiscal(fiscal.cupom)
+        setDataFiscal(fiscal.data)
+        setHoraFiscal(fiscal.hora)
+      }
 
       if (originalDocumentReferenceRequired) {
         if (!normalizedCupomFiscal) {
-          setTefErro('Conforme a documentacao da CliSiTef, esta sequencia exige o documento fiscal original da transacao.')
+          setTefErro(useCurrentFiscalStartForSeq12
+            ? 'A abertura da Seq. 12 exige um documento fiscal atual. A referencia da venda original sera usada quando o SiTef pedir os campos 516 e 515.'
+            : 'Conforme a documentacao da CliSiTef, esta sequencia exige os dados fiscais da transacao de abertura.')
           setTefProcessando(false)
           return
         }
@@ -1413,6 +1892,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         cupom_fiscal: normalizedCupomFiscal || undefined,
         data_fiscal: normalizedDataFiscal || undefined,
         hora_fiscal: normalizedHoraFiscal || undefined,
+        original_transaction_reference: originalDocumentReferenceRequired ? (lastFiscalReference || undefined) : undefined,
         enforce_fiscal_document: originalDocumentReferenceRequired || undefined,
         trn_additional_parameters: trnAdditionalParameters || undefined,
         trn_init_parameters: trnInitParametersValue,
@@ -1490,9 +1970,64 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     }
   }
 
+  const aplicarPrimeiraEtapaCartaoGuiada = () => {
+    const config = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')]
+    if (!config) return
+    setFunctionId(config.firstFunctionId)
+    setValor(String(config.firstAmount))
+    setNfpagRaw('')
+    setNfpagItems([])
+    setNfpagTipo('')
+    setNfpagValor('')
+    setNfpagExtraFields({})
+    setNfpagError('')
+    setTefErro('')
+    toast.success(`Etapa 1 configurada: ${config.firstLabel} de R$ ${formatCurrencyDisplay(config.firstAmount)}.`)
+  }
+
+  const prepararSegundaEtapaCartaoGuiada = () => {
+    const config = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')]
+    if (!config) return
+
+    const cupom = String(cupomFiscal || tefPrompt?.cupom_fiscal || tefResultado?.cupom_fiscal || '').trim()
+    let data = onlyDigits(dataFiscal || tefPrompt?.data_fiscal || tefResultado?.data_fiscal)
+    let hora = onlyDigits(horaFiscal || tefPrompt?.hora_fiscal || tefResultado?.hora_fiscal)
+
+    if (data.length !== 8 || hora.length !== 6) {
+      const dataHora = onlyDigits(tefResultado?.data_hora_transacao || tefPrompt?.data_hora_transacao)
+      if (dataHora.length >= 14) {
+        data = dataHora.slice(0, 8)
+        hora = dataHora.slice(8, 14)
+      }
+    }
+
+    if (!cupom || data.length !== 8 || hora.length !== 6) {
+      setTefErro('Nao foi possivel preparar a 2a etapa automaticamente. Informe Cupom/Data/Hora da 1a etapa e tente novamente.')
+      return
+    }
+
+    setShowTefFlow(false)
+    resetTefFlow()
+    setFunctionId(config.secondFunctionId)
+    setValor(String(config.secondAmount))
+    if (config.secondTrnInitParameters) {
+      setTrnInitParameters(config.secondTrnInitParameters)
+    }
+    setCupomFiscal(cupom)
+    setDataFiscal(data)
+    setHoraFiscal(hora)
+    setNfpagRaw('')
+    setNfpagItems([])
+    setNfpagTipo('')
+    setNfpagValor('')
+    setNfpagExtraFields({})
+    setNfpagError('')
+    toast.success(`2a etapa preparada: ${config.secondLabel} de R$ ${formatCurrencyDisplay(config.secondAmount)} com o mesmo documento fiscal.`)
+  }
+
   const concluirFluxoTef = async () => {
     try {
-      if (tefResultado?.pendencia_automatica) {
+      if (tefResultado?.pendencia_automatica || tefResultado?.finalizado) {
         await encerrarFluxoTef()
         return
       }
@@ -1506,14 +2041,45 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       setTefErro('')
       setTefProcessando(true)
 
+      const autoCashChange = buildAutoCashChangeNfpag({
+        sequenceId: selectedSequence,
+        functionIdValue: functionId,
+        nfpagRawValue: nfpagRaw,
+        firstTefAmount,
+        totalSaleAmount: multiplePaymentTotal,
+        cashReceivedAmount
+      })
+
+      if (autoCashChange.error) {
+        setTefErro(autoCashChange.error)
+        setNfpagError(autoCashChange.error)
+        setTefProcessando(false)
+        return
+      }
+
+      const nfpagRawToSend = autoCashChange.nfpagRawToSend || undefined
+      if (!String(nfpagRaw || '').trim() && nfpagRawToSend) {
+        setNfpagRaw(nfpagRawToSend)
+      }
+      setNfpagError('')
+
       const res = await api.post('/pagamentos/tef/finalizar', {
         session_id: sessionIdAtual,
         confirm: Boolean(tefResultado?.aprovado),
         numero_pagamento_nfpag: tefResultado?.nfpag?.numero_pagamento || undefined,
-        nfpag_raw: nfpagRaw || undefined
+        nfpag_raw: nfpagRawToSend
       }, { timeout: TEF_REQUEST_TIMEOUT_MS })
 
-      setTefResultado(res.data)
+      if (tefIdleTimerRef.current) {
+        clearTimeout(tefIdleTimerRef.current)
+        tefIdleTimerRef.current = null
+      }
+      setTefPrompt(null)
+      setTefResultado({
+        ...res.data,
+        cash_change_registration: autoCashChange.registration || undefined,
+        nfpag_raw_aplicado: nfpagRawToSend
+      })
       tefSessionRef.current = null
       setTefSessionId(null)
     } catch (err) {
@@ -1531,8 +2097,30 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
   const justificativaObrigatoria = JUSTIFICATIVA_REQUIRED_FUNCTIONS.has(functionId)
   const selectedSequencePreset = getSequencePreset(selectedSequence)
+  const multiplePaymentValueHint = MULTIPLE_PAYMENT_VALUE_HINTS[String(selectedSequence || '')] || ''
+  const multiplePaymentTotal = MULTIPLE_PAYMENT_TOTALS[String(selectedSequence || '')] || 0
+  const firstTefAmount = parseCurrencyInputValue(valor)
+  const remainingCashDue = multiplePaymentTotal > 0 ? Math.max(multiplePaymentTotal - firstTefAmount, 0) : 0
+  const cashReceivedAmount = parseCurrencyInputValue(cashReceivedValue)
+  const cashChangeAmount = multiplePaymentTotal > 0 ? Math.max(cashReceivedAmount - remainingCashDue, 0) : 0
+  const guidedTwoStepConfig = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')] || null
+  const isGuidedFirstStepPrepared = Boolean(
+    guidedTwoStepConfig &&
+    Number(functionId) === Number(guidedTwoStepConfig.firstFunctionId) &&
+    Math.abs(parseCurrencyInputValue(valor) - Number(guidedTwoStepConfig.firstAmount || 0)) < 0.001
+  )
+  const isGuidedSecondStepPrepared = Boolean(
+    guidedTwoStepConfig &&
+    Number(functionId) === Number(guidedTwoStepConfig.secondFunctionId) &&
+    Math.abs(parseCurrencyInputValue(valor) - Number(guidedTwoStepConfig.secondAmount || 0)) < 0.001 &&
+    String(cupomFiscal || '').trim() &&
+    onlyDigits(dataFiscal).length === 8 &&
+    onlyDigits(horaFiscal).length === 6
+  )
   const originalDocumentReferenceRequired = sequenceRequiresOriginalDocumentReference(selectedSequence)
+  const preferNsuHostDocument = sequencePrefersNsuHostDocument(selectedSequence)
   const autogeneratedFiscalDocument = sequenceAutogeneratesFiscalDocument(selectedSequence)
+  const fluxoFinalizado = Boolean(tefResultado?.finalizado)
   const seq3Conformance = buildSeq3Conformance(selectedSequence, tefResultado, tefErro)
   const seq3ConformancePrompt = buildSeq3Conformance(
     selectedSequence,
@@ -1552,6 +2140,8 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
   const sequenceValidation = evaluateSequenceValidation(selectedSequence, tefResultado, tefPrompt, tefErro, pendenciaStatus)
   const sequenceEvidence = buildSequenceEvidenceChecklist(selectedSequence, tefResultado, tefPrompt, manualEvidence)
   const pendingEvidence = sequenceEvidence.filter((item) => item.required && !item.done).length
+  const reprintLookupMessage = normalizeValidationText(tefResultado?.message || tefPrompt?.prompt || tefErro || '')
+  const hasReprintLookupError = REPRINT_LOOKUP_ERROR_PATTERNS.some((pattern) => reprintLookupMessage.includes(pattern))
 
   if (showTefFlow) {
     const isAprovado = Boolean(tefResultado?.aprovado)
@@ -1567,13 +2157,21 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const ehInterromper = tefPrompt?.command_id === 23
     const ehMenu = tefPrompt?.command_id === 21 || tefPrompt?.command_id === 42
     const ehRecibo = Boolean(tefPrompt?.receipt_required)
+    const ehProcessandoAutomatico = isAutoProcessingPrompt(tefPrompt)
     const floatDecimals = tefPrompt?.float_decimals
     const comandoEntrada = Number(tefPrompt?.command_id)
     const exigeModoCheque = comandoEntrada === 31
     const exigeModoCodigoBarras = comandoEntrada === 35
     const senhaObrigatoria = Boolean(tefPrompt?.field_is_secret || Number(tefPrompt?.field_id) === 500)
     const menuOptions = ehMenu ? parseMenuOptions(Number(tefPrompt?.command_id), prompt) : []
+    const menuNeedsManualSelection = ehMenu && menuOptions.length === 0
     const retornoCliSiTef = Number(tefResultado?.clisitef_status ?? tefResultado?.detail?.clisitefStatus ?? (isAprovado ? 0 : -1))
+    const canPrepareGuidedSecondStep = Boolean(
+      guidedTwoStepConfig &&
+      fluxoFinalizado &&
+      isAprovado &&
+      Number(functionId) === Number(guidedTwoStepConfig.firstFunctionId)
+    )
 
     return (
       <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-2 sm:items-center sm:p-4"
@@ -1600,6 +2198,21 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 {renderReferenciaReimpressao(tefResultado?.referencia_reimpressao)}
                 <h3 className="text-xl font-bold text-zinc-900 sm:text-2xl lg:text-3xl">{isAutomaticPendingResolution ? 'Tratamento de Pendencias' : `Transacao ${isAprovado ? 'Aprov.' : 'Nao Aprov.'}`}</h3>
 
+                {canPrepareGuidedSecondStep && (
+                  <div className="rounded border border-indigo-300 bg-indigo-50 px-4 py-3 text-indigo-900">
+                    <p className="font-semibold">1a etapa concluida. Preparar 2a etapa automatica?</p>
+                    <p className="text-sm mt-1">Vamos manter o mesmo Cupom Fiscal/Data/Hora e configurar a funcao {guidedTwoStepConfig.secondFunctionId} ({guidedTwoStepConfig.secondLabel}) com valor de R$ {formatCurrencyDisplay(guidedTwoStepConfig.secondAmount)}.</p>
+                    <button
+                      type="button"
+                      onClick={prepararSegundaEtapaCartaoGuiada}
+                      disabled={tefProcessando}
+                      className="mt-3 px-3 py-2 rounded bg-indigo-600 text-white text-sm font-semibold disabled:opacity-60"
+                    >
+                      Preparar 2a etapa ({guidedTwoStepConfig.secondLabel} R$ {formatCurrencyDisplay(guidedTwoStepConfig.secondAmount)})
+                    </button>
+                  </div>
+                )}
+
                 {selectedSequencePreset && sequenceValidation && (
                   <div className={`rounded border px-4 py-3 ${sequenceValidation.status === 'pass' ? 'border-green-300 bg-green-50 text-green-800' : sequenceValidation.status === 'fail' ? 'border-red-300 bg-red-50 text-red-800' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
                     <p className="font-semibold">Validacao automatica da {selectedSequencePreset.label}: {sequenceValidation.title}</p>
@@ -1621,6 +2234,45 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                             )}
                           </div>
                         ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {originalDocumentReferenceRequired && hasReprintLookupError && (
+                  <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+                    <p className="font-semibold">SiTef nao localizou a transacao para reimpressao</p>
+                    <p className="text-sm mt-1">Confira se os campos 516 (documento), 515 (data) e 146 (valor) sao exatamente os mesmos do comprovante original.</p>
+                    {preferNsuHostDocument && lastFiscalReference?.nsu_host && (
+                      <p className="text-xs mt-2">Na Seq. 12, o documento deve ser o NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span>.</p>
+                    )}
+                    {!preferNsuHostDocument && lastFiscalReference && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: false })}
+                          className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
+                        >
+                          Usar documento fiscal
+                        </button>
+                        {lastFiscalReference.nsu_host && (
+                          <button
+                            type="button"
+                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: true })}
+                            className="rounded bg-zinc-700 px-2 py-1 text-[11px] font-semibold text-white"
+                          >
+                            Tentar NSU Host
+                          </button>
+                        )}
+                        {lastFiscalReference.nsu_sitef && (
+                          <button
+                            type="button"
+                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuSitefDocument: true })}
+                            className="rounded bg-zinc-600 px-2 py-1 text-[11px] font-semibold text-white"
+                          >
+                            Tentar NSU SiTef
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1781,7 +2433,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       className="w-full border border-zinc-300 rounded px-3 py-2 min-h-[80px] text-xs"
                     />
                     <p className="text-xs text-zinc-500">
-                      O backend envia automaticamente <span className="font-mono">NumeroPagamentoNFPAG</span> quando a CliSiTef retornar o campo 161. Use este bloco para fechar as sequencias 21, 22 e 23 no proprio TEF Gerencial.
+                      O backend envia automaticamente <span className="font-mono">NumeroPagamentoNFPAG</span> quando a CliSiTef retornar o campo 161. Use este bloco para fechar as sequencias 21, 22, 23, 28, 29 e 30 no proprio TEF Gerencial.
                     </p>
                   </div>
                 )}
@@ -1850,11 +2502,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap">
                   <button
                     type="button"
-                    onClick={isAutomaticPendingResolution ? () => encerrarFluxoTef() : concluirFluxoTef}
+                    onClick={isAutomaticPendingResolution || fluxoFinalizado ? () => encerrarFluxoTef() : concluirFluxoTef}
                     disabled={tefProcessando}
                     className={tefFlowPrimaryButtonClass}
                   >
-                    {tefProcessando ? '...' : isAutomaticPendingResolution ? 'OK' : 'Concluir'}
+                    {tefProcessando ? '...' : isAutomaticPendingResolution || fluxoFinalizado ? 'OK' : 'Concluir'}
                   </button>
                   <button
                     type="button"
@@ -1915,6 +2567,46 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     )}
                   </div>
                 )}
+
+                {originalDocumentReferenceRequired && hasReprintLookupError && (
+                  <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+                    <p className="font-semibold">SiTef nao localizou a transacao para reimpressao</p>
+                    <p className="text-sm mt-1">Confira se os campos 516 (documento), 515 (data) e 146 (valor) sao exatamente os mesmos do comprovante original.</p>
+                    {preferNsuHostDocument && lastFiscalReference?.nsu_host && (
+                      <p className="text-xs mt-2">Na Seq. 12, o documento deve ser o NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span>.</p>
+                    )}
+                    {!preferNsuHostDocument && lastFiscalReference && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: false })}
+                          className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
+                        >
+                          Usar documento fiscal
+                        </button>
+                        {lastFiscalReference.nsu_host && (
+                          <button
+                            type="button"
+                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: true })}
+                            className="rounded bg-zinc-700 px-2 py-1 text-[11px] font-semibold text-white"
+                          >
+                            Tentar NSU Host
+                          </button>
+                        )}
+                        {lastFiscalReference.nsu_sitef && (
+                          <button
+                            type="button"
+                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuSitefDocument: true })}
+                            className="rounded bg-zinc-600 px-2 py-1 text-[11px] font-semibold text-white"
+                          >
+                            Tentar NSU SiTef
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {ehRecibo ? (
                   <div className="rounded border bg-white p-4 mb-4">
                     <p className="font-semibold mb-2">
@@ -1956,9 +2648,16 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     </div>
                   </div>
                 ) : (
-                  (prompt || (!menuTitle && !headerText && mensagens.length === 0)) && (
-                    <pre className="mb-4 whitespace-pre-wrap break-words text-lg text-zinc-900 sm:text-xl lg:text-2xl">{prompt || '-'}</pre>
-                  )
+                  <>
+                    {(prompt || (!menuTitle && !headerText && mensagens.length === 0)) && (
+                      <pre className="mb-4 whitespace-pre-wrap break-words text-lg text-zinc-900 sm:text-xl lg:text-2xl">{prompt || '-'}</pre>
+                    )}
+                    {menuNeedsManualSelection && (
+                      <p className="mb-2 text-xs text-amber-700">
+                        Digite manualmente o numero da opcao do menu e pressione Selecionar.
+                      </p>
+                    )}
+                  </>
                 )}
 
                 {floatDecimals != null && !ehRecibo && (
@@ -2025,7 +2724,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
 
-                {!ehPerguntaSimNao && !ehAguardarTecla && !ehInterromper && !ehRecibo && !ehMenu && (
+                {!ehPerguntaSimNao && !ehAguardarTecla && !ehInterromper && !ehRecibo && !ehProcessandoAutomatico && (!ehMenu || menuNeedsManualSelection) && (
                   <input
                     type={senhaObrigatoria ? 'password' : 'text'}
                     value={tefInput}
@@ -2094,6 +2793,32 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         MENU INICIAL
                       </button>
                     </>
+                  ) : ehProcessandoAutomatico ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled
+                        className={tefFlowPrimaryButtonClass}
+                      >
+                        {tefProcessando ? '...' : 'AGUARDANDO'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => encerrarFluxoTef()}
+                        disabled={tefProcessando}
+                        className={tefFlowSecondaryButtonClass}
+                      >
+                        ENCERRAR
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => continuarFluxoTef(1, '1')}
+                        disabled={tefProcessando}
+                        className={tefFlowMutedButtonClass}
+                      >
+                        MENU INICIAL
+                      </button>
+                    </>
                   ) : ehRecibo ? (
                     <>
                       <button
@@ -2121,7 +2846,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         MENU INICIAL
                       </button>
                     </>
-                  ) : ehMenu ? (
+                  ) : ehMenu && !menuNeedsManualSelection ? (
                     <>
                       <button
                         type="button"
@@ -2148,7 +2873,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className={tefFlowPrimaryButtonClass}
                       >
-                        {tefProcessando ? '...' : 'OK'}
+                        {tefProcessando ? '...' : menuNeedsManualSelection ? 'Selecionar' : 'OK'}
                       </button>
                       {exigeModoCodigoBarras && (
                         <button
@@ -2236,7 +2961,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
             <div>
               <h2 className="mb-2 text-xl font-bold sm:text-2xl">TEF Gerencial</h2>
               <p className="text-sky-100">
-                Funções administrativas e testes de homologação
+                Funcoes administrativas e testes de homologacao
               </p>
             </div>
             <button
@@ -2276,14 +3001,95 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 <p><span className="font-semibold">Preparacao / execucao:</span> {selectedSequencePreset.guidance}</p>
                 <p><span className="font-semibold">Resultado esperado:</span> {selectedSequencePreset.expected}</p>
                 <p className="text-xs text-gray-500">Funcao sugerida: {selectedSequencePreset.functionId}</p>
+                {guidedTwoStepConfig && (
+                  <div className="rounded border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-900 space-y-2">
+                    <p className="font-semibold">Roteiro guiado desta sequencia</p>
+                    <p>1. Realizar uma transacao de {guidedTwoStepConfig.firstLabel} no valor de R$ {formatCurrencyDisplay(guidedTwoStepConfig.firstAmount)}.</p>
+                    <p>2. Selecionar a opcao "{guidedTwoStepConfig.firstInstallmentLabel}" quando o SiTef solicitar.</p>
+                    <p>3. Efetuar o segundo pagamento de R$ {formatCurrencyDisplay(guidedTwoStepConfig.secondAmount)} {guidedTwoStepConfig.secondExecutionText || `com ${String(guidedTwoStepConfig.secondLabel || '').toLowerCase()}`}.</p>
+                    <p>4. {guidedTwoStepConfig.secondRequirementText || 'Manter o mesmo Cupom/Data/Hora entre as duas etapas.'}</p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={aplicarPrimeiraEtapaCartaoGuiada}
+                        className={`rounded px-2 py-1 font-semibold text-white ${isGuidedFirstStepPrepared ? 'bg-emerald-600' : 'bg-indigo-600'}`}
+                      >
+                        {isGuidedFirstStepPrepared ? 'Etapa 1 pronta' : `Aplicar etapa 1 (${guidedTwoStepConfig.firstLabel} R$ ${formatCurrencyDisplay(guidedTwoStepConfig.firstAmount)})`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={prepararSegundaEtapaCartaoGuiada}
+                        className={`rounded px-2 py-1 font-semibold text-white ${isGuidedSecondStepPrepared ? 'bg-emerald-600' : 'bg-indigo-700'}`}
+                      >
+                        {isGuidedSecondStepPrepared ? 'Etapa 2 pronta' : `Preparar etapa 2 (${guidedTwoStepConfig.secondLabel} R$ ${formatCurrencyDisplay(guidedTwoStepConfig.secondAmount)})`}
+                      </button>
+                    </div>
+                    <p className={`font-semibold ${isGuidedSecondStepPrepared ? 'text-emerald-700' : 'text-indigo-700'}`}>
+                      {isGuidedSecondStepPrepared
+                        ? `2a etapa pronta: funcao ${guidedTwoStepConfig.secondFunctionId} no valor de R$ ${formatCurrencyDisplay(guidedTwoStepConfig.secondAmount)} com o mesmo documento fiscal.`
+                        : `Apos aprovar a 1a etapa, clique em "Preparar etapa 2" para montar automaticamente ${String(guidedTwoStepConfig.secondLabel || '').toLowerCase()} com o mesmo documento fiscal.`}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
             {originalDocumentReferenceRequired && (
               <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm space-y-2 text-amber-900">
-                <p className="font-semibold">Documento fiscal original obrigatorio nesta sequencia</p>
-                <p>Conforme a documentacao da CliSiTef, informe o mesmo Cupom Fiscal, Data Fiscal e Hora Fiscal usados na transacao original.</p>
+                <p className="font-semibold">{preferNsuHostDocument ? 'Referencia original obrigatoria na Seq. 12' : 'Documento fiscal original obrigatorio nesta sequencia'}</p>
+                <p>
+                  {preferNsuHostDocument
+                    ? 'Na abertura da Seq. 12, use um novo documento fiscal da operacao atual. Quando o SiTef pedir a transacao original, informe os dados da Seq. 5 e use o NSU Host no Campo 516.'
+                    : 'Conforme a documentacao da CliSiTef, informe o mesmo Cupom Fiscal, Data Fiscal e Hora Fiscal usados na transacao original.'}
+                </p>
                 <p className="text-xs">Para cancelamento/reimpressao, use exatamente os dados da transacao original que sera localizada pelo SiTef.</p>
+                {preferNsuHostDocument && (
+                  <p className="text-xs text-amber-800">Na Seq. 12, o documento da reimpressao deve ser o NSU Host da venda original. Na trilha REDE, a data original deve seguir MMDD, por exemplo 08/04 = 0408.</p>
+                )}
+                {lastFiscalReference && (
+                  <div className="rounded border border-amber-300 bg-white px-3 py-2 text-xs">
+                    <p>
+                      Ultima referencia capturada: {preferNsuHostDocument ? 'NSU Host' : 'documento fiscal'} <span className="font-mono">{preferNsuHostDocument ? (lastFiscalReference.nsu_host || '-') : lastFiscalReference.cupom_fiscal}</span>
+                      {lastFiscalReference.nsu_host ? (
+                        <> , NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span></>
+                      ) : null}
+                      {lastFiscalReference.nsu_sitef ? (
+                        <> , NSU SiTef <span className="font-mono">{lastFiscalReference.nsu_sitef}</span></>
+                      ) : null},
+                      data <span className="font-mono">{lastFiscalReference.data_fiscal}</span>,
+                      hora <span className="font-mono">{lastFiscalReference.hora_fiscal}</span>
+                    </p>
+                    {!preferNsuHostDocument && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument })}
+                          className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
+                        >
+                          Usar documento fiscal
+                        </button>
+                        {lastFiscalReference.nsu_host && (
+                          <button
+                            type="button"
+                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: true })}
+                            className="rounded bg-zinc-700 px-2 py-1 text-[11px] font-semibold text-white"
+                          >
+                            Usar NSU Host
+                          </button>
+                        )}
+                        {lastFiscalReference.nsu_sitef && (
+                          <button
+                            type="button"
+                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuSitefDocument: true })}
+                            className="rounded bg-zinc-600 px-2 py-1 text-[11px] font-semibold text-white"
+                          >
+                            Usar NSU SiTef
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2369,7 +3175,33 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
               placeholder="Opcional"
               className="w-full border border-gray-300 rounded px-3 py-2"
             />
+            {multiplePaymentValueHint && (
+              <p className="text-xs text-amber-800 mt-1">{multiplePaymentValueHint}</p>
+            )}
           </div>
+
+          {multiplePaymentTotal > 0 && (
+            <div className="rounded border border-amber-200 bg-amber-50 p-3 space-y-2 text-sm text-amber-900">
+              <p className="font-semibold">Dinheiro e troco</p>
+              <p>Valor total da venda: <span className="font-mono">R$ {formatCurrencyDisplay(multiplePaymentTotal)}</span></p>
+              <p>Restante a quitar em dinheiro: <span className="font-mono">R$ {formatCurrencyDisplay(remainingCashDue)}</span></p>
+              <div>
+                <label className="block text-sm font-semibold text-amber-900 mb-1">Dinheiro recebido do cliente (R$)</label>
+                <input
+                  type="text"
+                  value={cashReceivedValue}
+                  onChange={(e) => setCashReceivedValue(e.target.value)}
+                  placeholder="Ex: 50,00"
+                  className="w-full border border-amber-300 rounded px-3 py-2 bg-white"
+                />
+              </div>
+              <p>Troco em dinheiro: <span className="font-mono">R$ {formatCurrencyDisplay(cashChangeAmount)}</span></p>
+              <p className="text-xs">Ao finalizar, a automacao envia o NFPAG para lancar TEF + dinheiro no cupom e inclui o resumo de troco no comprovante exibido.</p>
+              {tefResultado?.nfpag_raw_aplicado && (
+                <p className="text-xs">NFPAG aplicado no fechamento: <span className="font-mono">{tefResultado.nfpag_raw_aplicado}</span></p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
@@ -2423,7 +3255,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
               onClick={() => setShowAdvanced(!showAdvanced)}
               className="text-sm text-sky-700 underline"
             >
-              {showAdvanced ? 'Ocultar' : 'Mostrar'} parâmetros avançados
+              {showAdvanced ? 'Ocultar' : 'Mostrar'} parametros avancados
             </button>
           </div>
 
@@ -2493,7 +3325,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Parâmetros de sessão (TLS/ParmsClient)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Parametros de sessao (TLS/ParmsClient)</label>
                 <input
                   type="text"
                   value={sessionParameters}
@@ -2570,14 +3402,13 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
             className="w-full rounded-lg bg-sky-700 px-6 py-3 font-medium text-white transition-colors hover:bg-sky-800 disabled:opacity-60 sm:w-auto"
             disabled={tefProcessando}
           >
-            {tefProcessando ? 'Iniciando...' : 'Iniciar Função'}
+            {tefProcessando ? 'Iniciando...' : 'Iniciar Funcao'}
           </button>
         </div>
       </div>
     </div>
   )
 }
-
 
 
 
