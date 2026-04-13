@@ -260,6 +260,7 @@ class PagamentoService:
         store_id: str | None = None,
         terminal_id: str | None = None,
         justificativa: str | None = None,
+        original_transaction_reference: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         try:
             return await self.tef_service.iniciar_fluxo_interativo(
@@ -277,6 +278,7 @@ class PagamentoService:
                 store_id=store_id,
                 terminal_id=terminal_id,
                 justificativa=justificativa,
+                original_transaction_reference=original_transaction_reference,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao iniciar funcao TEF: {str(e)}")

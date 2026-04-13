@@ -116,11 +116,31 @@ function parseBody(text) {
   }
 }
 
+
+function encodeFormComponentPreservingCliSiTefSyntax(value) {
+  return encodeURIComponent(String(value ?? ''))
+    .replace(/%2C/gi, ',')
+    .replace(/%3A/gi, ':')
+    .replace(/%7B/gi, '{')
+    .replace(/%7D/gi, '}')
+    .replace(/%5B/gi, '[')
+    .replace(/%5D/gi, ']')
+    .replace(/%3B/gi, ';')
+    .replace(/%3D/gi, '=')
+    .replace(/%2F/gi, '/');
+}
+
+function buildAgentFormPayload(data = {}, keepEmptyString = false) {
+  return Object.entries(cleanParams(data, keepEmptyString))
+    .map(([key, value]) => `${encodeURIComponent(String(key))}=${encodeFormComponentPreservingCliSiTefSyntax(value)}`)
+    .join('&');
+}
+
 function requestAgent(method, path, data) {
   return new Promise((resolve, reject) => {
     const isGet = method.toUpperCase() === 'GET';
     const url = buildAgentUrl(path, isGet ? data : undefined);
-    const payload = isGet ? '' : new URLSearchParams(cleanParams(data || {}, true)).toString();
+    const payload = isGet ? '' : buildAgentFormPayload(data || {}, true);
 
     const options = {
       method,

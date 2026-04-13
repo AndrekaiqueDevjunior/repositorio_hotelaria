@@ -1,6 +1,7 @@
 import requests
 from datetime import datetime, timedelta
 from typing import Any, Dict
+from urllib.parse import quote_plus
 
 from app.core.config import settings
 from app.core.cache import cache
@@ -13,6 +14,14 @@ TEF_PENDING_STATUS: Dict[str, Any] = {"message": None, "detail": None, "created_
 INTERACTIVE_CONTINUE_MAX_ITERATIONS = 400
 PENDING_CONTINUE_MAX_ITERATIONS = 200
 TEF_SESSION_CACHE_PREFIX = "tef:interactive:session:"
+TEF_REPRINT_REFERENCE_CACHE_PREFIX = "tef:reprint:reference:"
+TEF_REPRINT_REFERENCE_GLOBAL_KEY = f"{TEF_REPRINT_REFERENCE_CACHE_PREFIX}global"
+TEF_REPRINT_REFERENCE_TTL_SECONDS = 60 * 60 * 24 * 7
+TEF_REPRINT_REFERENCE_HISTORY_LIMIT = 12
+TEF_REPRINT_REFERENCE_MEMORY: Dict[str, list[Dict[str, Any]]] = {}
+REPRINT_LOOKUP_FIELD_IDS = {146, 515, 516, 601}
+REPRINT_FLOW_FUNCTION_IDS = {110, 112, 113, 114}
+APPROVED_REFERENCE_FUNCTION_IDS = {0, 2, 3}
 
 TEF_EVENT_LABELS: Dict[int, str] = {
     5000: "Aguardando leitura de cartao",
@@ -88,6 +97,7 @@ TEF_FIELD_LABELS: Dict[int, str] = {
     133: "NSU SiTef",
     134: "NSU Host",
     135: "Codigo de autorizacao",
+    146: "Valor da transacao original",
     157: "Codigo de estabelecimento",
     4125: "Cupom Cliente disponivel para reimpressao",
     4126: "Cupom Estabelecimento disponivel para reimpressao",
@@ -96,8 +106,9 @@ TEF_FIELD_LABELS: Dict[int, str] = {
     516: "Numero do documento a ser cancelado ou re-impresso",
 }
 TEF_FIELD_HINTS: Dict[int, str] = {
+    146: "Use o valor da transacao original quando o SiTef solicitar o Campo 146.",
     515: "Use a data da transacao original no formato DDMMAAAA para cancelar ou reimprimir.",
-    516: "Copie o numero do Cupom Fiscal/documento da transacao original que voce quer cancelar ou reimprimir.",
+    516: "Campo 516 = numero do documento da transacao original. No roteiro de homologacao desta automacao, use o NSU Host.",
 }
 NFPAG_TYPE_LABELS: Dict[str, str] = {
     "00": "Dinheiro",
@@ -189,6 +200,8 @@ def _log_tef_input(
         f"[TEF][input] funcao={function_part} session={session_id} continue={continue_flag} "
         f"expected_command={expected_command_id} expected_field={expected_field_id}{data_part}"
     )
+
+
 def _resolve_final_message(prompt: str, session: Dict[str, Any], clisitef_status: int, aprovado: bool) -> str:
     if str(prompt or "").strip():
         return str(prompt)
@@ -256,6 +269,202 @@ def _format_date_ddmmyyyy(value: Any) -> str:
     return f"{raw[6:8]}{raw[4:6]}{raw[0:4]}"
 
 
+def _format_date_mmdd(value: Any) -> str:
+    raw = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(raw) < 8:
+        return ""
+    if len(raw) >= 14:
+        raw = raw[:8]
+    elif len(raw) > 8:
+        raw = raw[:8]
+    return f"{raw[4:6]}{raw[6:8]}"
+
+
+def _format_value_from_centavos(value_centavos: Any) -> str:
+    try:
+        centavos = int(value_centavos)
+    except Exception:
+        return ""
+    return f"{centavos / 100:.2f}".replace(".", ",")
+
+
+def _extract_sitef_date(value: Any) -> str:
+    raw = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(raw) >= 8:
+        return raw[:8]
+    return ""
+
+
+def _extract_sitef_time(value: Any) -> str:
+    raw = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(raw) >= 14:
+        return raw[8:14]
+    if len(raw) == 6:
+        return raw
+    return ""
+
+def _format_sitef_datetime_display(value: Any) -> str:
+    raw = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(raw) >= 14:
+        return f"{raw[6:8]}/{raw[4:6]}/{raw[0:4]} {raw[8:10]}:{raw[10:12]}:{raw[12:14]}"
+    return str(value or "").strip()
+
+
+def _build_pending_resolution_message(confirmar: bool, success: bool, data_hora_transacao: Any = None, nsu_host: Any = None) -> str:
+    if not success:
+        return "Falha ao tratar automaticamente a transacao T.E.F. pendente."
+
+    action_text = "confirmada" if confirmar else "desfeita"
+    parts = [f"Transacao T.E.F. pendente {action_text} automaticamente com sucesso."]
+
+    formatted_datetime = _format_sitef_datetime_display(data_hora_transacao)
+    if formatted_datetime:
+        parts.append(f"Data/hora: {formatted_datetime}.")
+
+    nsu_host_text = str(nsu_host or "").strip()
+    if nsu_host_text:
+        parts.append(f"NSU Host: {nsu_host_text}.")
+
+    if confirmar:
+        parts.append("Para reimpressao, favor solicitar o ultimo cupom.")
+
+    return " ".join(parts)
+
+
+
+
+def _split_transport_input(command_id: int, data: Any) -> tuple[str | None, str]:
+    raw = "" if data is None else str(data)
+    if command_id in (31, 35):
+        if len(raw) >= 2 and raw[1] == ":" and raw[0] in {"0", "1", "2"}:
+            return raw[0], raw[2:]
+    return None, raw
+
+
+def _normalize_lookup_transport_value(field_id: int, value: str, session: Dict[str, Any] | None = None) -> str:
+    normalized_field_id = int(field_id or 0)
+    if normalized_field_id not in {515, 601}:
+        return value
+
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    normalized = digits or str(value or "").strip()
+    if not normalized:
+        return normalized
+
+    reference_source = session.get("original_transaction_reference") if isinstance(session, dict) else None
+    if not isinstance(reference_source, dict) and isinstance(session, dict):
+        reference_source = _build_transaction_reference(session)
+
+    if normalized_field_id == 601:
+        raw_reference = "".join(ch for ch in str((reference_source or {}).get("valor_centavos_raw") or "") if ch.isdigit())
+        if not raw_reference or normalized == raw_reference:
+            return normalized
+
+        if raw_reference.endswith("00"):
+            whole_reais_reference = str(int(raw_reference[:-2] or "0"))
+            if normalized == whole_reais_reference:
+                return raw_reference
+
+        return normalized
+
+    if not _is_rede_specific_reprint_session(session):
+        return normalized
+
+    reference_mmdd = "".join(ch for ch in str((reference_source or {}).get("campo_515_mmdd") or "") if ch.isdigit())
+    if not reference_mmdd:
+        return normalized
+
+    if normalized == reference_mmdd:
+        return normalized
+
+    reference_ddmm = "".join(ch for ch in str((reference_source or {}).get("campo_515_ddmm") or "") if ch.isdigit())
+    reference_ddmmaaaa = "".join(ch for ch in str((reference_source or {}).get("campo_515_ddmmaaaa") or "") if ch.isdigit())
+    if normalized in {reference_ddmm, reference_ddmmaaaa}:
+        return reference_mmdd
+
+    return normalized
+
+
+def _is_rede_specific_reprint_session(session: Dict[str, Any] | None) -> bool:
+    if not isinstance(session, dict):
+        return False
+
+    if int(session.get("function_id") or 0) != 113:
+        return False
+
+    if str(session.get("reprint_receipt_type") or "").strip().lower() == "rede":
+        return True
+
+    for item in session.get("tipo_campos", []):
+        if not isinstance(item, dict):
+            continue
+        tipo_campo = "".join(ch for ch in str(item.get("TipoCampo") or item.get("codigo") or "") if ch.isdigit())
+        if tipo_campo == "3006":
+            return True
+
+    reference_source = session.get("original_transaction_reference")
+    raw_network = str((reference_source or {}).get("rede_autorizadora") or session.get("rede_autorizadora") or "").strip()
+    network_code = "".join(ch for ch in raw_network if ch.isdigit()).lstrip("0")
+    return network_code == "229"
+
+
+def _build_transaction_reference(session: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not isinstance(session, dict):
+        return None
+
+    cupom_fiscal = str(session.get("tax_invoice_number") or session.get("cupom_fiscal") or "").strip()
+    data_hora_transacao = str(session.get("data_hora_transacao") or "").strip()
+    data_fiscal = _extract_sitef_date(data_hora_transacao) or str(session.get("tax_invoice_date") or session.get("data_fiscal") or "").strip()
+    hora_fiscal = _extract_sitef_time(data_hora_transacao) or str(session.get("tax_invoice_time") or session.get("hora_fiscal") or "").strip()
+    campo_515_ddmmaaaa = _format_date_ddmmyyyy(data_hora_transacao or data_fiscal)
+    campo_515_ddmm = campo_515_ddmmaaaa[:4] if campo_515_ddmmaaaa else ""
+    campo_515_mmdd = _format_date_mmdd(data_hora_transacao or data_fiscal)
+    nsu_host = str(session.get("nsu_host") or session.get("nsu") or "").strip()
+    nsu_sitef = str(session.get("nsu_sitef") or "").strip()
+    codigo_estabelecimento = str(session.get("codigo_estabelecimento") or "").strip()
+    rede_autorizadora = str(session.get("rede_autorizadora") or "").strip()
+    bandeira = str(session.get("bandeira") or "").strip()
+    autorizacao = str(session.get("autorizacao") or "").strip()
+    store_id = str(session.get("store_id") or "").strip()
+    terminal_id = str(session.get("terminal_id") or "").strip()
+    valor_centavos = session.get("valor_centavos")
+    if not isinstance(valor_centavos, int):
+        valor_original = session.get("valor")
+        if isinstance(valor_original, (int, float)):
+            valor_centavos = int(round(float(valor_original) * 100))
+        else:
+            valor_centavos = None
+    valor_formatado = _format_value_from_centavos(valor_centavos) if valor_centavos is not None else ""
+    created_at = session.get("created_at")
+    created_at_iso = created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or "").strip()
+
+    if not any([cupom_fiscal, data_fiscal, hora_fiscal, campo_515_ddmmaaaa, nsu_host, nsu_sitef, valor_formatado]):
+        return None
+
+    return {
+        "cupom_fiscal": cupom_fiscal or None,
+        "data_fiscal": data_fiscal or None,
+        "hora_fiscal": hora_fiscal or None,
+        "data_hora_transacao": data_hora_transacao or None,
+        "campo_515_ddmmaaaa": campo_515_ddmmaaaa or None,
+        "campo_515_ddmm": campo_515_ddmm or None,
+        "campo_515_mmdd": campo_515_mmdd or None,
+        "nsu_host": nsu_host or None,
+        "nsu_sitef": nsu_sitef or None,
+        "codigo_estabelecimento": codigo_estabelecimento or None,
+        "rede_autorizadora": rede_autorizadora or None,
+        "bandeira": bandeira or None,
+        "autorizacao": autorizacao or None,
+        "store_id": store_id or None,
+        "terminal_id": terminal_id or None,
+        "valor_centavos": valor_centavos,
+        "valor_centavos_raw": str(valor_centavos) if valor_centavos is not None else None,
+        "valor_formatado": valor_formatado or None,
+        "function_id": session.get("function_id"),
+        "created_at": created_at_iso or None,
+    }
+
+
 def _build_tipo_campo_entry(field_id: int, valor: str) -> Dict[str, Any]:
     entry: Dict[str, Any] = {
         "TipoCampo": str(field_id),
@@ -274,35 +483,68 @@ def _build_reimpressao_reference(session: Dict[str, Any] | None) -> Dict[str, An
     if not isinstance(session, dict):
         return None
 
-    cupom_fiscal = str(session.get("tax_invoice_number") or "").strip()
-    data_fiscal = str(session.get("tax_invoice_date") or "").strip()
-    hora_fiscal = str(session.get("tax_invoice_time") or "").strip()
-    data_hora_transacao = str(session.get("data_hora_transacao") or "").strip()
-    campo_515 = _format_date_ddmmyyyy(data_hora_transacao or data_fiscal)
-    nsu_host = str(session.get("nsu_host") or session.get("nsu") or "").strip()
-    nsu_sitef = str(session.get("nsu_sitef") or "").strip()
-    codigo_estabelecimento = str(session.get("codigo_estabelecimento") or "").strip()
-    valor_original = session.get("valor")
-    valor_centavos = session.get("valor_centavos")
-    valor_formatado = None
-    if isinstance(valor_original, (int, float)):
-        valor_formatado = f"{float(valor_original):.2f}".replace(".", ",")
-    elif isinstance(valor_centavos, int):
-        valor_formatado = f"{valor_centavos / 100:.2f}".replace(".", ",")
+    source_reference = session.get("current_transaction_reference")
+    if not isinstance(source_reference, dict):
+        source_reference = session.get("original_transaction_reference")
+    if not isinstance(source_reference, dict):
+        source_reference = _build_transaction_reference(session)
 
-    if not any([cupom_fiscal, campo_515, nsu_host, nsu_sitef, codigo_estabelecimento, valor_formatado]):
+    cupom_fiscal = str((source_reference or {}).get("cupom_fiscal") or "").strip()
+    data_hora_transacao = str((source_reference or {}).get("data_hora_transacao") or "").strip()
+    data_fiscal = _extract_sitef_date(data_hora_transacao) or str((source_reference or {}).get("data_fiscal") or "").strip()
+    hora_fiscal = _extract_sitef_time(data_hora_transacao) or str((source_reference or {}).get("hora_fiscal") or "").strip()
+    campo_515 = str((source_reference or {}).get("campo_515_ddmmaaaa") or _format_date_ddmmyyyy(data_hora_transacao or data_fiscal)).strip()
+    campo_515_ddmm = str((source_reference or {}).get("campo_515_ddmm") or (campo_515[:4] if campo_515 else "")).strip()
+    campo_515_mmdd = str((source_reference or {}).get("campo_515_mmdd") or _format_date_mmdd(data_hora_transacao or data_fiscal)).strip()
+    nsu_host = str((source_reference or {}).get("nsu_host") or "").strip()
+    nsu_sitef = str((source_reference or {}).get("nsu_sitef") or "").strip()
+    codigo_estabelecimento = str((source_reference or {}).get("codigo_estabelecimento") or "").strip()
+    rede_autorizadora = str((source_reference or {}).get("rede_autorizadora") or "").strip()
+    bandeira = str((source_reference or {}).get("bandeira") or "").strip()
+    valor_formatado = str((source_reference or {}).get("valor_formatado") or "").strip()
+    valor_centavos_raw = str((source_reference or {}).get("valor_centavos_raw") or "").strip()
+    campo_146_informado = str(session.get("reprint_value_input") or "").strip()
+    campo_516_informado = str(session.get("reprint_document_input") or "").strip()
+    campo_515_informado = "".join(ch for ch in str(session.get("reprint_date_input") or "") if ch.isdigit())
+    origem_referencia = "transacao_original_aprovada" if isinstance(session.get("original_transaction_reference"), dict) else "sessao_atual"
+    rede_specific_reprint = _is_rede_specific_reprint_session(session)
+
+    if not any(
+        [
+            cupom_fiscal,
+            campo_515,
+            nsu_host,
+            nsu_sitef,
+            codigo_estabelecimento,
+            valor_formatado,
+            valor_centavos_raw,
+            campo_146_informado,
+            campo_516_informado,
+            campo_515_informado,
+        ]
+    ):
         return None
 
     return {
         "campo_146_label": "Campo 146 - Valor da transacao original",
-        "campo_146_valor": valor_formatado,
+        "campo_146_valor": valor_formatado or campo_146_informado or None,
+        "campo_146_valor_bruto": valor_centavos_raw or None,
         "campo_146_orientacao": "No cancelamento, o SiTef pode pedir o valor da transacao original.",
+        "campo_146_informado": campo_146_informado or None,
         "campo_516_label": "Campo 516 - Numero do documento da transacao original",
-        "campo_516_valor": cupom_fiscal or None,
-        "campo_516_orientacao": "Use este numero quando o SiTef pedir o documento para cancelar ou reimprimir.",
+        "campo_516_valor": nsu_host or cupom_fiscal or campo_516_informado or None,
+        "campo_516_orientacao": "Quando o SiTef pedir o documento da transacao original, use primeiro o NSU Host da venda homologada.",
+        "campo_516_informado": campo_516_informado or None,
         "campo_515_label": "Campo 515 - Data da transacao original",
-        "campo_515_valor": campo_515 or None,
-        "campo_515_orientacao": "Use esta data no formato DDMMAAAA quando o SiTef pedir a data para cancelar ou reimprimir.",
+        "campo_515_valor": campo_515 or campo_515_informado or None,
+        "campo_515_valor_ddmm": campo_515_ddmm or None,
+        "campo_515_valor_mmdd": campo_515_mmdd or None,
+        "campo_515_orientacao": (
+            "Na reimpressao especifica da Rede, use a data da transacao original no formato MMDD. Ex.: 8 de abril = 0408."
+            if rede_specific_reprint
+            else "Use esta data no formato DDMMAAAA quando o SiTef pedir a data para cancelar ou reimprimir."
+        ),
+        "campo_515_informado": campo_515_informado or None,
         "cupom_fiscal": cupom_fiscal or None,
         "data_fiscal": data_fiscal or None,
         "hora_fiscal": hora_fiscal or None,
@@ -310,6 +552,9 @@ def _build_reimpressao_reference(session: Dict[str, Any] | None) -> Dict[str, An
         "nsu_host": nsu_host or None,
         "nsu_sitef": nsu_sitef or None,
         "codigo_estabelecimento": codigo_estabelecimento or None,
+        "rede_autorizadora": rede_autorizadora or None,
+        "bandeira": bandeira or None,
+        "origem_referencia": origem_referencia,
     }
 
 
@@ -321,6 +566,21 @@ def _now_fiscal_date() -> str:
 def _now_fiscal_time() -> str:
     now = datetime.now()
     return now.strftime("%H%M%S")
+
+
+def _encode_agent_form_payload(payload: Dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+
+    safe_value_chars = ",:{}[];=/"
+    parts: list[str] = []
+    for key, value in payload.items():
+        if value is None:
+            continue
+        encoded_key = quote_plus(str(key))
+        encoded_value = quote_plus(str(value), safe=safe_value_chars)
+        parts.append(f"{encoded_key}={encoded_value}")
+    return "&".join(parts)
 
 
 def _set_pending_status(message: str, detail: Dict[str, Any] | None = None) -> None:
@@ -423,6 +683,213 @@ class TefService:
         except Exception:
             pass
 
+    def _reprint_reference_cache_key(self, store_id: str | None, terminal_id: str | None) -> str:
+        store = str(store_id or "").strip() or "default-store"
+        terminal = str(terminal_id or "").strip() or "default-terminal"
+        return f"{TEF_REPRINT_REFERENCE_CACHE_PREFIX}{store}:{terminal}"
+
+    async def _get_cached_reprint_history(self, cache_key: str) -> list[Dict[str, Any]]:
+        in_memory = TEF_REPRINT_REFERENCE_MEMORY.get(cache_key)
+        if isinstance(in_memory, list):
+            return [dict(item) for item in in_memory if isinstance(item, dict)]
+
+        try:
+            cached = await cache.get(cache_key)
+        except Exception:
+            cached = None
+
+        if isinstance(cached, list):
+            history = [dict(item) for item in cached if isinstance(item, dict)]
+            TEF_REPRINT_REFERENCE_MEMORY[cache_key] = history
+            return [dict(item) for item in history]
+
+        return []
+
+    async def _set_cached_reprint_history(self, cache_key: str, history: list[Dict[str, Any]]) -> None:
+        normalized = [dict(item) for item in history if isinstance(item, dict)]
+        TEF_REPRINT_REFERENCE_MEMORY[cache_key] = normalized
+        try:
+            await cache.set(cache_key, normalized, ttl=TEF_REPRINT_REFERENCE_TTL_SECONDS)
+        except Exception:
+            pass
+
+    def _reference_signature(self, reference: Dict[str, Any]) -> str:
+        return "|".join(
+            [
+                str(reference.get("cupom_fiscal") or ""),
+                str(reference.get("nsu_host") or ""),
+                str(reference.get("nsu_sitef") or ""),
+                str(reference.get("data_fiscal") or ""),
+                str(reference.get("hora_fiscal") or ""),
+                str(reference.get("valor_centavos_raw") or ""),
+            ]
+        )
+
+    def _merge_reprint_reference_history(
+        self,
+        history: list[Dict[str, Any]],
+        reference: Dict[str, Any],
+    ) -> list[Dict[str, Any]]:
+        merged: list[Dict[str, Any]] = [dict(reference)]
+        seen = {self._reference_signature(reference)}
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            signature = self._reference_signature(item)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(dict(item))
+            if len(merged) >= TEF_REPRINT_REFERENCE_HISTORY_LIMIT:
+                break
+        return merged
+
+    def _score_reprint_reference(self, reference: Dict[str, Any], session: Dict[str, Any]) -> int:
+        score = 0
+        start_document = str(session.get("tax_invoice_number") or "").strip()
+        start_date = str(session.get("tax_invoice_date") or "").strip()
+        start_time = str(session.get("tax_invoice_time") or "").strip()
+        session_store = str(session.get("store_id") or "").strip()
+        session_terminal = str(session.get("terminal_id") or "").strip()
+
+        if start_document:
+            if start_document == str(reference.get("cupom_fiscal") or "").strip():
+                score += 12
+            if start_document == str(reference.get("nsu_host") or "").strip():
+                score += 10
+            if start_document == str(reference.get("nsu_sitef") or "").strip():
+                score += 9
+        if start_date and start_date == str(reference.get("data_fiscal") or "").strip():
+            score += 4
+        if start_time and start_time == str(reference.get("hora_fiscal") or "").strip():
+            score += 3
+        if session_store and session_store == str(reference.get("store_id") or "").strip():
+            score += 2
+        if session_terminal and session_terminal == str(reference.get("terminal_id") or "").strip():
+            score += 2
+        if reference.get("nsu_host") or reference.get("cupom_fiscal"):
+            score += 1
+        return score
+
+    async def _resolve_original_transaction_reference(self, session: Dict[str, Any]) -> Dict[str, Any] | None:
+        cache_keys = []
+        store_id = str(session.get("store_id") or "").strip()
+        terminal_id = str(session.get("terminal_id") or "").strip()
+        if store_id or terminal_id:
+            cache_keys.append(self._reprint_reference_cache_key(store_id, terminal_id))
+        cache_keys.append(TEF_REPRINT_REFERENCE_GLOBAL_KEY)
+
+        best_reference = None
+        best_score = -1
+        fallback_reference = None
+
+        for cache_key in cache_keys:
+            history = await self._get_cached_reprint_history(cache_key)
+            if history and fallback_reference is None:
+                fallback_reference = dict(history[0])
+            for reference in history:
+                score = self._score_reprint_reference(reference, session)
+                if score > best_score:
+                    best_score = score
+                    best_reference = dict(reference)
+
+        if best_reference and best_score > 0:
+            return best_reference
+        return fallback_reference
+
+    async def _store_approved_transaction_reference(self, session: Dict[str, Any]) -> None:
+        function_id = int(session.get("function_id") or 0)
+        if function_id not in APPROVED_REFERENCE_FUNCTION_IDS:
+            return
+
+        reference = _build_transaction_reference(session)
+        if not reference:
+            return
+        if not any([reference.get("cupom_fiscal"), reference.get("nsu_host"), reference.get("nsu_sitef")]):
+            return
+
+        cache_keys = [TEF_REPRINT_REFERENCE_GLOBAL_KEY]
+        store_id = str(reference.get("store_id") or "").strip()
+        terminal_id = str(reference.get("terminal_id") or "").strip()
+        if store_id or terminal_id:
+            cache_keys.insert(0, self._reprint_reference_cache_key(store_id, terminal_id))
+
+        for cache_key in cache_keys:
+            history = await self._get_cached_reprint_history(cache_key)
+            merged = self._merge_reprint_reference_history(history, reference)
+            await self._set_cached_reprint_history(cache_key, merged)
+
+    def _capture_reprint_lookup_input(self, session: Dict[str, Any], field_id: int, value: Any) -> bool:
+        normalized_input = str(value or "").strip()
+        if not normalized_input:
+            return False
+        if field_id in {146, 601}:
+            session["reprint_value_input"] = normalized_input
+            return True
+        if field_id == 515:
+            session["reprint_date_input"] = "".join(ch for ch in normalized_input if ch.isdigit()) or normalized_input
+            return True
+        if field_id == 516:
+            session["reprint_document_input"] = normalized_input
+            return True
+        return False
+
+    def _parse_command_menu_options(self, data: Any) -> list[Dict[str, str]]:
+        options: list[Dict[str, str]] = []
+        for raw_part in str(data or "").split(";"):
+            part = raw_part.strip()
+            if not part or ":" not in part:
+                continue
+            index, text = part.split(":", 1)
+            normalized_index = str(index or "").strip()
+            normalized_text = str(text or "").strip()
+            if not normalized_index or not normalized_text:
+                continue
+            options.append({"index": normalized_index, "text": normalized_text})
+        return options
+
+    def _infer_specific_reprint_menu_selection(self, session: Dict[str, Any], response: Dict[str, Any]) -> str | None:
+        if int(session.get("function_id") or 0) != 113:
+            return None
+        if int(response.get("commandId") or 0) != 21:
+            return None
+
+        menu_title = str(session.get("menu_title") or "").strip().lower()
+        if "tipo do comprovante" not in menu_title:
+            return None
+
+        options = self._parse_command_menu_options(response.get("data"))
+        if not options:
+            return None
+
+        reference_source = session.get("original_transaction_reference")
+        if not isinstance(reference_source, dict):
+            reference_source = _build_transaction_reference(session)
+
+        raw_network = str((reference_source or {}).get("rede_autorizadora") or session.get("rede_autorizadora") or "").strip()
+        raw_brand = str((reference_source or {}).get("bandeira") or session.get("bandeira") or "").strip()
+        network_code = "".join(ch for ch in raw_network if ch.isdigit()).lstrip("0")
+        network_label = f"{raw_network} {raw_brand}".strip().lower()
+
+        target_label = ""
+        if network_code == "229" or any(token in network_label for token in ("rede", "redecard", "redeshop")):
+            target_label = "rede"
+        elif network_code in {"2", "5"} or any(token in network_label for token in ("cielo", "visanet")):
+            target_label = "cielo"
+        elif network_code or network_label:
+            target_label = "outros"
+
+        if not target_label:
+            return None
+
+        for option in options:
+            option_text = str(option.get("text") or "").strip().lower()
+            if target_label in option_text:
+                selected_index = str(option.get("index") or "").strip()
+                return selected_index or None
+
+        return None
+
     def _generate_cupom_fiscal(self) -> str:
         now = datetime.now()
         return now.strftime("%Y%m%d%H%M%S%f")[:17]
@@ -466,10 +933,12 @@ class TefService:
         url = f"{self.agente_url}{path}"
         data = payload or {}
         if self.agente_mode == "real":
+            encoded_data = _encode_agent_form_payload(data)
             response = requests.request(
                 method=method,
                 url=url,
-                data=data,
+                data=encoded_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
                 timeout=self.timeout,
                 verify=self.verify_ssl,
             )
@@ -691,6 +1160,8 @@ class TefService:
             session["autorizacao"] = str(data)
         elif field_id == 157 and data:
             session["codigo_estabelecimento"] = str(data)
+        elif field_id == 3006:
+            session["reprint_receipt_type"] = "rede"
         elif field_id == 4125:
             reimpressao = session.setdefault("reimpressao", {})
             reimpressao["cupom_cliente_disponivel"] = _normalize_sitef_flag(data)
@@ -728,6 +1199,15 @@ class TefService:
         receipt_kind = "cliente" if field_id == 121 else "estabelecimento" if field_id == 122 else ""
         field_label = TEF_FIELD_LABELS.get(field_id)
         field_hint = TEF_FIELD_HINTS.get(field_id)
+        if field_id == 515:
+            prompt_normalized = str(prompt or '').lower()
+            if _is_rede_specific_reprint_session(session):
+                field_hint = 'Na reimpressao especifica da Rede, informe a data da transacao original no formato MMDD. Ex.: 8 de abril = 0408.'
+            elif 'ddmm' in prompt_normalized and 'ddmmaaaa' not in prompt_normalized:
+                field_hint = 'Use a data da transacao original no formato DDMM para esta rede.'
+        elif field_id == 601:
+            field_label = 'Valor da Venda'
+            field_hint = 'Informe exatamente o valor original da venda, sem virgula ou ponto, para localizar a transacao. Ex.: R$ 10,00 = 1000.'
 
         return {
             "success": True,
@@ -749,8 +1229,8 @@ class TefService:
             "message": _resolve_final_message(prompt, session, clisitef_status, aprovado),
             "function_id": session.get("function_id"),
             "cupom_fiscal": session.get("tax_invoice_number"),
-            "data_fiscal": session.get("tax_invoice_date"),
-            "hora_fiscal": session.get("tax_invoice_time"),
+            "data_fiscal": _extract_sitef_date(session.get("data_hora_transacao")) or session.get("tax_invoice_date"),
+            "hora_fiscal": _extract_sitef_time(session.get("data_hora_transacao")) or session.get("tax_invoice_time"),
             "nsu": session.get("nsu") or session.get("nsu_host") or session.get("nsu_sitef"),
             "nsu_sitef": session.get("nsu_sitef"),
             "nsu_host": session.get("nsu_host"),
@@ -829,6 +1309,7 @@ class TefService:
         store_id: str | None = None,
         terminal_id: str | None = None,
         justificativa: str | None = None,
+        original_transaction_reference: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         if function_id in (2, 3, 122) and valor is None:
             return {
@@ -949,10 +1430,21 @@ class TefService:
             "evento_atual": None,
             "eventos": [],
             "reimpressao": {},
+            "reprint_receipt_type": None,
+            "reprint_value_input": None,
+            "reprint_date_input": None,
+            "reprint_document_input": None,
+            "original_transaction_reference": dict(original_transaction_reference) if isinstance(original_transaction_reference, dict) else None,
             "last_response": None,
             "created_at": datetime.now(),
             "last_activity_at": datetime.now(),
         }
+        if function_id in REPRINT_FLOW_FUNCTION_IDS and not isinstance(
+            TEF_INTERACTIVE_SESSIONS[session_id].get("original_transaction_reference"), dict
+        ):
+            TEF_INTERACTIVE_SESSIONS[session_id]["original_transaction_reference"] = await self._resolve_original_transaction_reference(
+                TEF_INTERACTIVE_SESSIONS[session_id]
+            )
         await self._persist_session(session_id)
 
         if justificativa:
@@ -986,14 +1478,24 @@ class TefService:
         last_response = session.get("last_response") or {}
         expected_command_id = int(last_response.get("commandId") or 0)
         last_field_id = int(last_response.get("fieldId") or 0)
+        transport_mode, transport_value = _split_transport_input(expected_command_id, next_data)
+        normalized_transport_value = _normalize_lookup_transport_value(last_field_id, transport_value, session)
+        if next_continue == 0 and normalized_transport_value != transport_value:
+            next_data = f"{transport_mode}:{normalized_transport_value}" if transport_mode is not None else normalized_transport_value
+        captured_reprint_input = False
+        if next_continue == 0 and last_field_id in REPRINT_LOOKUP_FIELD_IDS:
+            captured_reprint_input = self._capture_reprint_lookup_input(session, last_field_id, normalized_transport_value)
+        if captured_reprint_input:
+            session["last_activity_at"] = datetime.now()
+            await self._persist_session(session_id)
         _log_tef_input(session.get("function_id"), session_id, next_continue, expected_command_id, last_field_id, next_data)
         if last_field_id == 500:
-            if not next_data:
+            if not transport_value:
                 return {
                     "success": False,
                     "error": "Senha do supervisor obrigatoria",
                 }
-            if next_data != settings.TEF_SUPERVISOR_PASSWORD:
+            if transport_value != settings.TEF_SUPERVISOR_PASSWORD:
                 return {
                     "success": False,
                     "error": "Senha do supervisor invalida",
@@ -1048,10 +1550,19 @@ class TefService:
                 continue
 
             if command_id in INPUT_COMMANDS:
+                auto_menu_selection = self._infer_specific_reprint_menu_selection(session, response)
+                if auto_menu_selection:
+                    next_continue = 0
+                    next_data = auto_menu_selection
+                    _log_tef_input(session.get("function_id"), session_id, next_continue, command_id, field_id, next_data)
+                    continue
                 if self._should_auto_continue_input_command(response):
                     next_continue = 0
                     next_data = self._default_input_value(response)
                     continue
+                return self._build_interactive_payload(session_id, response)
+
+            if command_id == 3:
                 return self._build_interactive_payload(session_id, response)
 
             if command_id in AUTO_ADVANCE_COMMANDS:
@@ -1118,6 +1629,20 @@ class TefService:
         cupom_cliente = finish.get("cupom_cliente") or session.get("cupom_cliente")
         cupom_estabelecimento = finish.get("cupom_estabelecimento") or session.get("cupom_estabelecimento")
         aprovado = bool(confirm and session.get("aprovado_pre_finish"))
+
+        session["nsu_sitef"] = nsu_sitef
+        session["nsu_host"] = nsu_host
+        session["nsu"] = nsu
+        session["autorizacao"] = autorizacao
+        session["cupom_cliente"] = cupom_cliente
+        session["cupom_estabelecimento"] = cupom_estabelecimento
+
+        current_transaction_reference = _build_transaction_reference(session)
+        if isinstance(current_transaction_reference, dict):
+            session["current_transaction_reference"] = current_transaction_reference
+
+        if aprovado:
+            await self._store_approved_transaction_reference(session)
 
         await self._drop_session(session_id)
 
@@ -1229,6 +1754,7 @@ class TefService:
             }
 
     async def resolver_pendencias(self, confirmar: bool = True) -> Dict[str, Any]:
+        function_id = 130
         tax_invoice_number = self._generate_cupom_fiscal()
         tax_invoice_date = _now_fiscal_date()
         tax_invoice_time = _now_fiscal_time()
@@ -1285,6 +1811,9 @@ class TefService:
         next_continue = 0
         next_data = ""
         last_response: Dict[str, Any] | None = None
+        data_hora_transacao = None
+        nsu_host = None
+        nsu_sitef = None
 
         for _ in range(PENDING_CONTINUE_MAX_ITERATIONS):
             try:
@@ -1304,7 +1833,7 @@ class TefService:
                     "error": f"Falha no continueTransaction: {exc}",
                 }
 
-            _log_tef_response("continue", session.get("function_id"), response, session_id)
+            _log_tef_response("continue", function_id, response, session_id)
             if int(response.get("serviceStatus") or 0) != 0:
                 _set_pending_status("Erro no continueTransaction pendencias", response)
                 return {
@@ -1317,6 +1846,14 @@ class TefService:
             clisitef_status = int(response.get("clisitefStatus") or 0)
             command_id = int(response.get("commandId") or 0)
             field_id = int(response.get("fieldId") or 0)
+            response_data = response.get("data")
+
+            if field_id == 105 and response_data:
+                data_hora_transacao = str(response_data)
+            elif field_id == 134 and response_data:
+                nsu_host = str(response_data)
+            elif field_id == 133 and response_data:
+                nsu_sitef = str(response_data)
 
             if clisitef_status != 10000:
                 break
@@ -1358,20 +1895,40 @@ class TefService:
                 "error": f"Falha ao finalizar pendencias TEF: {exc}",
             }
 
-        message = "Pendencias TEF processadas automaticamente."
-        if int(finish.get("serviceStatus") or 0) != 0:
-            message = "Falha ao processar pendencias TEF automaticamente."
+        finish_success = int(finish.get("serviceStatus") or 0) == 0
+        data_hora_transacao = finish.get("data_hora_transacao") or finish.get("dataHoraTransacao") or data_hora_transacao
+        nsu_host = finish.get("nsu_host") or finish.get("nsu") or nsu_host
+        nsu_sitef = finish.get("nsu_sitef") or nsu_sitef
+        message = _build_pending_resolution_message(
+            confirmar=confirmar,
+            success=finish_success,
+            data_hora_transacao=data_hora_transacao,
+            nsu_host=nsu_host,
+        )
 
-        _set_pending_status(message, finish)
+        pending_detail = {
+            "finish": finish,
+            "data_hora_transacao": data_hora_transacao,
+            "nsu_host": nsu_host,
+            "nsu_sitef": nsu_sitef,
+            "confirmar": confirmar,
+        }
+        _set_pending_status(message, pending_detail)
 
         return {
-            "success": int(finish.get("serviceStatus") or 0) == 0,
+            "success": finish_success,
             "session_id": session_id,
             "clisitef_status": int((last_response or {}).get("clisitefStatus") or 0),
             "message": message,
             "confirmar": confirmar,
+            "data_hora_transacao": data_hora_transacao,
+            "nsu_host": nsu_host,
+            "nsu_sitef": nsu_sitef,
             "detail": finish,
         }
+
+
+
 
 
 

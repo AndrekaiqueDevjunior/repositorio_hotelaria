@@ -34,8 +34,10 @@ const resolveTimeoutMs = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const TEF_IDLE_TIMEOUT_MS = Math.max(resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_IDLE_TIMEOUT_MS, 60000), 60000)
-const TEF_REQUEST_TIMEOUT_MS = resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS, 60000)
+const TEF_IDLE_TIMEOUT_MS = Math.max(resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_IDLE_TIMEOUT_MS, 300000), 60000)
+const TEF_IDLE_TIMEOUT_SECONDS = Math.max(Math.round(TEF_IDLE_TIMEOUT_MS / 1000), 60)
+const TEF_REQUEST_TIMEOUT_MS = resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS, 180000)
+const TEF_PROCESSING_POLL_DELAY_MS = 800
 
 const defaultValorPrompt = (prompt) => {
   if (Number(prompt?.command_id) === 22) {
@@ -52,6 +54,8 @@ const resolveInputMode = (commandId) => {
   if (commandId === 35) return 'manual'
   return 'manual'
 }
+
+const isAutoProcessingPrompt = (prompt) => Number(prompt?.command_id) === 3
 
 const parseMenuOptions = (commandId, promptText) => {
   const raw = String(promptText || '').trim()
@@ -99,6 +103,7 @@ const resolveMensagemLabel = (target) => {
 
 const buildInputValue = (prompt, value, inputMode) => {
   const commandId = Number(prompt?.command_id)
+  const fieldId = Number(prompt?.field_id)
   if (commandId === 31) {
     const prefix = inputMode === 'cmc7_leitor' ? '1' : inputMode === 'cmc7_digitado' ? '2' : '0'
     return `${prefix}:${value}`
@@ -106,6 +111,10 @@ const buildInputValue = (prompt, value, inputMode) => {
   if (commandId === 35) {
     const prefix = inputMode === 'leitor' ? '1' : '0'
     return `${prefix}:${value}`
+  }
+  if (fieldId === 601) {
+    const digits = String(value || '').replace(/\D/g, '')
+    return digits || value
   }
   return value
 }
@@ -320,7 +329,7 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
       clearTimeout(tefIdleTimerRef.current)
     }
     tefIdleTimerRef.current = setTimeout(() => {
-      encerrarFluxoTef('Sessao TEF expirada por inatividade (60s).')
+      encerrarFluxoTef(`Sessao TEF expirada por inatividade (${TEF_IDLE_TIMEOUT_SECONDS}s).`)
     }, TEF_IDLE_TIMEOUT_MS)
   }
 
@@ -685,6 +694,17 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     setTefInputMode(resolveInputMode(Number(payload?.command_id)))
     iniciarTimeoutInatividade()
   }
+  useEffect(() => {
+    if (!showTefFlow || tefResultado || tefProcessando || !isAutoProcessingPrompt(tefPrompt)) {
+      return undefined
+    }
+
+    const timer = setTimeout(() => {
+      continuarFluxoTef(0, '')
+    }, TEF_PROCESSING_POLL_DELAY_MS)
+
+    return () => clearTimeout(timer)
+  }, [showTefFlow, tefResultado, tefProcessando, tefPrompt])
 
   const iniciarFluxoTef = async () => {
     try {
@@ -787,6 +807,10 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         nfpag_raw: nfpagRaw || undefined
       }, { timeout: TEF_REQUEST_TIMEOUT_MS })
 
+      if (tefIdleTimerRef.current) {
+        clearTimeout(tefIdleTimerRef.current)
+        tefIdleTimerRef.current = null
+      }
       setPagamentoCriado(res.data)
       tefSessionRef.current = null
       tefStartRequestedRef.current = false
@@ -884,6 +908,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const ehInterromper = tefPrompt?.command_id === 23
     const ehMenu = tefPrompt?.command_id === 21 || tefPrompt?.command_id === 42
     const ehRecibo = Boolean(tefPrompt?.receipt_required)
+    const ehProcessandoAutomatico = isAutoProcessingPrompt(tefPrompt)
     const floatDecimals = tefPrompt?.float_decimals
     const comandoEntrada = Number(tefPrompt?.command_id)
     const exigeModoCheque = comandoEntrada === 31
@@ -1402,7 +1427,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
 
-                {!ehPerguntaSimNao && !ehAguardarTecla && !ehInterromper && !ehRecibo && !hasMenuOptions && (
+                {!ehPerguntaSimNao && !ehAguardarTecla && !ehInterromper && !ehRecibo && !ehProcessandoAutomatico && !hasMenuOptions && (
                   <input
                     type={senhaObrigatoria ? 'password' : 'text'}
                     value={tefInput}
@@ -1467,6 +1492,32 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         onClick={() => continuarFluxoTef(1, '1')}
                         disabled={tefProcessando}
                         className="w-40 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                      >
+                        MENU INICIAL
+                      </button>
+                    </>
+                  ) : ehProcessandoAutomatico ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled
+                        className="w-40 bg-sky-600 text-white text-2xl font-semibold py-2 rounded opacity-60"
+                      >
+                        {tefProcessando ? '...' : 'AGUARDANDO'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => finalizarOperacaoTef()}
+                        disabled={tefProcessando}
+                        className="w-36 bg-zinc-500 hover:bg-zinc-600 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                      >
+                        ENCERRAR
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => continuarFluxoTef(1, '1')}
+                        disabled={tefProcessando}
+                        className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
                         MENU INICIAL
                       </button>

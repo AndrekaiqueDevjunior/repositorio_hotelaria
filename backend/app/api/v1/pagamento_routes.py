@@ -38,15 +38,53 @@ def _normalize_tef_fiscal_payload(payload: dict) -> tuple[str | None, str | None
 
     if payload.get('enforce_fiscal_document'):
         if not cupom_fiscal:
-            raise HTTPException(status_code=400, detail='Cupom Fiscal obrigatorio para esta sequencia, conforme a documentacao da CliSiTef.')
+            raise HTTPException(status_code=400, detail='Cupom Fiscal obrigatorio para abrir esta sequencia TEF.')
         if len(cupom_fiscal) > 20:
             raise HTTPException(status_code=400, detail='Cupom Fiscal deve ter no maximo 20 caracteres, conforme a documentacao da CliSiTef.')
         if not data_fiscal or len(data_fiscal) != 8:
-            raise HTTPException(status_code=400, detail='Data Fiscal obrigatoria no formato AAAAMMDD para esta sequencia.')
+            raise HTTPException(status_code=400, detail='Data Fiscal obrigatoria no formato AAAAMMDD para abrir esta sequencia TEF.')
         if not hora_fiscal or len(hora_fiscal) != 6:
-            raise HTTPException(status_code=400, detail='Hora Fiscal obrigatoria no formato HHMMSS para esta sequencia.')
+            raise HTTPException(status_code=400, detail='Hora Fiscal obrigatoria no formato HHMMSS para abrir esta sequencia TEF.')
 
     return cupom_fiscal, data_fiscal, hora_fiscal
+
+
+def _normalize_tef_original_reference_payload(payload: dict) -> dict | None:
+    reference = payload.get('original_transaction_reference')
+    if not isinstance(reference, dict):
+        return None
+
+    normalized: dict[str, object] = {}
+    string_fields = (
+        'cupom_fiscal',
+        'nsu_host',
+        'nsu_sitef',
+        'rede_autorizadora',
+        'bandeira',
+        'autorizacao',
+        'codigo_estabelecimento',
+        'store_id',
+        'terminal_id',
+        'data_hora_transacao',
+        'campo_146_valor',
+        'campo_146_valor_bruto',
+        'campo_515_valor',
+        'campo_515_valor_ddmm',
+        'campo_516_valor',
+    )
+    digit_fields = ('data_fiscal', 'hora_fiscal')
+
+    for field in string_fields:
+        value = str(reference.get(field) or '').strip()
+        if value:
+            normalized[field] = value
+
+    for field in digit_fields:
+        value = _only_digits(reference.get(field))
+        if value:
+            normalized[field] = value
+
+    return normalized or None
 
 
 def _wrap_tef_param_fragment(value: object, prefix: str | None = None) -> str | None:
@@ -192,6 +230,7 @@ async def iniciar_funcao_tef(
     valor = payload.get("valor")
     valor_float = float(valor) if valor is not None else None
     cupom_fiscal, data_fiscal, hora_fiscal = _normalize_tef_fiscal_payload(payload)
+    original_transaction_reference = _normalize_tef_original_reference_payload(payload)
 
     return await service.iniciar_fluxo_tef_funcao(
         function_id=int(function_id),
@@ -207,6 +246,7 @@ async def iniciar_funcao_tef(
         store_id=payload.get("store_id"),
         terminal_id=payload.get("terminal_id"),
         justificativa=justificativa or None,
+        original_transaction_reference=original_transaction_reference,
     )
 
 @router.post("/tef/continuar", response_model=dict)
