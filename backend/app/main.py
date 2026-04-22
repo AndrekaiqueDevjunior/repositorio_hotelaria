@@ -17,7 +17,6 @@ from app.api.v1 import (
     public_routes,
     voucher_routes,
     cielo_routes,
-    cielo_test_routes,
     funcionario_routes,
     dashboard_routes,
     notificacao_routes,
@@ -126,7 +125,6 @@ app.include_router(validacao_resgate_routes.router, prefix="/api/v1")
 app.include_router(comprovante_routes.router, prefix="/api/v1")
 app.include_router(cupom_routes.router, prefix="/api/v1")
 app.include_router(tarifas_routes.router, prefix="/api/v1")
-app.include_router(cielo_test_routes.router, prefix="/api/v1")
 app.include_router(auditoria_routes.router, prefix="/api/v1")
 # app.include_router(consumo_routes.router, prefix="/api/v1")
 # app.include_router(cancelamento_routes.router, prefix="/api/v1")
