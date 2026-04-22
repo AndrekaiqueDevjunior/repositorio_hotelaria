@@ -31,6 +31,13 @@ def _only_digits(value: object) -> str:
     return ''.join(ch for ch in str(value or '') if ch.isdigit())
 
 
+def _payload_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    raw = str(value or '').strip().lower()
+    return raw in {'1', 'true', 'sim', 's', 'yes', 'y'}
+
+
 def _normalize_tef_fiscal_payload(payload: dict) -> tuple[str | None, str | None, str | None]:
     cupom_fiscal = str(payload.get('cupom_fiscal') or '').strip() or None
     data_fiscal = _only_digits(payload.get('data_fiscal')) or None
@@ -211,6 +218,8 @@ async def iniciar_fluxo_tef(
         trn_additional_parameters=payload.get("trn_additional_parameters"),
         trn_init_parameters=payload.get("trn_init_parameters"),
         session_parameters=payload.get("session_parameters"),
+        defer_finish=_payload_bool(payload.get("defer_finish")),
+        session_id=str(payload.get("session_id") or "").strip() or None,
     )
 
 @router.post("/tef/iniciar-funcao", response_model=dict)
@@ -247,6 +256,8 @@ async def iniciar_funcao_tef(
         terminal_id=payload.get("terminal_id"),
         justificativa=justificativa or None,
         original_transaction_reference=original_transaction_reference,
+        defer_finish=_payload_bool(payload.get("defer_finish")),
+        session_id=str(payload.get("session_id") or "").strip() or None,
     )
 
 @router.post("/tef/continuar", response_model=dict)

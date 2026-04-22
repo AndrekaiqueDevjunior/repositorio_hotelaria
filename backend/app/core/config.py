@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     TEF_TIMEOUT: int = int(os.getenv("TEF_TIMEOUT", "60"))
     # Timeout de inatividade de sessÃ£o TEF (segundos)
     TEF_SESSION_TIMEOUT: int = int(os.getenv("TEF_SESSION_TIMEOUT", "60"))
+    TEF_TIMEZONE: str = os.getenv("TEF_TIMEZONE", "America/Sao_Paulo")
     # ParÃ¢metros de conexÃ£o/identificaÃ§Ã£o do terminal
     TEF_SITEF_IP: str = os.getenv("TEF_SITEF_IP", "")
     TEF_STORE_ID: str = os.getenv("TEF_STORE_ID", "")
@@ -104,4 +105,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

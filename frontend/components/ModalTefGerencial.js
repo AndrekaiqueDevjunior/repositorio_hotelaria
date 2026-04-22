@@ -31,6 +31,9 @@ const TEF_IDLE_TIMEOUT_SECONDS = Math.max(Math.round(TEF_IDLE_TIMEOUT_MS / 1000)
 const TEF_REQUEST_TIMEOUT_MS = resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS, 180000)
 const TEF_PROCESSING_POLL_DELAY_MS = 800
 const REPRINT_LOOKUP_ERROR_PATTERNS = ['documento inexistente', 'doc inexistente', 'doc nao encontrado', 'doc nao encontrando', 'transacao nao encontrada na log', 'transacao nao encontrada no log', 'rede nao existe']
+const MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS = '{[10;16;17;18;19;27;28;35;3988;42;43;44];MultiplosCupons=1;VersaoAutomacaoCielo=PEG}'
+const MULTIPLE_PAYMENT_DEBIT_ADDITIONAL_PARAMETERS = '{[10;18;24;26;27;28;29;30;34;35;3988;44;73];MultiplosCupons=1;VersaoAutomacaoCielo=PEG}'
+const MULTIPLE_PAYMENT_WALLET_ADDITIONAL_PARAMETERS = '{MultiplosCupons=1;VersaoAutomacaoCielo=PEG}'
 
 const defaultValorPrompt = (prompt) => {
   if (Number(prompt?.command_id) === 22) {
@@ -395,7 +398,8 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 7 - Credito parcelado pelo estabelecimento',
     functionId: 3,
     valor: '100',
-    guidance: 'Execute a venda com chip e selecione parcelado pelo estabelecimento em 2 ou mais parcelas.',
+    trnAdditionalParameters: 'TransacoesHabilitadas=27',
+    guidance: 'Primeiro selecione Cartao de Credito, insira/aproxime o cartao e, quando a CliSiTef exibir a forma de pagamento, selecione parcelado pelo estabelecimento em 2 ou mais parcelas.',
     expected: 'A transacao deve ser autorizada e imprimir o cupom TEF.'
   },
   {
@@ -403,7 +407,8 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 8 - Credito parcelado pela administradora',
     functionId: 3,
     valor: '200',
-    guidance: 'Execute a venda com chip e selecione parcelado pela administradora em 2 ou mais parcelas.',
+    trnAdditionalParameters: 'TransacoesHabilitadas=28',
+    guidance: 'Primeiro selecione Cartao de Credito, insira/aproxime o cartao e, quando a CliSiTef exibir a forma de pagamento, selecione parcelado pela administradora em 2 ou mais parcelas.',
     expected: 'A transacao deve ser autorizada e imprimir o cupom TEF.'
   },
   {
@@ -500,6 +505,7 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 21 - Multiplos pagamentos com troco em dinheiro',
     functionId: 3,
     valor: '20',
+    trnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     guidance: 'Valor total da venda: R$ 50,00. Inicie uma transacao de credito no valor de R$ 20,00, realize o pagamento exclusivamente com chip, selecione A Vista e finalize a venda em dinheiro no valor de R$ 50,00, registrando o troco na aplicacao. O dinheiro deve ser lancado por ultimo no cupom fiscal.',
     expected: 'A transacao TEF deve ser autorizada, com cupom e registro do troco em dinheiro na aplicacao.'
   },
@@ -508,6 +514,7 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 22 - Multiplos pagamentos com dois cartoes',
     functionId: 3,
     valor: '40',
+    trnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     guidance: 'Valor total da venda: R$ 100,00. Realize a primeira transacao de credito no valor de R$ 40,00, selecione A Vista e conclua a segunda parte no debito, no valor de R$ 60,00, com o mesmo TaxInvoiceNumber/DataFiscal e usando chip.',
     expected: 'As duas transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
@@ -516,6 +523,7 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 23 - Multiplos pagamentos com carteira digital',
     functionId: 3,
     valor: '100',
+    trnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     guidance: 'Valor total da venda: R$ 150,00. Realize a primeira transacao de credito no valor de R$ 100,00, selecione A Vista e conclua o restante, no valor de R$ 50,00, com carteira digital no mesmo TaxInvoiceNumber/DataFiscal.',
     expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
@@ -524,6 +532,7 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 28 - Multiplos pagamentos com troco em dinheiro',
     functionId: 3,
     valor: '20',
+    trnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     guidance: 'Valor total da venda: R$ 50,00. Autorize a parte TEF de R$ 20,00 e conclua a venda com dinheiro por ultimo, registrando o troco na aplicacao.',
     expected: 'A transacao TEF deve ser autorizada, com cupom e registro do troco na aplicacao.'
   },
@@ -532,6 +541,7 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 29 - Multiplos pagamentos com dois cartoes',
     functionId: 3,
     valor: '40',
+    trnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     guidance: 'Valor total da venda: R$ 100,00. Autorize a primeira parte no credito a vista (R$ 40,00) e conclua a segunda parte no debito (R$ 60,00) com o mesmo TaxInvoiceNumber/DataFiscal.',
     expected: 'As duas transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
@@ -540,6 +550,7 @@ const SEQUENCE_PRESETS = [
     label: 'Seq. 30 - Multiplos pagamentos com carteira digital',
     functionId: 3,
     valor: '100',
+    trnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     guidance: 'Valor total da venda: R$ 150,00. Autorize a primeira parte no credito a vista (R$ 100,00) e conclua o restante (R$ 50,00) com carteira digital no mesmo TaxInvoiceNumber/DataFiscal.',
     expected: 'As transacoes devem ser autorizadas e o cupom deve ser impresso.'
   },
@@ -682,9 +693,11 @@ const GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG = {
     firstAmount: 40,
     firstLabel: 'Credito',
     firstInstallmentLabel: 'A vista',
+    firstTrnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     secondFunctionId: 2,
     secondAmount: 60,
     secondLabel: 'Debito com chip',
+    secondTrnAdditionalParameters: MULTIPLE_PAYMENT_DEBIT_ADDITIONAL_PARAMETERS,
     secondExecutionText: 'com o segundo cartao de debito',
     secondRequirementText: 'O pagamento da 2a etapa deve ser realizado exclusivamente com chip, mantendo o mesmo Cupom/Data/Hora.'
   },
@@ -693,9 +706,11 @@ const GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG = {
     firstAmount: 100,
     firstLabel: 'Credito',
     firstInstallmentLabel: 'A vista',
+    firstTrnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     secondFunctionId: 122,
     secondAmount: 50,
     secondLabel: 'Carteira digital',
+    secondTrnAdditionalParameters: MULTIPLE_PAYMENT_WALLET_ADDITIONAL_PARAMETERS,
     secondExecutionText: 'utilizando carteira digital (QR Code)',
     secondRequirementText: 'Conclua a 2a etapa na carteira digital e mantenha o mesmo Cupom/Data/Hora da 1a etapa.',
     secondTrnInitParameters: '{TransacoesAdicionaisHabilitadas=7;8;9;38;37}'
@@ -705,9 +720,11 @@ const GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG = {
     firstAmount: 40,
     firstLabel: 'Credito',
     firstInstallmentLabel: 'A vista',
+    firstTrnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     secondFunctionId: 2,
     secondAmount: 60,
     secondLabel: 'Debito com chip',
+    secondTrnAdditionalParameters: MULTIPLE_PAYMENT_DEBIT_ADDITIONAL_PARAMETERS,
     secondExecutionText: 'com o segundo cartao de debito',
     secondRequirementText: 'O pagamento da 2a etapa deve ser realizado exclusivamente com chip, mantendo o mesmo Cupom/Data/Hora.'
   },
@@ -716,9 +733,11 @@ const GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG = {
     firstAmount: 100,
     firstLabel: 'Credito',
     firstInstallmentLabel: 'A vista',
+    firstTrnAdditionalParameters: MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS,
     secondFunctionId: 122,
     secondAmount: 50,
     secondLabel: 'Carteira digital',
+    secondTrnAdditionalParameters: MULTIPLE_PAYMENT_WALLET_ADDITIONAL_PARAMETERS,
     secondExecutionText: 'utilizando carteira digital (QR Code)',
     secondRequirementText: 'Conclua a 2a etapa na carteira digital e mantenha o mesmo Cupom/Data/Hora da 1a etapa.',
     secondTrnInitParameters: '{TransacoesAdicionaisHabilitadas=7;8;9;38;37}'
@@ -817,6 +836,40 @@ const normalizeValidationText = (value) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+
+const CREDIT_INSTALLMENT_SEQUENCE_TARGETS = {
+  '7': 'parcelado pelo estabelecimento',
+  '8': 'parcelado pela administradora'
+}
+
+const buildCreditInstallmentMenuHint = (sequenceId, prompt, menuOptions) => {
+  const target = CREDIT_INSTALLMENT_SEQUENCE_TARGETS[String(sequenceId || '')]
+  if (!target || !Array.isArray(menuOptions) || menuOptions.length === 0) return null
+
+  const title = normalizeValidationText(prompt?.menu_title || '')
+  const rawPrompt = normalizeValidationText(prompt?.prompt || '')
+  const optionTexts = menuOptions.map((item) => normalizeValidationText(item?.text))
+  const hasCreditCardTypeOption = optionTexts.some((text) => text === 'cartao de credito' || text.includes('cartao de credito'))
+  const hasTargetInstallmentOption = optionTexts.some((text) => text.includes(target))
+
+  if ((title.includes('tipo do cartao de credito') || rawPrompt.includes('cartao de credito')) && hasCreditCardTypeOption && !hasTargetInstallmentOption) {
+    return {
+      tone: 'info',
+      title: 'Este ainda nao e o menu de parcelamento',
+      detail: `Selecione Cartao de Credito e insira/aproxime o cartao. O menu ${target} aparece depois da leitura do cartao, conforme o fluxo da CliSiTef.`
+    }
+  }
+
+  if (hasTargetInstallmentOption) {
+    return {
+      tone: 'success',
+      title: 'Menu de parcelamento encontrado',
+      detail: `Agora selecione ${target}.`
+    }
+  }
+
+  return null
+}
 
 const inferSpecificReprintMenuOption = (menuOptions, reference) => {
   if (!Array.isArray(menuOptions) || menuOptions.length === 0 || !reference) return null
@@ -1019,29 +1072,18 @@ export default function ModalTefGerencial({ onClose }) {
   const [cashReceivedValue, setCashReceivedValue] = useState('')
   const [nfpagExtraFields, setNfpagExtraFields] = useState({})
   const [nfpagError, setNfpagError] = useState('')
+  const [deferredBatchSessionId, setDeferredBatchSessionId] = useState('')
 
   const tefSessionRef = useRef(null)
   const tefIdleTimerRef = useRef(null)
   const tefAutoMenuRef = useRef('')
+  const tefAutoFinalizeSessionRef = useRef('')
+  const lastStartedFiscalRef = useRef({ cupom_fiscal: '', data_fiscal: '', hora_fiscal: '' })
+  const lastGeneratedFiscalNumberRef = useRef('')
 
   const nfpagTypeOptions = useMemo(() => getNfpagTypeOptions(tefResultado?.nfpag), [tefResultado])
   const nfpagSelectedType = useMemo(() => getNfpagTypeDetail(tefResultado?.nfpag, nfpagTipo), [tefResultado, nfpagTipo])
 
-  const aplicarReferenciaFiscal = (reference, options = {}) => {
-    const normalized = normalizeFiscalReference(reference)
-    if (!normalized) return false
-    const preferNsuHostDocument = Boolean(options?.preferNsuHostDocument)
-    const preferNsuSitefDocument = Boolean(options?.preferNsuSitefDocument)
-    const documentNumber = (preferNsuHostDocument && normalized.nsu_host)
-      ? normalized.nsu_host
-      : (preferNsuSitefDocument && normalized.nsu_sitef)
-        ? normalized.nsu_sitef
-        : normalized.cupom_fiscal
-    setCupomFiscal(documentNumber)
-    setDataFiscal(normalized.data_fiscal)
-    setHoraFiscal(normalized.hora_fiscal)
-    return true
-  }
 
   const resolvePromptDefaultInput = (payload, fallbackValue) => {
     if (!sequenceRequiresOriginalDocumentReference(selectedSequence)) return fallbackValue
@@ -1109,6 +1151,8 @@ export default function ModalTefGerencial({ onClose }) {
     setCashReceivedValue('')
     setNfpagExtraFields({})
     setNfpagError('')
+    setDeferredBatchSessionId('')
+    tefAutoFinalizeSessionRef.current = ''
     tefAutoMenuRef.current = ''
   }
 
@@ -1119,23 +1163,21 @@ export default function ModalTefGerencial({ onClose }) {
     const preset = getSequencePreset(nextId)
     if (!preset) return
 
+    const guidedConfig = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[nextId] || null
+    setDeferredBatchSessionId('')
     setFunctionId(preset.functionId)
     setValor(preset.valor || '')
-    setTrnAdditionalParameters(preset.trnAdditionalParameters || '')
-    setTrnInitParameters(preset.trnInitParameters || '')
+    setTrnAdditionalParameters(guidedConfig?.firstTrnAdditionalParameters || preset.trnAdditionalParameters || '')
+    setTrnInitParameters(guidedConfig?.firstTrnInitParameters || preset.trnInitParameters || '')
     setSessionParameters(preset.sessionParameters || '')
     setShowAdvanced(Boolean(preset.showAdvanced))
     setCashReceivedValue(MULTIPLE_PAYMENT_CASH_DEFAULTS[nextId] || '')
 
-    if (String(nextId) === '12') {
+    if (sequenceRequiresOriginalDocumentReference(nextId)) {
       const fiscal = buildFiscalStamp()
       setCupomFiscal(fiscal.cupom)
       setDataFiscal(fiscal.data)
       setHoraFiscal(fiscal.hora)
-    } else if (sequenceRequiresOriginalDocumentReference(nextId)) {
-      aplicarReferenciaFiscal(lastFiscalReference, {
-        preferNsuHostDocument: sequencePrefersNsuHostDocument(nextId)
-      })
     }
 
     if (JUSTIFICATIVA_REQUIRED_FUNCTIONS.has(preset.functionId)) {
@@ -1204,6 +1246,38 @@ export default function ModalTefGerencial({ onClose }) {
 
     return () => clearTimeout(timer)
   }, [showTefFlow, tefResultado, tefProcessando, tefPrompt])
+
+  useEffect(() => {
+    const sessionId = String(tefResultado?.session_id || '').trim()
+    const requiresManualFinalization = SEQUENCES_WITH_CASH_CHANGE.has(String(selectedSequence || ''))
+    const canAutoFinalize = Boolean(
+      sessionId &&
+      tefResultado?.finish_required &&
+      !tefResultado?.finish_deferred &&
+      !tefResultado?.finalizado &&
+      !tefResultado?.pendencia_automatica &&
+      !requiresManualFinalization &&
+      !tefProcessando
+    )
+
+    if (!canAutoFinalize) {
+      if (!sessionId) {
+        tefAutoFinalizeSessionRef.current = ''
+      }
+      return undefined
+    }
+
+    if (tefAutoFinalizeSessionRef.current === sessionId) {
+      return undefined
+    }
+    tefAutoFinalizeSessionRef.current = sessionId
+
+    const timer = setTimeout(() => {
+      concluirFluxoTef()
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [tefResultado, selectedSequence, tefProcessando])
 
 
   useEffect(() => {
@@ -1360,19 +1434,37 @@ export default function ModalTefGerencial({ onClose }) {
 
   const buildFiscalStamp = () => {
     const now = new Date()
-    const two = (n) => String(n).padStart(2, '0')
+    const pad = (n, size = 2) => String(n).padStart(size, '0')
     const y = now.getFullYear()
-    const m = two(now.getMonth() + 1)
-    const d = two(now.getDate())
-    const hh = two(now.getHours())
-    const mm = two(now.getMinutes())
-    const ss = two(now.getSeconds())
+    const m = pad(now.getMonth() + 1)
+    const d = pad(now.getDate())
+    const hh = pad(now.getHours())
+    const mm = pad(now.getMinutes())
+    const ss = pad(now.getSeconds())
+    const ms = pad(now.getMilliseconds(), 3)
+    let cupom = `${y}${m}${d}${hh}${mm}${ss}${ms}`
+    if (cupom <= String(lastGeneratedFiscalNumberRef.current || '')) {
+      cupom = String(Number(lastGeneratedFiscalNumberRef.current || '0') + 1)
+    }
+    lastGeneratedFiscalNumberRef.current = cupom
     return {
-      cupom: `DIAG${y}${m}${d}${hh}${mm}${ss}`.slice(-20),
+      cupom,
       data: `${y}${m}${d}`,
       hora: `${hh}${mm}${ss}`,
       iso: now.toISOString(),
     }
+  }
+
+  const fiscalJaUsadoNaUltimaAbertura = (cupom, data, hora) => {
+    const last = lastStartedFiscalRef.current || {}
+    return Boolean(
+      cupom &&
+      data &&
+      hora &&
+      String(last.cupom_fiscal || '') === String(cupom || '') &&
+      String(last.data_fiscal || '') === String(data || '') &&
+      String(last.hora_fiscal || '') === String(hora || '')
+    )
   }
 
   const summarizeProbeMessage = (payload) =>
@@ -1389,12 +1481,12 @@ export default function ModalTefGerencial({ onClose }) {
       status === -5
   }
 
-  const runFunction3Probe = async (storeIdValue, label) => {
+  const runFunction3Probe = async (storeIdValue) => {
     const fiscal = buildFiscalStamp()
     const startPayload = {
       function_id: 3,
       valor: 10,
-      cupom_fiscal: `${fiscal.cupom}${label}`.slice(-20),
+      cupom_fiscal: fiscal.cupom,
       data_fiscal: fiscal.data,
       hora_fiscal: fiscal.hora,
       store_id: storeIdValue,
@@ -1415,7 +1507,7 @@ export default function ModalTefGerencial({ onClose }) {
     const initParam = `[TipoComunicacaoExterna=TLSGWP;TokenRegistro=${tokenToUse}]`
     const startPayload = {
       function_id: 699,
-      cupom_fiscal: `${fiscal.cupom}699`.slice(-20),
+      cupom_fiscal: fiscal.cupom,
       data_fiscal: fiscal.data,
       hora_fiscal: fiscal.hora,
       trn_init_parameters: initParam,
@@ -1505,10 +1597,10 @@ export default function ModalTefGerencial({ onClose }) {
     setTefErro('')
     try {
       await api.delete('/pagamentos/tef/sessao', { timeout: TEF_REQUEST_TIMEOUT_MS })
-      const baseProbe = await runFunction3Probe('00000000', 'BASE')
+      const baseProbe = await runFunction3Probe('00000000')
       const regProbe = await runFunction699Probe()
       await api.delete('/pagamentos/tef/sessao', { timeout: TEF_REQUEST_TIMEOUT_MS })
-      const seq3Probe = await runFunction3Probe('1111AAAA', 'SEQ3')
+      const seq3Probe = await runFunction3Probe('1111AAAA')
       const checks = evaluateDiagnosticChecks(baseProbe, regProbe, seq3Probe)
       const report = {
         generated_at: new Date().toISOString(),
@@ -1566,7 +1658,7 @@ export default function ModalTefGerencial({ onClose }) {
   }
 
   const cancelarSessaoTef = async () => {
-    const sessionIdAtual = tefSessionRef.current || tefSessionId || tefPrompt?.session_id
+    const sessionIdAtual = tefSessionRef.current || tefSessionId || tefPrompt?.session_id || tefResultado?.session_id
     if (!sessionIdAtual) return
     try {
       await api.post('/pagamentos/tef/cancelar', {
@@ -1708,6 +1800,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     if (payload?.session_id) {
       tefSessionRef.current = payload.session_id
       setTefSessionId(payload.session_id)
+      if (payload?.finish_deferred) {
+        setDeferredBatchSessionId(payload.session_id)
+      }
     }
 
     const payloadCupomFiscal = String(payload?.cupom_fiscal || '').trim()
@@ -1721,6 +1816,13 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     }
     if (payloadHoraFiscal.length === 6) {
       setHoraFiscal(payloadHoraFiscal)
+    }
+    if (payloadCupomFiscal && payloadDataFiscal.length === 8 && payloadHoraFiscal.length === 6) {
+      lastStartedFiscalRef.current = {
+        cupom_fiscal: payloadCupomFiscal,
+        data_fiscal: payloadDataFiscal,
+        hora_fiscal: payloadHoraFiscal,
+      }
     }
 
     if (payload?.success === false) {
@@ -1737,7 +1839,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       return
     }
 
-    if (payload?.finish_required) {
+    if (payload?.finish_required || payload?.finish_deferred) {
       setTefPrompt(null)
       setTefResultado(payload)
       setTefInput('')
@@ -1816,9 +1918,8 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       let normalizedDataFiscal = onlyDigits(dataFiscal)
       let normalizedHoraFiscal = onlyDigits(horaFiscal)
       const originalDocumentReferenceRequired = sequenceRequiresOriginalDocumentReference(selectedSequence)
-      const useCurrentFiscalStartForSeq12 = String(selectedSequence || '') === '12'
 
-      if (useCurrentFiscalStartForSeq12 && (
+      if (originalDocumentReferenceRequired && (
         !normalizedCupomFiscal ||
         normalizedDataFiscal.length !== 8 ||
         normalizedHoraFiscal.length !== 6
@@ -1834,9 +1935,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
       if (originalDocumentReferenceRequired) {
         if (!normalizedCupomFiscal) {
-          setTefErro(useCurrentFiscalStartForSeq12
-            ? 'A abertura da Seq. 12 exige um documento fiscal atual. A referencia da venda original sera usada quando o SiTef pedir os campos 516 e 515.'
-            : 'Conforme a documentacao da CliSiTef, esta sequencia exige os dados fiscais da transacao de abertura.')
+          setTefErro('A abertura desta sequencia exige um Cupom Fiscal, Data Fiscal e Hora Fiscal novos. A referencia original sera usada quando o SiTef solicitar os campos 516, 515, 146 ou 601.')
           setTefProcessando(false)
           return
         }
@@ -1886,6 +1985,38 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         }
       }
 
+      const guidedStartConfig = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')] || null
+      const isGuidedFirstStepStart = Boolean(
+        guidedStartConfig &&
+        Number(functionId) === Number(guidedStartConfig.firstFunctionId) &&
+        Math.abs(parseCurrencyInputValue(valor) - Number(guidedStartConfig.firstAmount || 0)) < 0.001
+      )
+      const isGuidedSecondStepStart = Boolean(
+        guidedStartConfig &&
+        Number(functionId) === Number(guidedStartConfig.secondFunctionId) &&
+        Math.abs(parseCurrencyInputValue(valor) - Number(guidedStartConfig.secondAmount || 0)) < 0.001 &&
+        String(cupomFiscal || normalizedCupomFiscal || '').trim()
+      )
+      const batchSessionIdToReuse = String(deferredBatchSessionId || '').trim()
+      if (isGuidedSecondStepStart && !batchSessionIdToReuse) {
+        setTefErro('A 2a etapa de multiplos pagamentos deve reutilizar a sessao aprovada na 1a etapa. Prepare a 2a etapa a partir do resultado da 1a.')
+        setTefProcessando(false)
+        return
+      }
+
+      const autogeneratedFiscalDocument = sequenceAutogeneratesFiscalDocument(selectedSequence)
+      if (autogeneratedFiscalDocument && !isGuidedSecondStepStart) {
+        const incompleteFiscalDocument = !normalizedCupomFiscal || normalizedDataFiscal.length !== 8 || normalizedHoraFiscal.length !== 6
+        if (incompleteFiscalDocument || fiscalJaUsadoNaUltimaAbertura(normalizedCupomFiscal, normalizedDataFiscal, normalizedHoraFiscal)) {
+          normalizedCupomFiscal = ''
+          normalizedDataFiscal = ''
+          normalizedHoraFiscal = ''
+          setCupomFiscal('')
+          setDataFiscal('')
+          setHoraFiscal('')
+        }
+      }
+
       const payload = {
         function_id: functionId,
         valor: valor ? Number(valor) : undefined,
@@ -1901,7 +2032,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         store_id: storeId || undefined,
         terminal_id: terminalId || undefined,
         cashier_operator: cashierOperator || undefined,
-        justificativa: justificativa.trim() || undefined
+        justificativa: justificativa.trim() || undefined,
+        defer_finish: isGuidedFirstStepStart || undefined,
+        session_id: isGuidedSecondStepStart && batchSessionIdToReuse ? batchSessionIdToReuse : undefined
       }
 
       const res = await api.post('/pagamentos/tef/iniciar-funcao', payload, { timeout: TEF_REQUEST_TIMEOUT_MS })
@@ -1973,8 +2106,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
   const aplicarPrimeiraEtapaCartaoGuiada = () => {
     const config = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')]
     if (!config) return
+    setDeferredBatchSessionId('')
     setFunctionId(config.firstFunctionId)
     setValor(String(config.firstAmount))
+    setTrnAdditionalParameters(config.firstTrnAdditionalParameters || '')
+    setTrnInitParameters(config.firstTrnInitParameters || '')
     setNfpagRaw('')
     setNfpagItems([])
     setNfpagTipo('')
@@ -1989,6 +2125,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const config = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')]
     if (!config) return
 
+    const batchSessionId = String(deferredBatchSessionId || tefResultado?.session_id || tefPrompt?.session_id || tefSessionRef.current || tefSessionId || '').trim()
     const cupom = String(cupomFiscal || tefPrompt?.cupom_fiscal || tefResultado?.cupom_fiscal || '').trim()
     let data = onlyDigits(dataFiscal || tefPrompt?.data_fiscal || tefResultado?.data_fiscal)
     let hora = onlyDigits(horaFiscal || tefPrompt?.hora_fiscal || tefResultado?.hora_fiscal)
@@ -2008,11 +2145,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
     setShowTefFlow(false)
     resetTefFlow()
+    setDeferredBatchSessionId(batchSessionId)
     setFunctionId(config.secondFunctionId)
     setValor(String(config.secondAmount))
-    if (config.secondTrnInitParameters) {
-      setTrnInitParameters(config.secondTrnInitParameters)
-    }
+    setTrnAdditionalParameters(config.secondTrnAdditionalParameters || '')
+    setTrnInitParameters(config.secondTrnInitParameters || '')
     setCupomFiscal(cupom)
     setDataFiscal(data)
     setHoraFiscal(hora)
@@ -2027,6 +2164,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
   const concluirFluxoTef = async () => {
     try {
+      if (tefResultado?.finish_deferred) {
+        prepararSegundaEtapaCartaoGuiada()
+        return
+      }
+
       if (tefResultado?.pendencia_automatica || tefResultado?.finalizado) {
         await encerrarFluxoTef()
         return
@@ -2082,6 +2224,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       })
       tefSessionRef.current = null
       setTefSessionId(null)
+      setDeferredBatchSessionId('')
     } catch (err) {
       console.error('Erro ao finalizar fluxo TEF:', err)
       const detail = err.response?.data?.detail || 'Erro ao finalizar fluxo TEF'
@@ -2165,12 +2308,14 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const senhaObrigatoria = Boolean(tefPrompt?.field_is_secret || Number(tefPrompt?.field_id) === 500)
     const menuOptions = ehMenu ? parseMenuOptions(Number(tefPrompt?.command_id), prompt) : []
     const menuNeedsManualSelection = ehMenu && menuOptions.length === 0
+    const creditInstallmentMenuHint = ehMenu ? buildCreditInstallmentMenuHint(selectedSequence, tefPrompt, menuOptions) : null
     const retornoCliSiTef = Number(tefResultado?.clisitef_status ?? tefResultado?.detail?.clisitefStatus ?? (isAprovado ? 0 : -1))
+    const isDeferredBatchFirstStep = Boolean(tefResultado?.finish_deferred)
     const canPrepareGuidedSecondStep = Boolean(
       guidedTwoStepConfig &&
-      fluxoFinalizado &&
       isAprovado &&
-      Number(functionId) === Number(guidedTwoStepConfig.firstFunctionId)
+      Number(functionId) === Number(guidedTwoStepConfig.firstFunctionId) &&
+      (fluxoFinalizado || isDeferredBatchFirstStep)
     )
 
     return (
@@ -2197,6 +2342,29 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 {renderTefReimpressaoInfo(tefResultado?.reimpressao)}
                 {renderReferenciaReimpressao(tefResultado?.referencia_reimpressao)}
                 <h3 className="text-xl font-bold text-zinc-900 sm:text-2xl lg:text-3xl">{isAutomaticPendingResolution ? 'Tratamento de Pendencias' : `Transacao ${isAprovado ? 'Aprov.' : 'Nao Aprov.'}`}</h3>
+
+                {isDeferredBatchFirstStep && (
+                  <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+                    <p className="font-semibold">Finalizacao adiada para o lote</p>
+                    <p className="text-sm mt-1">Esta primeira etapa foi aprovada, mas nao sera finalizada agora. Prepare a 2a etapa e envie a Finaliza somente na ultima transacao do lote.</p>
+                  </div>
+                )}
+
+                {isAutomaticPendingResolution && tefResultado?.finish_tax_invoice_number && (
+                  <div className="rounded border border-emerald-300 bg-emerald-50 px-4 py-3 text-emerald-900">
+                    <p className="font-semibold">Finaliza 130 enviada com dados da pendencia</p>
+                    <p className="text-sm mt-1">
+                      CupomFiscal <span className="font-mono">{tefResultado.finish_tax_invoice_number}</span>, DataFiscal <span className="font-mono">{tefResultado.finish_tax_invoice_date || '-'}</span>, Horario <span className="font-mono">{tefResultado.finish_tax_invoice_time || '-'}</span>.
+                    </p>
+                  </div>
+                )}
+
+                {!isDeferredBatchFirstStep && !fluxoFinalizado && tefResultado?.finish_required && (
+                  <div className="rounded border border-emerald-300 bg-emerald-50 px-4 py-3 text-emerald-900">
+                    <p className="font-semibold">Finaliza pendente</p>
+                    <p className="text-sm mt-1">Apos conferir ou imprimir os comprovantes, clique em Enviar Finaliza. Em transacao aprovada com Retorno = 0, essa chamada confirma a operacao no SiTef.</p>
+                  </div>
+                )}
 
                 {canPrepareGuidedSecondStep && (
                   <div className="rounded border border-indigo-300 bg-indigo-50 px-4 py-3 text-indigo-900">
@@ -2246,34 +2414,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     {preferNsuHostDocument && lastFiscalReference?.nsu_host && (
                       <p className="text-xs mt-2">Na Seq. 12, o documento deve ser o NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span>.</p>
                     )}
-                    {!preferNsuHostDocument && lastFiscalReference && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: false })}
-                          className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
-                        >
-                          Usar documento fiscal
-                        </button>
-                        {lastFiscalReference.nsu_host && (
-                          <button
-                            type="button"
-                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: true })}
-                            className="rounded bg-zinc-700 px-2 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Tentar NSU Host
-                          </button>
-                        )}
-                        {lastFiscalReference.nsu_sitef && (
-                          <button
-                            type="button"
-                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuSitefDocument: true })}
-                            className="rounded bg-zinc-600 px-2 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Tentar NSU SiTef
-                          </button>
-                        )}
-                      </div>
+                    {lastFiscalReference && (
+                      <p className="text-xs mt-2">
+                        Use a referencia original somente nos campos solicitados pelo SiTef. Documento <span className="font-mono">{lastFiscalReference.cupom_fiscal || '-'}</span>
+                        {lastFiscalReference.nsu_host ? <> , NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span></> : null}
+                        {lastFiscalReference.nsu_sitef ? <> , NSU SiTef <span className="font-mono">{lastFiscalReference.nsu_sitef}</span></> : null}.
+                      </p>
                     )}
                   </div>
                 )}
@@ -2502,11 +2648,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap">
                   <button
                     type="button"
-                    onClick={isAutomaticPendingResolution || fluxoFinalizado ? () => encerrarFluxoTef() : concluirFluxoTef}
+                    onClick={isDeferredBatchFirstStep ? prepararSegundaEtapaCartaoGuiada : isAutomaticPendingResolution || fluxoFinalizado ? () => encerrarFluxoTef() : concluirFluxoTef}
                     disabled={tefProcessando}
                     className={tefFlowPrimaryButtonClass}
                   >
-                    {tefProcessando ? '...' : isAutomaticPendingResolution || fluxoFinalizado ? 'OK' : 'Concluir'}
+                    {tefProcessando ? '...' : isDeferredBatchFirstStep ? 'Preparar 2a etapa' : isAutomaticPendingResolution || fluxoFinalizado ? 'OK' : 'Enviar Finaliza'}
                   </button>
                   <button
                     type="button"
@@ -2575,34 +2721,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     {preferNsuHostDocument && lastFiscalReference?.nsu_host && (
                       <p className="text-xs mt-2">Na Seq. 12, o documento deve ser o NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span>.</p>
                     )}
-                    {!preferNsuHostDocument && lastFiscalReference && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: false })}
-                          className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
-                        >
-                          Usar documento fiscal
-                        </button>
-                        {lastFiscalReference.nsu_host && (
-                          <button
-                            type="button"
-                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: true })}
-                            className="rounded bg-zinc-700 px-2 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Tentar NSU Host
-                          </button>
-                        )}
-                        {lastFiscalReference.nsu_sitef && (
-                          <button
-                            type="button"
-                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuSitefDocument: true })}
-                            className="rounded bg-zinc-600 px-2 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Tentar NSU SiTef
-                          </button>
-                        )}
-                      </div>
+                    {lastFiscalReference && (
+                      <p className="text-xs mt-2">
+                        Use a referencia original somente nos campos solicitados pelo SiTef. Documento <span className="font-mono">{lastFiscalReference.cupom_fiscal || '-'}</span>
+                        {lastFiscalReference.nsu_host ? <> , NSU Host <span className="font-mono">{lastFiscalReference.nsu_host}</span></> : null}
+                        {lastFiscalReference.nsu_sitef ? <> , NSU SiTef <span className="font-mono">{lastFiscalReference.nsu_sitef}</span></> : null}.
+                      </p>
                     )}
                   </div>
                 )}
@@ -2627,6 +2751,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 ) : ehMenu && menuOptions.length > 0 ? (
                   <div className="mb-4 space-y-3">
+                    {creditInstallmentMenuHint && (
+                      <div className={`rounded border px-3 py-2 text-sm ${creditInstallmentMenuHint.tone === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-sky-300 bg-sky-50 text-sky-900'}`}>
+                        <p className="font-semibold">{creditInstallmentMenuHint.title}</p>
+                        <p className="mt-1 text-xs">{creditInstallmentMenuHint.detail}</p>
+                      </div>
+                    )}
                     <pre className="text-sm text-zinc-900 whitespace-pre-wrap bg-white border border-zinc-300 rounded p-3">{prompt || ''}</pre>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {menuOptions.map((opt) => (
@@ -3036,13 +3166,13 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
             {originalDocumentReferenceRequired && (
               <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm space-y-2 text-amber-900">
-                <p className="font-semibold">{preferNsuHostDocument ? 'Referencia original obrigatoria na Seq. 12' : 'Documento fiscal original obrigatorio nesta sequencia'}</p>
+                <p className="font-semibold">{preferNsuHostDocument ? 'Referencia original obrigatoria na Seq. 12' : 'Referencia original obrigatoria nesta sequencia'}</p>
                 <p>
                   {preferNsuHostDocument
-                    ? 'Na abertura da Seq. 12, use um novo documento fiscal da operacao atual. Quando o SiTef pedir a transacao original, informe os dados da Seq. 5 e use o NSU Host no Campo 516.'
-                    : 'Conforme a documentacao da CliSiTef, informe o mesmo Cupom Fiscal, Data Fiscal e Hora Fiscal usados na transacao original.'}
+                    ? 'A abertura usa um Cupom/Data/Hora novo. Quando o SiTef pedir a transacao original, informe os dados da Seq. 5 e use o NSU Host no Campo 516.'
+                    : 'A abertura usa um Cupom/Data/Hora novo. Quando o SiTef pedir a transacao original, informe os dados fiscais/NSU da venda original.'}
                 </p>
-                <p className="text-xs">Para cancelamento/reimpressao, use exatamente os dados da transacao original que sera localizada pelo SiTef.</p>
+                <p className="text-xs">Nao copie a referencia original para o CupomFiscal da abertura; isso evita replicacao entre transacoes.</p>
                 {preferNsuHostDocument && (
                   <p className="text-xs text-amber-800">Na Seq. 12, o documento da reimpressao deve ser o NSU Host da venda original. Na trilha REDE, a data original deve seguir MMDD, por exemplo 08/04 = 0408.</p>
                 )}
@@ -3059,35 +3189,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       data <span className="font-mono">{lastFiscalReference.data_fiscal}</span>,
                       hora <span className="font-mono">{lastFiscalReference.hora_fiscal}</span>
                     </p>
-                    {!preferNsuHostDocument && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument })}
-                          className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white"
-                        >
-                          Usar documento fiscal
-                        </button>
-                        {lastFiscalReference.nsu_host && (
-                          <button
-                            type="button"
-                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuHostDocument: true })}
-                            className="rounded bg-zinc-700 px-2 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Usar NSU Host
-                          </button>
-                        )}
-                        {lastFiscalReference.nsu_sitef && (
-                          <button
-                            type="button"
-                            onClick={() => aplicarReferenciaFiscal(lastFiscalReference, { preferNsuSitefDocument: true })}
-                            className="rounded bg-zinc-600 px-2 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Usar NSU SiTef
-                          </button>
-                        )}
-                      </div>
-                    )}
+                    <p className="mt-2 text-[11px] text-amber-800">
+                      A abertura do TEF continua com o Cupom/Data/Hora atuais; use esta referencia somente nas perguntas do SiTef.
+                    </p>
                   </div>
                 )}
               </div>
@@ -3210,7 +3314,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 type="text"
                 value={cupomFiscal}
                 onChange={(e) => setCupomFiscal(e.target.value)}
-                placeholder={originalDocumentReferenceRequired ? 'Obrigatorio nesta sequencia' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
+                placeholder={originalDocumentReferenceRequired ? 'Novo documento da abertura' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               />
             </div>
@@ -3220,7 +3324,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 type="text"
                 value={dataFiscal}
                 onChange={(e) => setDataFiscal(e.target.value)}
-                placeholder={originalDocumentReferenceRequired ? 'Obrigatorio nesta sequencia' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
+                placeholder={originalDocumentReferenceRequired ? 'Novo documento da abertura' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               />
             </div>
@@ -3230,17 +3334,17 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 type="text"
                 value={horaFiscal}
                 onChange={(e) => setHoraFiscal(e.target.value)}
-                placeholder={originalDocumentReferenceRequired ? 'Obrigatorio nesta sequencia' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
+                placeholder={originalDocumentReferenceRequired ? 'Novo documento da abertura' : autogeneratedFiscalDocument ? 'Gerado automaticamente se vazio' : 'Opcional'}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               />
             </div>
           </div>
           <p className="text-xs text-gray-500">
-            Conforme a documentacao da CliSiTef, o Cupom Fiscal deve ter no maximo 20 caracteres e ser mantido igual ao documento fiscal da venda.
+            Conforme a documentacao da CliSiTef, o Cupom Fiscal deve ter no maximo 20 caracteres e ser unico por abertura de transacao.
           </p>
           {originalDocumentReferenceRequired && (
             <p className="text-xs text-amber-700">
-              Esta sequencia usa o documento original da transacao anterior. Nao utilize um novo documento sintetico nesta etapa.
+              Esta sequencia abre com um Cupom/Data/Hora novo. A referencia original fica reservada para os campos 516/515/146/601 solicitados pelo SiTef.
             </p>
           )}
           {!originalDocumentReferenceRequired && autogeneratedFiscalDocument && (

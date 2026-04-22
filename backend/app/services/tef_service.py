@@ -1,5 +1,6 @@
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Dict
 from urllib.parse import quote_plus
 
@@ -19,9 +20,20 @@ TEF_REPRINT_REFERENCE_GLOBAL_KEY = f"{TEF_REPRINT_REFERENCE_CACHE_PREFIX}global"
 TEF_REPRINT_REFERENCE_TTL_SECONDS = 60 * 60 * 24 * 7
 TEF_REPRINT_REFERENCE_HISTORY_LIMIT = 12
 TEF_REPRINT_REFERENCE_MEMORY: Dict[str, list[Dict[str, Any]]] = {}
+LAST_GENERATED_CUPOM_FISCAL = ""
 REPRINT_LOOKUP_FIELD_IDS = {146, 515, 516, 601}
 REPRINT_FLOW_FUNCTION_IDS = {110, 112, 113, 114}
 APPROVED_REFERENCE_FUNCTION_IDS = {0, 2, 3}
+PENDING_RESOLUTION_FIELD_IDS = {160, 161, 163, 164, 210, 211, 1319}
+PENDING_RESOLUTION_FIELD_KEYS = {
+    160: "cupom_fiscal",
+    161: "numero_pagamento",
+    163: "data_fiscal",
+    164: "hora_fiscal",
+    210: "quantidade_pendencias",
+    211: "function_id_original",
+    1319: "valor_original",
+}
 
 TEF_EVENT_LABELS: Dict[int, str] = {
     5000: "Aguardando leitura de cartao",
@@ -96,9 +108,17 @@ TEF_FIELD_LABELS: Dict[int, str] = {
     132: "Bandeira",
     133: "NSU SiTef",
     134: "NSU Host",
+    4077: "NSU Host (Carteira Digital/Pix)",
     135: "Codigo de autorizacao",
     146: "Valor da transacao original",
     157: "Codigo de estabelecimento",
+    160: "Cupom Fiscal da pendencia",
+    161: "Numero do pagamento da pendencia",
+    163: "Data Fiscal da pendencia",
+    164: "Hora Fiscal da pendencia",
+    210: "Quantidade de pendencias",
+    211: "Funcao original da pendencia",
+    1319: "Valor original da pendencia",
     4125: "Cupom Cliente disponivel para reimpressao",
     4126: "Cupom Estabelecimento disponivel para reimpressao",
     4127: "Prazo de disponibilidade na base do SiTef",
@@ -109,6 +129,7 @@ TEF_FIELD_HINTS: Dict[int, str] = {
     146: "Use o valor da transacao original quando o SiTef solicitar o Campo 146.",
     515: "Use a data da transacao original no formato DDMMAAAA para cancelar ou reimprimir.",
     516: "Campo 516 = numero do documento da transacao original. No roteiro de homologacao desta automacao, use o NSU Host.",
+    4077: "No cancelamento de carteira digital (Pix), use o NSU Host retornado no campo 4077.",
 }
 NFPAG_TYPE_LABELS: Dict[str, str] = {
     "00": "Dinheiro",
@@ -329,6 +350,72 @@ def _build_pending_resolution_message(confirmar: bool, success: bool, data_hora_
         parts.append("Para reimpressao, favor solicitar o ultimo cupom.")
 
     return " ".join(parts)
+
+def _digits_only(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _normalize_pending_resolution_value(field_id: int, value: Any) -> str:
+    raw = str(value or "").strip()
+    if field_id in {163, 164, 210, 211, 1319}:
+        return _digits_only(raw) or raw
+    return raw
+
+
+def _record_pending_resolution_field(target: Dict[str, Any], field_id: int, value: Any) -> None:
+    if field_id not in PENDING_RESOLUTION_FIELD_IDS:
+        return
+
+    normalized_value = _normalize_pending_resolution_value(field_id, value)
+    if not normalized_value and field_id != 210:
+        return
+
+    target.setdefault("tipo_campos", {})[str(field_id)] = normalized_value
+    key = PENDING_RESOLUTION_FIELD_KEYS.get(field_id)
+    if key:
+        target[key] = normalized_value
+
+    if field_id == 210:
+        return
+
+    transactions = target.setdefault("transactions", [])
+    if field_id == 160 or not transactions:
+        transactions.append({})
+        target["_current_transaction_index"] = len(transactions) - 1
+
+    current_index = target.get("_current_transaction_index")
+    if not isinstance(current_index, int) or current_index < 0 or current_index >= len(transactions):
+        current_index = len(transactions) - 1
+        target["_current_transaction_index"] = current_index
+
+    if key:
+        transactions[current_index][key] = normalized_value
+
+
+def _resolve_pending_finish_fiscal(
+    pending_resolution: Dict[str, Any] | None,
+    fallback_number: str,
+    fallback_date: str,
+    fallback_time: str,
+) -> tuple[str, str, str, Dict[str, Any] | None]:
+    if not isinstance(pending_resolution, dict):
+        return fallback_number, fallback_date, fallback_time, None
+
+    candidates = []
+    transactions = pending_resolution.get("transactions")
+    if isinstance(transactions, list):
+        candidates.extend(item for item in transactions if isinstance(item, dict))
+    candidates.append(pending_resolution)
+
+    for candidate in reversed(candidates):
+        cupom_fiscal = str(candidate.get("cupom_fiscal") or "").strip()
+        if not cupom_fiscal:
+            continue
+        data_fiscal = _digits_only(candidate.get("data_fiscal")) or fallback_date
+        hora_fiscal = _digits_only(candidate.get("hora_fiscal")) or fallback_time
+        return cupom_fiscal, data_fiscal, hora_fiscal, candidate
+
+    return fallback_number, fallback_date, fallback_time, None
 
 
 
@@ -558,15 +645,36 @@ def _build_reimpressao_reference(session: Dict[str, Any] | None) -> Dict[str, An
     }
 
 
+def _get_fiscal_now() -> datetime:
+    tz_name = str(getattr(settings, "TEF_TIMEZONE", "America/Sao_Paulo") or "America/Sao_Paulo").strip()
+    try:
+        return datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        try:
+            return datetime.now(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            return datetime.now()
+
+
 def _now_fiscal_date() -> str:
-    now = datetime.now()
+    now = _get_fiscal_now()
     return now.strftime("%Y%m%d")
 
 
 def _now_fiscal_time() -> str:
-    now = datetime.now()
+    now = _get_fiscal_now()
     return now.strftime("%H%M%S")
 
+
+def _next_unique_cupom_fiscal() -> str:
+    global LAST_GENERATED_CUPOM_FISCAL
+
+    candidate = _get_fiscal_now().strftime("%Y%m%d%H%M%S%f")[:17]
+    if candidate <= LAST_GENERATED_CUPOM_FISCAL:
+        candidate = str(int(LAST_GENERATED_CUPOM_FISCAL or "0") + 1)
+
+    LAST_GENERATED_CUPOM_FISCAL = candidate
+    return candidate
 
 def _encode_agent_form_payload(payload: Dict[str, Any] | None) -> str:
     if not isinstance(payload, dict):
@@ -581,6 +689,25 @@ def _encode_agent_form_payload(payload: Dict[str, Any] | None) -> str:
         encoded_value = quote_plus(str(value), safe=safe_value_chars)
         parts.append(f"{encoded_key}={encoded_value}")
     return "&".join(parts)
+
+
+
+def _normalize_trn_additional_parameters(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    # O Agente CliSiTef trabalha com chaves nos exemplos oficiais. Para
+    # multiplos pagamentos, preservamos as restricoes internas e trocamos
+    # somente o envelope externo de [] para {}, evitando erro de parse.
+    if "MultiplosCupons=1" in raw and raw.startswith("[[") and raw.endswith("]"):
+        return "{" + raw[1:-1] + "}"
+
+    return raw
+
+
+def _is_multiple_payment_parameters(value: Any) -> bool:
+    return "MultiplosCupons=1" in str(value or "")
 
 
 def _set_pending_status(message: str, detail: Dict[str, Any] | None = None) -> None:
@@ -891,8 +1018,7 @@ class TefService:
         return None
 
     def _generate_cupom_fiscal(self) -> str:
-        now = datetime.now()
-        return now.strftime("%Y%m%d%H%M%S%f")[:17]
+        return _next_unique_cupom_fiscal()
 
     def _build_parametros_adicionais(self) -> str:
         if settings.TEF_PARAMETROS_ADICIONAIS:
@@ -987,6 +1113,7 @@ class TefService:
         trn_additional_parameters: str | None = None,
         trn_init_parameters: str | None = None,
         session_parameters: str | None = None,
+        session_id: str | None = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "functionId": int(function_id),
@@ -1002,6 +1129,8 @@ class TefService:
         elif self.agente_mode == "real":
             # O Agente CliSiTef real valida a presenca de trnAmount mesmo em funcoes sem valor previo.
             payload["trnAmount"] = ""
+        if session_id:
+            payload["sessionId"] = session_id
         if sitef_ip:
             payload["sitefIp"] = sitef_ip
         if store_id:
@@ -1102,6 +1231,9 @@ class TefService:
                 valor = "****"
             session["tipo_campos"].append(_build_tipo_campo_entry(field_id, valor))
 
+            if int(session.get("function_id") or 0) == 130:
+                _record_pending_resolution_field(session.setdefault("pending_resolution", {}), field_id, valor)
+
         if command_id == 0 and 5000 <= field_id <= 5084:
             event_payload = _build_event_payload(field_id, data)
             session["evento_atual"] = event_payload
@@ -1153,9 +1285,13 @@ class TefService:
             session["bandeira"] = str(data)
         elif field_id == 133 and data:
             session["nsu_sitef"] = str(data)
-        elif field_id == 134 and data:
-            session["nsu_host"] = str(data)
-            session["nsu"] = str(data)
+        elif field_id in (134, 4077) and data:
+            nsu_host_value = str(data).strip()
+            if nsu_host_value:
+                session["nsu_host"] = nsu_host_value
+                session["nsu"] = nsu_host_value
+                if field_id == 4077:
+                    session["nsu_host_4077"] = nsu_host_value
         elif field_id == 135 and data:
             session["autorizacao"] = str(data)
         elif field_id == 157 and data:
@@ -1185,7 +1321,8 @@ class TefService:
         command_id = int(response.get("commandId") or 0)
         clisitef_status = int(response.get("clisitefStatus") or 0)
         prompt = str(response.get("data") or "")
-        finish_required = clisitef_status != 10000
+        finish_deferred = bool(session.get("defer_finish") and clisitef_status == 0)
+        finish_required = clisitef_status != 10000 and not finish_deferred
         aprovado = clisitef_status == 0
         field_id = int(response.get("fieldId") or 0)
         messages_dict = session.get("messages") or {}
@@ -1216,6 +1353,8 @@ class TefService:
             "service_status": int(response.get("serviceStatus") or 0),
             "requires_input": clisitef_status == 10000 and command_id in INPUT_COMMANDS,
             "finish_required": finish_required,
+            "finish_deferred": finish_deferred,
+            "finalization_hint": "Finalizacao adiada para a ultima transacao do lote de multiplos pagamentos." if finish_deferred else None,
             "aprovado": aprovado,
             "command_id": command_id,
             "field_id": field_id,
@@ -1310,6 +1449,8 @@ class TefService:
         terminal_id: str | None = None,
         justificativa: str | None = None,
         original_transaction_reference: Dict[str, Any] | None = None,
+        defer_finish: bool = False,
+        session_id: str | None = None,
     ) -> Dict[str, Any]:
         if function_id in (2, 3, 122) and valor is None:
             return {
@@ -1324,7 +1465,7 @@ class TefService:
         tax_invoice_time = hora_fiscal or _now_fiscal_time()
         session_parameters_resolved = self._resolve_session_parameters(session_parameters)
         trn_init_resolved = self._resolve_trn_init_parameters(function_id, trn_init_parameters)
-        trn_additional_resolved = trn_additional_parameters or settings.TEF_TRN_PARAMETERS or None
+        trn_additional_resolved = _normalize_trn_additional_parameters(trn_additional_parameters or settings.TEF_TRN_PARAMETERS or None)
         sitef_ip_resolved = sitef_ip or settings.TEF_SITEF_IP or None
         store_id_resolved = store_id or settings.TEF_STORE_ID or None
         terminal_id_resolved = terminal_id or settings.TEF_TERMINAL_ID or None
@@ -1344,6 +1485,7 @@ class TefService:
                 trn_additional_parameters=trn_additional_resolved,
                 trn_init_parameters=trn_init_resolved,
                 session_parameters=session_parameters_resolved,
+                session_id=session_id,
             )
         except requests.RequestException as exc:
             return {
@@ -1352,6 +1494,13 @@ class TefService:
             }
 
         if int(start.get("serviceStatus") or 0) == 98:
+            if defer_finish or session_id or _is_multiple_payment_parameters(trn_additional_resolved):
+                return {
+                    "success": False,
+                    "error": "Agente ocupado com outra transacao. Em multiplos pagamentos, nao limpamos a sessao automaticamente para nao cancelar o lote.",
+                    "detail": start,
+                }
+
             self._cleanup_remote_session()
             self._reset_local_interactive_sessions()
             await self._clear_cached_sessions()
@@ -1369,6 +1518,7 @@ class TefService:
                     trn_additional_parameters=trn_additional_resolved,
                     trn_init_parameters=trn_init_resolved,
                     session_parameters=session_parameters_resolved,
+                    session_id=session_id,
                 )
             except requests.RequestException as exc:
                 return {
@@ -1416,6 +1566,8 @@ class TefService:
             "trn_additional_parameters": trn_additional_resolved,
             "trn_init_parameters": trn_init_resolved,
             "session_parameters": session_parameters_resolved,
+            "defer_finish": bool(defer_finish),
+            "batch_session_id": session_id,
             "cupom_cliente": "",
             "cupom_estabelecimento": "",
             "nsu": None,
@@ -1603,12 +1755,24 @@ class TefService:
                 "error": "Sessao TEF expirada por inatividade",
             }
 
+        finish_tax_invoice_number = session["tax_invoice_number"]
+        finish_tax_invoice_date = session["tax_invoice_date"]
+        finish_tax_invoice_time = session["tax_invoice_time"]
+        pending_finish_reference = None
+        if int(session.get("function_id") or 0) == 130:
+            finish_tax_invoice_number, finish_tax_invoice_date, finish_tax_invoice_time, pending_finish_reference = _resolve_pending_finish_fiscal(
+                session.get("pending_resolution"),
+                finish_tax_invoice_number,
+                finish_tax_invoice_date,
+                finish_tax_invoice_time,
+            )
+
         finish_payload: Dict[str, Any] = {
             "sessionId": session_id,
             "confirm": 1 if confirm else 0,
-            "taxInvoiceNumber": session["tax_invoice_number"],
-            "taxInvoiceDate": session["tax_invoice_date"],
-            "taxInvoiceTime": session["tax_invoice_time"],
+            "taxInvoiceNumber": finish_tax_invoice_number,
+            "taxInvoiceDate": finish_tax_invoice_date,
+            "taxInvoiceTime": finish_tax_invoice_time,
         }
         if param_adic:
             finish_payload["paramAdic"] = param_adic
@@ -1653,6 +1817,11 @@ class TefService:
             "status": "APROVADO" if aprovado else "RECUSADO",
             "nsu": nsu,
             "nsu_sitef": nsu_sitef,
+            "pending_resolution": session.get("pending_resolution") or None,
+            "pending_finish_reference": pending_finish_reference,
+            "finish_tax_invoice_number": finish_tax_invoice_number,
+            "finish_tax_invoice_date": finish_tax_invoice_date,
+            "finish_tax_invoice_time": finish_tax_invoice_time,
             "nsu_host": nsu_host,
             "rede_autorizadora": session.get("rede_autorizadora"),
             "bandeira": session.get("bandeira"),
@@ -1814,6 +1983,7 @@ class TefService:
         data_hora_transacao = None
         nsu_host = None
         nsu_sitef = None
+        pending_resolution: Dict[str, Any] = {"transactions": []}
 
         for _ in range(PENDING_CONTINUE_MAX_ITERATIONS):
             try:
@@ -1848,9 +2018,12 @@ class TefService:
             field_id = int(response.get("fieldId") or 0)
             response_data = response.get("data")
 
+            if command_id == 0 and field_id > 0:
+                _record_pending_resolution_field(pending_resolution, field_id, response_data)
+
             if field_id == 105 and response_data:
                 data_hora_transacao = str(response_data)
-            elif field_id == 134 and response_data:
+            elif field_id in (134, 4077) and response_data:
                 nsu_host = str(response_data)
             elif field_id == 133 and response_data:
                 nsu_sitef = str(response_data)
@@ -1876,6 +2049,19 @@ class TefService:
             next_continue = 0
             next_data = ""
 
+        finish_tax_invoice_number, finish_tax_invoice_date, finish_tax_invoice_time, pending_finish_reference = _resolve_pending_finish_fiscal(
+            pending_resolution,
+            tax_invoice_number,
+            tax_invoice_date,
+            tax_invoice_time,
+        )
+        print(
+            "[TEF][pendencias] Finaliza 130 com "
+            f"CupomFiscal={finish_tax_invoice_number} "
+            f"DataFiscal={finish_tax_invoice_date} "
+            f"Horario={finish_tax_invoice_time}"
+        )
+
         try:
             finish = self._request(
                 "POST",
@@ -1883,9 +2069,9 @@ class TefService:
                 {
                     "sessionId": session_id,
                     "confirm": 1 if confirmar else 0,
-                    "taxInvoiceNumber": tax_invoice_number,
-                    "taxInvoiceDate": tax_invoice_date,
-                    "taxInvoiceTime": tax_invoice_time,
+                    "taxInvoiceNumber": finish_tax_invoice_number,
+                    "taxInvoiceDate": finish_tax_invoice_date,
+                    "taxInvoiceTime": finish_tax_invoice_time,
                 },
             )
         except requests.RequestException as exc:
@@ -1911,6 +2097,11 @@ class TefService:
             "data_hora_transacao": data_hora_transacao,
             "nsu_host": nsu_host,
             "nsu_sitef": nsu_sitef,
+            "pending_resolution": pending_resolution,
+            "pending_finish_reference": pending_finish_reference,
+            "finish_tax_invoice_number": finish_tax_invoice_number,
+            "finish_tax_invoice_date": finish_tax_invoice_date,
+            "finish_tax_invoice_time": finish_tax_invoice_time,
             "confirmar": confirmar,
         }
         _set_pending_status(message, pending_detail)
@@ -1924,26 +2115,10 @@ class TefService:
             "data_hora_transacao": data_hora_transacao,
             "nsu_host": nsu_host,
             "nsu_sitef": nsu_sitef,
+            "pending_resolution": pending_resolution,
+            "pending_finish_reference": pending_finish_reference,
+            "finish_tax_invoice_number": finish_tax_invoice_number,
+            "finish_tax_invoice_date": finish_tax_invoice_date,
+            "finish_tax_invoice_time": finish_tax_invoice_time,
             "detail": finish,
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -227,6 +227,8 @@ class PagamentoService:
         trn_additional_parameters: str | None = None,
         trn_init_parameters: str | None = None,
         session_parameters: str | None = None,
+        defer_finish: bool = False,
+        session_id: str | None = None,
     ) -> Dict[str, Any]:
         try:
             return await self.tef_service.iniciar_fluxo_interativo(
@@ -239,6 +241,8 @@ class PagamentoService:
                 trn_additional_parameters=trn_additional_parameters,
                 trn_init_parameters=trn_init_parameters,
                 session_parameters=session_parameters,
+                defer_finish=defer_finish,
+                session_id=session_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -261,6 +265,8 @@ class PagamentoService:
         terminal_id: str | None = None,
         justificativa: str | None = None,
         original_transaction_reference: Dict[str, Any] | None = None,
+        defer_finish: bool = False,
+        session_id: str | None = None,
     ) -> Dict[str, Any]:
         try:
             return await self.tef_service.iniciar_fluxo_interativo(
@@ -279,6 +285,8 @@ class PagamentoService:
                 terminal_id=terminal_id,
                 justificativa=justificativa,
                 original_transaction_reference=original_transaction_reference,
+                defer_finish=defer_finish,
+                session_id=session_id,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao iniciar funcao TEF: {str(e)}")
