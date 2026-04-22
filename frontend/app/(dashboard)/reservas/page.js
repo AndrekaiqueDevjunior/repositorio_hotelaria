@@ -2359,6 +2359,7 @@ export default function Reservas() {
             setShowModalEscolhaPagamento(false)
             setSelectedReserva(null)
             await loadReservas()
+            toast.success('✅ Operação concluída com sucesso!')
           }}
         />
       )}

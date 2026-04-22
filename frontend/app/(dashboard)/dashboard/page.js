@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
 
@@ -8,22 +8,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [ultimasReservas, setUltimasReservas] = useState([])
-  const [reservasOperacionais, setReservasOperacionais] = useState([])
   const [pagamentos, setPagamentos] = useState({ total: 0, pendente: 0 })
   const [horaAtual, setHoraAtual] = useState('')
-  const [checkoutAlertas, setCheckoutAlertas] = useState([])
-  const [somAtivado, setSomAtivado] = useState(false)
-  const [notificationPermission, setNotificationPermission] = useState('default')
-  const alertSignatureRef = useRef('')
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setSomAtivado(window.localStorage.getItem('dashboard_checkout_sound') === 'enabled')
-      if ('Notification' in window) {
-        setNotificationPermission(window.Notification.permission)
-      }
-    }
-
     loadStats()
     loadUltimasReservas()
     loadPagamentos()
@@ -34,13 +22,7 @@ export default function Dashboard() {
     }
     updateTime()
     const interval = setInterval(updateTime, 60000)
-    const refreshInterval = setInterval(() => {
-      refreshAll()
-    }, 60000)
-    return () => {
-      clearInterval(interval)
-      clearInterval(refreshInterval)
-    }
+    return () => clearInterval(interval)
   }, [])
 
   const loadStats = async (retryCount = 0) => {
@@ -117,7 +99,6 @@ export default function Dashboard() {
     try {
       const res = await api.get('/reservas')
       if (res.data.reservas) {
-        setReservasOperacionais(res.data.reservas)
         setUltimasReservas(res.data.reservas.slice(0, 5))
       }
     } catch (err) {
@@ -148,42 +129,6 @@ export default function Dashboard() {
     loadPagamentos()
   }
 
-  const tocarAlertaCheckout = () => {
-    if (typeof window === 'undefined') return
-
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext
-    if (!AudioContextClass) return
-
-    const audioContext = new AudioContextClass()
-    const oscillator = audioContext.createOscillator()
-    const gainNode = audioContext.createGain()
-
-    oscillator.type = 'sine'
-    oscillator.frequency.setValueAtTime(880, audioContext.currentTime)
-    gainNode.gain.setValueAtTime(0.001, audioContext.currentTime)
-    gainNode.gain.exponentialRampToValueAtTime(0.18, audioContext.currentTime + 0.02)
-    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5)
-
-    oscillator.connect(gainNode)
-    gainNode.connect(audioContext.destination)
-    oscillator.start(audioContext.currentTime)
-    oscillator.stop(audioContext.currentTime + 0.5)
-  }
-
-  const solicitarPermissaoNotificacao = async () => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return
-    const permission = await window.Notification.requestPermission()
-    setNotificationPermission(permission)
-  }
-
-  const ativarSomAlertas = () => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('dashboard_checkout_sound', 'enabled')
-    }
-    setSomAtivado(true)
-    tocarAlertaCheckout()
-  }
-
   // Status badge
   const getStatusBadge = (status) => {
     const configs = {
@@ -207,52 +152,6 @@ export default function Dashboard() {
     if (hora < 18) return 'Boa tarde'
     return 'Boa noite'
   }
-
-  useEffect(() => {
-    const agora = new Date()
-    const inicioJanela = new Date(agora)
-    inicioJanela.setHours(11, 0, 0, 0)
-
-    const alertas = reservasOperacionais.filter((reserva) => {
-      if (!reserva?.checkout_previsto) return false
-
-      const status = (reserva.status || '').toUpperCase()
-      if (['CHECKED_OUT', 'CANCELADO', 'CANCELADA', 'FINALIZADO'].includes(status)) {
-        return false
-      }
-
-      const checkoutPrevisto = new Date(reserva.checkout_previsto)
-      return (
-        agora >= inicioJanela &&
-        checkoutPrevisto.toDateString() === agora.toDateString()
-      )
-    })
-
-    setCheckoutAlertas(alertas)
-
-    if (!alertas.length) {
-      alertSignatureRef.current = ''
-      return
-    }
-
-    const signature = alertas.map((reserva) => reserva.id).sort((a, b) => a - b).join('-')
-    if (alertSignatureRef.current === signature) {
-      return
-    }
-
-    alertSignatureRef.current = signature
-
-    if (somAtivado) {
-      tocarAlertaCheckout()
-    }
-
-    if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
-      const primeiraReserva = alertas[0]
-      new window.Notification('Checkout pendente às 11:00', {
-        body: `${alertas.length} reserva(s) ainda aguardam checkout. Primeira: ${primeiraReserva.cliente_nome} / quarto ${primeiraReserva.quarto_numero}.`
-      })
-    }
-  }, [reservasOperacionais, horaAtual, somAtivado])
 
   if (loading) {
     return (
@@ -303,22 +202,6 @@ export default function Dashboard() {
           </div>
           <div className="mt-4 md:mt-0 flex gap-2">
             <button
-              onClick={ativarSomAlertas}
-              className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
-                somAtivado ? 'bg-emerald-500/30 text-white' : 'bg-white/20 hover:bg-white/30'
-              }`}
-            >
-              {somAtivado ? '🔔 Som ativo' : '🔔 Ativar som'}
-            </button>
-            <button
-              onClick={solicitarPermissaoNotificacao}
-              className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
-                notificationPermission === 'granted' ? 'bg-indigo-500/30 text-white' : 'bg-white/20 hover:bg-white/30'
-              }`}
-            >
-              {notificationPermission === 'granted' ? '🖥 Aviso ativo' : '🖥 Ativar aviso'}
-            </button>
-            <button
               onClick={refreshAll}
               className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-all flex items-center gap-2"
             >
@@ -327,53 +210,6 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-
-      {checkoutAlertas.length > 0 && (
-        <div className="rounded-2xl border-2 border-red-200 bg-gradient-to-r from-red-50 to-orange-50 p-5 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-red-700">Operação crítica</p>
-              <h2 className="mt-1 text-xl font-bold text-red-900">Checkout pendente após 11:00</h2>
-              <p className="mt-2 text-sm text-red-800">
-                {checkoutAlertas.length} reserva(s) seguem abertas além do horário padrão de saída.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full bg-white px-3 py-1 font-semibold text-red-700 border border-red-200">
-                  Som {somAtivado ? 'ativado' : 'desativado'}
-                </span>
-                <span className="rounded-full bg-white px-3 py-1 font-semibold text-red-700 border border-red-200">
-                  Aviso do navegador {notificationPermission === 'granted' ? 'ativo' : 'pendente'}
-                </span>
-              </div>
-            </div>
-            <Link href="/reservas?status=HOSPEDADO" className="inline-flex items-center rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700">
-              Abrir reservas →
-            </Link>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {checkoutAlertas.map((reserva) => (
-              <div key={reserva.id} className="rounded-xl border border-red-200 bg-white p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-gray-900">{reserva.cliente_nome}</p>
-                    <p className="text-sm text-gray-600">
-                      Código {reserva.codigo_reserva || `#${reserva.id}`}
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-bold text-red-700">
-                    {reserva.status}
-                  </span>
-                </div>
-                <div className="mt-3 space-y-1 text-sm text-gray-700">
-                  <p>Quarto {reserva.quarto_numero} • {reserva.tipo_suite}</p>
-                  <p>Checkout previsto: {reserva.checkout_previsto ? new Date(reserva.checkout_previsto).toLocaleString('pt-BR') : '-'}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Alertas do dia */}
       {(stats.checkins_hoje > 0 || stats.checkouts_hoje > 0 || stats.reservas_pendentes > 0) && (

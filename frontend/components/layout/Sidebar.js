@@ -13,7 +13,7 @@ const menuItems = [
   { href: '/pagamentos', label: 'Pagamentos', icon: '💳', roles: ['ADMIN', 'GERENTE', 'RECEPCIONISTA', 'RECEPCAO'] },
   { href: '/comprovantes', label: 'Comprovantes', icon: '🧾', roles: ['ADMIN', 'GERENTE'] },
   { href: '/auditoria', label: 'Auditoria', icon: '🕵️', roles: ['ADMIN', 'GERENTE'] },
-  { href: '/pontos', label: 'Sistema de Pontos', icon: '💎', roles: ['ADMIN'] },
+  { href: '/pontos', label: 'Sistema de Pontos', icon: '💎', roles: ['ADMIN', 'GERENTE', 'RECEPCIONISTA', 'RECEPCAO', 'FUNCIONARIO'] },
   { href: '/tarifas', label: 'Tarifas', icon: '💰', roles: ['ADMIN', 'GERENTE'] },
   { href: '/antifraude', label: 'Antifraude', icon: '🛡️', roles: ['ADMIN', 'GERENTE'] },
   { href: '/notificacoes', label: 'Notificações', icon: '🔔', roles: ['ADMIN', 'GERENTE', 'RECEPCIONISTA', 'RECEPCAO', 'FUNCIONARIO'] },

@@ -9,6 +9,7 @@ module.exports = {
         'real-blue': '#001C36',
         'real-gold': '#D4AF37',
         'real-white': '#FCFDFF',
+        royalGold: '#D4AF37',
         
         // Design System Colors
         primary: {
@@ -62,6 +63,9 @@ module.exports = {
         sans: ['Cinzel', 'serif'],
         serif: ['Cinzel', 'serif'],
         display: ['Cinzel', 'serif'],
+        cinzel: ['Cinzel', 'serif'],
+        playfair: ['Playfair Display', 'serif'],
+        greatVibes: ['Great Vibes', 'cursive'],
       },
       fontSize: {
         xs: ['0.75rem', { lineHeight: '1rem' }],

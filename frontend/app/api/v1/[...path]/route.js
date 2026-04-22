@@ -3,61 +3,31 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:8000';
 
 console.log('[API Proxy] BACKEND_URL configurada:', BACKEND_URL);
 
-const REQUEST_HEADER_BLACKLIST = new Set([
-  'host',
-  'connection',
-  'content-length',
-]);
-
-const RESPONSE_HEADER_BLACKLIST = new Set([
-  'content-length',
-  'connection',
-  'transfer-encoding',
-]);
-
-function buildProxyRequestHeaders(request) {
-  const headers = new Headers();
-
-  request.headers.forEach((value, key) => {
-    const normalizedKey = key.toLowerCase();
-    if (REQUEST_HEADER_BLACKLIST.has(normalizedKey)) {
-      return;
-    }
-    headers.set(key, value);
-  });
-
-  return headers;
-}
-
-function buildProxyResponseHeaders(response) {
-  const headers = new Headers();
-
-  response.headers.forEach((value, key) => {
-    const normalizedKey = key.toLowerCase();
-    if (RESPONSE_HEADER_BLACKLIST.has(normalizedKey)) {
-      return;
-    }
-    headers.append(key, value);
-  });
-
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  return headers;
-}
+// Headers CORS para todas as respostas
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, ngrok-skip-browser-warning',
+  'Access-Control-Max-Age': '86400',
+};
 
 async function proxyRequest(request, path) {
   const url = `${BACKEND_URL}/api/v1/${path}`;
   
   console.log(`[API Proxy] ${request.method} ${url}`);
   
-  const headers = buildProxyRequestHeaders(request);
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  
+  // Copiar headers de autorizacao
+  const authHeader = request.headers.get('Authorization');
+  if (authHeader) {
+    headers.set('Authorization', authHeader);
+  }
 
   const options = {
     method: request.method,
     headers: headers,
-    redirect: 'manual',
   };
 
   // Adicionar body para POST, PUT, PATCH
@@ -76,13 +46,15 @@ async function proxyRequest(request, path) {
     console.log(`[API Proxy] Tentando conectar: ${url}`);
     const response = await fetch(url, options);
     const data = await response.text();
-    const responseHeaders = buildProxyResponseHeaders(response);
     
     console.log(`[API Proxy] Sucesso ${response.status} de ${url}`);
     
     return new Response(data, {
       status: response.status,
-      headers: responseHeaders,
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeaders,
+      },
     });
   } catch (error) {
     console.error('[API Proxy] ERRO detalhado:', {
@@ -100,8 +72,9 @@ async function proxyRequest(request, path) {
       backend_configured: BACKEND_URL
     }), {
       status: 502,
-      headers: {
+      headers: { 
         'Content-Type': 'application/json',
+        ...corsHeaders,
       },
     });
   }
@@ -135,6 +108,7 @@ export async function DELETE(request, { params }) {
 export async function OPTIONS(request) {
   return new Response(null, {
     status: 204,
+    headers: corsHeaders,
   });
 }
 

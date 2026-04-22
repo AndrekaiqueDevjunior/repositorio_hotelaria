@@ -1,936 +1,777 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { api } from '../../lib/api'
-import Link from 'next/link'
-import Script from 'next/script'
-import WhatsAppButton from '../../components/WhatsAppButton'
 
-const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || ''
+import { useRef } from 'react'
 
-async function getRecaptchaToken(action) {
-  if (!RECAPTCHA_SITE_KEY) return null
-  if (typeof window === 'undefined') return null
+const rewards = [
+  { name: 'Tecnologia Real', points: 90, icon: '📱', image: '/images/premios/tecnologia-real.png' },
+  { name: 'Rituais do Real', points: 35, icon: '☕', image: '/images/premios/rituais-do-real.png' },
+  { name: 'O Retorno do Sonho', points: 25, icon: '🛁', image: '/images/premios/o-retorno-do-sonho.png' },
+]
 
-  const grecaptcha = window.grecaptcha
-  if (!grecaptcha?.ready || !grecaptcha?.execute) return null
+export default function JornadaReal() {
+  const rewardsRef = useRef(null)
+  const currentPoints = 36
+  const nextReward = 50
+  const progressPercent = Math.min((currentPoints / nextReward) * 100, 100)
+  const missing = Math.max(nextReward - currentPoints, 0)
 
-  await new Promise((resolve) => {
-    try {
-      grecaptcha.ready(resolve)
-    } catch {
-      resolve()
-    }
-  })
-
-  try {
-    return await grecaptcha.execute(RECAPTCHA_SITE_KEY, { action })
-  } catch {
-    return null
-  }
-}
-
-// Componente para mostrar catálogo completo de prêmios
-function PremiosCatalogo({ saldoAtual, clienteNome, clienteEndereco }) {
-  const [premios, setPremios] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const loadPremios = async () => {
-      try {
-        const res = await api.get('/premios')
-        setPremios(Array.isArray(res.data) ? res.data : [])
-      } catch (error) {
-        console.error('Erro ao carregar prêmios:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    loadPremios()
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="text-center py-8">
-        <div className="w-12 h-12 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto" />
-        <p className="text-gray-500 dark:text-gray-400 mt-4">Carregando prêmios...</p>
-      </div>
-    )
+  const handleBenefits = () => {
+    rewardsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  if (premios.length === 0) {
-    return (
-      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-        <div className="text-6xl mb-4">📦</div>
-        <p>Nenhum prêmio disponível no momento</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {premios.map((premio) => {
-        const pontosFaltantes = premio.preco_em_pontos - saldoAtual
-        const podeResgatar = saldoAtual >= premio.preco_em_pontos
-        
-        return (
-          <div
-            key={premio.id}
-            className={`rounded-xl overflow-hidden border-2 transition-shadow hover:shadow-lg ${
-              podeResgatar
-                ? 'bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-green-200 dark:border-green-800'
-                : 'bg-gradient-to-br from-gray-50 to-slate-50 dark:from-gray-800/20 dark:to-slate-800/20 border-gray-200 dark:border-gray-700'
-            }`}
-          >
-            {/* Imagem do Prêmio */}
-            <div className="relative h-32 sm:h-48 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/30 dark:to-pink-900/30">
-              {premio.imagem_url ? (
-                <img
-                  src={premio.imagem_url}
-                  alt={premio.nome}
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    e.target.style.display = 'none'
-                    e.target.nextElementSibling.style.display = 'flex'
-                  }}
-                />
-              ) : null}
-              <div 
-                className={`${premio.imagem_url ? 'hidden' : 'flex'} absolute inset-0 items-center justify-center text-6xl`}
-                style={{ display: premio.imagem_url ? 'none' : 'flex' }}
-              >
-                {podeResgatar ? '🏆' : '🎁'}
-              </div>
-              {podeResgatar && (
-                <div className="absolute top-2 right-2 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                  ✓ Disponível
-                </div>
-              )}
-            </div>
-
-            {/* Conteúdo */}
-            <div className="p-6">
-              <h4 className="font-bold text-gray-900 dark:text-white text-lg mb-2 text-center">
-                {premio.nome}
-              </h4>
-              {premio.descricao && (
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 text-center line-clamp-2">
-                  {premio.descricao}
-                </p>
-              )}
-              <div className="bg-white/50 dark:bg-gray-800/50 rounded-lg p-3 text-center mt-4">
-                <p className={`text-2xl font-bold ${
-                  podeResgatar 
-                    ? 'text-green-600 dark:text-green-400' 
-                    : 'text-gray-700 dark:text-gray-300'
-                }`}>
-                  {premio.preco_em_pontos} pontos
-                </p>
-                {podeResgatar ? (
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-semibold">
-                    ✓ Você pode resgatar!
-                  </p>
-                ) : (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    Faltam {pontosFaltantes} pontos
-                  </p>
-                )}
-              </div>
-
-              {/* Botão WhatsApp */}
-              {podeResgatar && (
-                <div className="mt-4">
-                  <WhatsAppButton
-                    clienteNome={clienteNome || 'Cliente'}
-                    clienteCPF={formatarCPF(resultado?.cliente?.documento || '')}
-                    premioNome={premio.nome}
-                    pontosUsados={premio.preco_em_pontos}
-                    codigoResgate={`RES-${premio.id}-${Date.now().toString().slice(-6)}`}
-                    className="w-full text-sm py-2"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export default function ConsultarPontos() {
-  const [cpf, setCpf] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [resultado, setResultado] = useState(null)
-  const [error, setError] = useState('')
-  
-  // Estados para resgate de prêmios
-  const [showResgateModal, setShowResgateModal] = useState(false)
-  const [premioSelecionado, setPremioSelecionado] = useState(null)
-  const [observacoes, setObservacoes] = useState('')
-  const [resgatando, setResgatando] = useState(false)
-  const [resgateSuccess, setResgateSuccess] = useState(null)
-
-  const formatarCPF = (valor) => {
-    const numeros = valor.replace(/\D/g, '')
-    if (numeros.length <= 11) {
-      return numeros
-        .replace(/(\d{3})(\d)/, '$1.$2')
-        .replace(/(\d{3})(\d)/, '$1.$2')
-        .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
-    }
-    return numeros
-      .replace(/(\d{2})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1/$2')
-      .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
-  }
-
-  const handleCpfChange = (e) => {
-    const formatted = formatarCPF(e.target.value)
-    setCpf(formatted)
-  }
-
-  const handleConsultar = async (e) => {
-    e.preventDefault()
-    setError('')
-    setResultado(null)
-    setResgateSuccess(null)
-    
-    const cpfLimpo = cpf.replace(/\D/g, '')
-    
-    if (!cpfLimpo || (cpfLimpo.length !== 11 && cpfLimpo.length !== 14)) {
-      setError('CPF/CNPJ inválido. Digite 11 dígitos (CPF) ou 14 dígitos (CNPJ).')
+  const handleReward = (reward) => {
+    const diff = reward.points - currentPoints
+    if (diff <= 0) {
+      alert(`Você já pode resgatar: ${reward.name}.`)
       return
     }
-
-    try {
-      setLoading(true)
-      const recaptchaToken = await getRecaptchaToken('consultar_pontos')
-      const res = await api.get(
-        `/pontos/consultar/${cpfLimpo}`,
-        recaptchaToken
-          ? { headers: { 'X-Recaptcha-Token': recaptchaToken, 'X-Recaptcha-Action': 'consultar_pontos' } }
-          : undefined
-      )
-      setResultado(res.data)
-    } catch (error) {
-      console.error('Erro ao consultar pontos:', error)
-      setError(
-        error.response?.data?.detail || 
-        'Erro ao consultar pontos. Verifique o CPF/CNPJ e tente novamente.'
-      )
-    } finally {
-      setLoading(false)
-    }
+    alert(`Faltam ${diff} pontos para resgatar "${reward.name}".`)
   }
 
-  const abrirModalResgate = (premio) => {
-    setPremioSelecionado(premio)
-    setObservacoes('')
-    setShowResgateModal(true)
-  }
-
-  const fecharModalResgate = () => {
-    setShowResgateModal(false)
-    setPremioSelecionado(null)
-    setObservacoes('')
-  }
-
-  const confirmarResgate = async () => {
-    if (!premioSelecionado || !resultado?.cliente?.documento) return
-
-    try {
-      setResgatando(true)
-      const recaptchaToken = await getRecaptchaToken('resgatar_premio_publico')
-      const res = await api.post(
-        '/premios/resgatar-publico',
-        {
-          premio_id: premioSelecionado.id,
-          cliente_documento: resultado.cliente.documento,
-          observacoes: observacoes || null
-        },
-        recaptchaToken
-          ? { headers: { 'X-Recaptcha-Token': recaptchaToken, 'X-Recaptcha-Action': 'resgatar_premio_publico' } }
-          : undefined
-      )
-
-      setResgateSuccess(res.data)
-      setShowResgateModal(false)
-      
-      // Recarregar dados
-      const cpfLimpo = resultado.cliente.documento
-      const recaptchaTokenConsulta = await getRecaptchaToken('consultar_premios')
-      const resAtualizado = await api.get(
-        `/premios/consulta/${cpfLimpo}`,
-        recaptchaTokenConsulta
-          ? { headers: { 'X-Recaptcha-Token': recaptchaTokenConsulta, 'X-Recaptcha-Action': 'consultar_premios' } }
-          : undefined
-      )
-      setResultado(resAtualizado.data)
-    } catch (error) {
-      console.error('Erro ao resgatar prêmio:', error)
-      alert(error.response?.data?.detail || 'Erro ao resgatar prêmio. Tente novamente.')
-    } finally {
-      setResgatando(false)
-    }
-  }
-
-  const getTipoTransacaoColor = (tipo) => {
-    switch (tipo) {
-      case 'CREDITO':
-      case 'GANHO':
-        return 'text-green-600 font-bold'
-      case 'DEBITO':
-      case 'RESGATE':
-        return 'text-red-600 font-bold'
-      case 'AJUSTE':
-      case 'AJUSTE_MANUAL':
-        return 'text-blue-600 font-bold'
-      case 'ESTORNO':
-        return 'text-orange-600 font-bold'
-      default:
-        return 'text-gray-600'
-    }
+  const handleAllRewards = () => {
+    const list = rewards.map((reward) => `${reward.name} — ${reward.points} pts`).join('\n')
+    alert(`Prêmios disponíveis:\n\n${list}`)
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 dark:from-gray-900 dark:via-purple-900 dark:to-gray-900">
-      {RECAPTCHA_SITE_KEY ? (
-        <Script
-          src={`https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`}
-          strategy="afterInteractive"
-        />
-      ) : null}
-      {/* Header */}
-      <div className="bg-white dark:bg-gray-800 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-600 rounded-xl flex items-center justify-center shadow-lg">
-                <span className="text-white text-lg font-bold">🏨</span>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-                  Hotel Real Cabo Frio
-                </h1>
-                <p className="text-sm text-purple-600 dark:text-purple-400">
-                  Programa de Fidelidade
-                </p>
-              </div>
-            </div>
-            <Link
-              href="/login"
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
-            >
-              Área Restrita
-            </Link>
+    <div className="jornada-page">
+      <main className="phone">
+        <header className="topbar">
+          <button className="circle-btn" aria-label="Abrir menu" type="button">☰</button>
+          <div className="logo-wrap">
+            <img src="/images/logo-jornada-real.png" alt="Hotel Real Cabo Frio - Jornada Real" />
           </div>
-        </div>
-      </div>
+          <button className="circle-btn" aria-label="Notificações" type="button">
+            🔔<span className="notif-dot" />
+          </button>
+        </header>
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Hero Section */}
-        <div className="text-center mb-12">
-          <div className="text-6xl mb-4">💎</div>
-          <h2 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            Consulte Seus Pontos
-          </h2>
-          <p className="text-lg text-gray-600 dark:text-gray-300">
-            Digite seu CPF ou CNPJ para verificar seu saldo de pontos e histórico de transações
-          </p>
-        </div>
-
-        {/* Formulário de Consulta */}
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-8 mb-8">
-          <form onSubmit={handleConsultar} className="space-y-6">
+        <section className="card welcome">
+          <div className="welcome-main">
+            <div className="avatar-glow" aria-hidden="true" />
             <div>
-              <label htmlFor="cpf" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                CPF ou CNPJ
-              </label>
-              <input
-                type="text"
-                id="cpf"
-                value={cpf}
-                onChange={handleCpfChange}
-                placeholder="000.000.000-00"
-                maxLength={18}
-                className="w-full px-4 py-3 sm:py-4 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:border-purple-500 focus:ring-purple-500 focus:ring-2 focus:ring-opacity-50 dark:bg-gray-700 dark:text-white text-base sm:text-lg"
-                disabled={loading}
-              />
+              <h1>Bem-vindo, João! 👑</h1>
+              <p>Cada estadia te leva mais longe.</p>
+              <p>Mais pontos, mais benefícios,</p>
+              <p>mais experiências inesquecíveis.</p>
             </div>
+          </div>
 
-            {error && (
-              <div className="bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-lg p-4">
-                <div className="flex items-center">
-                  <span className="text-2xl mr-3">⚠️</span>
-                  <p className="text-red-800 dark:text-red-200">{error}</p>
-                </div>
-              </div>
-            )}
+          <aside className="points-box">
+            <div className="points-label">⭐ Seus pontos</div>
+            <div className="points-value">{currentPoints}</div>
+            <div className="points-label points-spacer">Troque por benefícios incríveis!</div>
+            <button className="mini-btn" onClick={handleBenefits} type="button">🎁 Ver benefícios</button>
+          </aside>
+        </section>
 
-            <button
-              type="submit"
-              disabled={loading || !cpf}
-              className="w-full py-3 sm:py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-semibold text-base sm:text-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
-            >
-              {loading ? (
-                <span className="flex items-center justify-center">
-                  <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin mr-3" />
-                  Consultando...
-                </span>
-              ) : (
-                '🔍 Consultar Pontos'
-              )}
-            </button>
-          </form>
-        </div>
+        <section className="card">
+          <h2 className="progress-title">Seu progresso: RUMO AO NÍVEL EXCLUSIVO 🚀</h2>
+          <div className="levels">
+            <div className="level">
+              <div className="level-icon">🍃</div>
+              <h3>ESSÊNCIA</h3>
+              <span className="range">0 – 499 pts</span>
+              <div className="desc">Descubra o começo</div>
+              <div className="status-dot active" />
+            </div>
+            <div className="level">
+              <div className="level-icon">💎</div>
+              <h3>EXPERIÊNCIA</h3>
+              <span className="range">500 – 1499 pts</span>
+              <div className="desc">Viva mais experiências</div>
+              <div className="status-dot current" />
+            </div>
+            <div className="level">
+              <div className="level-icon">👑</div>
+              <h3>EXCLUSIVO</h3>
+              <span className="range">1500+ pts</span>
+              <div className="desc">O topo te espera</div>
+              <div className="status-dot" />
+            </div>
+          </div>
+        </section>
 
-        {/* Resultado da Consulta */}
-        {resultado && (
-          <div className="space-y-6 animate-fade-in">
-            {/* Card de Saldo */}
-            <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl shadow-xl p-8">
-              <div className="text-center">
-                <div className="text-5xl mb-4">👤</div>
-                <h3 className="text-2xl font-bold mb-2">{resultado.cliente.nome}</h3>
-                <p className="text-purple-100 mb-2">CPF/CNPJ: {formatarCPF(resultado.cliente.documento)}</p>
-                
-                {/* Badge de Verificação */}
-                <div className="inline-flex items-center gap-1 bg-green-500 text-white px-3 py-1 rounded-full text-sm font-semibold mb-6">
-                  <span>✓</span>
-                  <span>Cliente Verificado</span>
-                </div>
-                
-                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-6">
-                  <p className="text-sm uppercase tracking-wide mb-2 opacity-90">Saldo Disponível</p>
-                  <p className="text-6xl font-bold">{resultado.saldo_pontos || resultado.saldo || 0}</p>
-                  <p className="text-xl mt-2">pontos</p>
-                </div>
-                
-                {/* Aviso Anti-Fraude */}
-                <div className="mt-4 bg-yellow-500/20 border border-yellow-300/30 rounded-lg p-3">
-                  <p className="text-xs text-yellow-100">
-                    🔒 Seus resgates são protegidos e validados pela recepção
-                  </p>
-                </div>
+        <section className="card">
+          <h2 className="progress-title">
+            {missing > 0 ? `Faltam ${missing} pontos para o próximo prêmio!` : 'Você já alcançou o próximo prêmio!'}
+          </h2>
+          <div className="progress-row">
+            <div className="bar-column">
+              <div className="bar-wrap" aria-label="Progresso até o próximo prêmio">
+                <div className="bar-fill" style={{ width: `${progressPercent}%` }} />
+                <div className="bar-text">{currentPoints} / {nextReward}</div>
               </div>
             </div>
-
-            {/* Prêmios - Seção Unificada */}
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center">
-                <span className="text-3xl mr-3">🎁</span>
-                Catálogo de Prêmios
-              </h3>
-              
-              {/* Prêmios Disponíveis */}
-              {resultado.premios_disponiveis && resultado.premios_disponiveis.length > 0 && (
-                <div className="mb-8">
-                  <h4 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-4 flex items-center">
-                    <span className="mr-2">✅</span>
-                    Você pode resgatar agora
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {resultado.premios_disponiveis.map((premio) => (
-                      <div
-                        key={premio.id}
-                        className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-2 border-green-200 dark:border-green-800 rounded-xl overflow-hidden hover:shadow-lg transition-shadow"
-                      >
-                        <div className="relative h-32 sm:h-48 bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/30 dark:to-emerald-900/30">
-                          {premio.imagem_url ? (
-                            <img
-                              src={premio.imagem_url}
-                              alt={premio.nome}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.target.style.display = 'none'
-                                e.target.nextElementSibling.style.display = 'flex'
-                              }}
-                            />
-                          ) : null}
-                          <div 
-                            className={`${premio.imagem_url ? 'hidden' : 'flex'} absolute inset-0 items-center justify-center text-6xl`}
-                          >
-                            🏆
-                          </div>
-                          <div className="absolute top-2 right-2 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                            ✓ Disponível
-                          </div>
-                        </div>
-                        <div className="p-6">
-                          <h4 className="font-bold text-gray-900 dark:text-white text-lg mb-2 text-center">
-                            {premio.nome}
-                          </h4>
-                          {premio.descricao && (
-                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 text-center line-clamp-2">
-                              {premio.descricao}
-                            </p>
-                          )}
-                          <div className="bg-white/50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-                              {premio.preco_em_pontos} pontos
-                            </p>
-                            <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-semibold">
-                              ✓ Disponível para resgate
-                            </p>
-                          </div>
-                          <div className="mt-4 space-y-2">
-                            {/* Validação de Saldo Visível */}
-                            <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-2 text-center">
-                              <p className="text-xs text-green-700 dark:text-green-300">
-                                ✓ Saldo suficiente: {resultado?.saldo_pontos || 0} pts
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => abrirModalResgate(premio)}
-                              className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl"
-                            >
-                              🎁 Resgatar Agora
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Prêmios Próximos */}
-              {resultado.premios_proximos && resultado.premios_proximos.length > 0 && (
-                <div className="mb-8">
-                  <h4 className="text-lg font-semibold text-orange-600 dark:text-orange-400 mb-4 flex items-center">
-                    <span className="mr-2">🎯</span>
-                    Quase lá! Continue acumulando
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {resultado.premios_proximos.map((premio) => (
-                      <div
-                        key={premio.id}
-                        className="bg-gradient-to-br from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 border-2 border-yellow-200 dark:border-yellow-800 rounded-xl overflow-hidden"
-                      >
-                        <div className="relative h-32 sm:h-48 bg-gradient-to-br from-yellow-100 to-orange-100 dark:from-yellow-900/30 dark:to-orange-900/30">
-                          {premio.imagem_url ? (
-                            <img
-                              src={premio.imagem_url}
-                              alt={premio.nome}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.target.style.display = 'none'
-                                e.target.nextElementSibling.style.display = 'flex'
-                              }}
-                            />
-                          ) : null}
-                          <div 
-                            className={`${premio.imagem_url ? 'hidden' : 'flex'} absolute inset-0 items-center justify-center text-6xl`}
-                          >
-                            ⭐
-                          </div>
-                          <div className="absolute top-2 right-2 bg-orange-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                            Quase lá!
-                          </div>
-                        </div>
-                        <div className="p-6">
-                          <h4 className="font-bold text-gray-900 dark:text-white text-lg mb-2 text-center">
-                            {premio.nome}
-                          </h4>
-                          {premio.descricao && (
-                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 text-center line-clamp-2">
-                              {premio.descricao}
-                            </p>
-                          )}
-                          <div className="bg-white/50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-                              {premio.preco_em_pontos} pontos
-                            </p>
-                            <p className="text-sm text-orange-600 dark:text-orange-400 mt-1 font-semibold">
-                              Faltam {premio.pontos_faltantes} pontos
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Todos os Prêmios (quando não há disponíveis nem próximos) */}
-              {(!resultado.premios_disponiveis || resultado.premios_disponiveis.length === 0) &&
-               (!resultado.premios_proximos || resultado.premios_proximos.length === 0) && (
-                <div>
-                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
-                    <p className="text-blue-800 dark:text-blue-200 text-center">
-                      💡 <strong>Acumule pontos</strong> no hotel para resgatar prêmios incríveis!
-                    </p>
-                  </div>
-                  
-                  <h4 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4 flex items-center">
-                    <span className="mr-2">🎁</span>
-                    Prêmios disponíveis no programa
-                  </h4>
-                  
-                  {/* Buscar todos os prêmios via API */}
-                  <PremiosCatalogo 
-                    saldoAtual={resultado.saldo_pontos || 0}
-                    clienteNome={resultado.cliente?.nome || 'Cliente'}
-                    clienteEndereco={resultado.cliente?.endereco || 'Cabo Frio/RJ'}
-                  />
-                </div>
-              )}
+            <div className="tub-img" aria-label="O Retorno do Sonho">
+              <img src="/images/premios/o-retorno-do-sonho.png" alt="" />
             </div>
+          </div>
+          <div className="slogan">Reserve, Acumule, Conquiste.</div>
+        </section>
 
-            {/* Prêmios Próximos */}
-            {resultado.premios_proximos && resultado.premios_proximos.length > 0 && (
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-                <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center">
-                  <span className="text-3xl mr-3">🎯</span>
-                  Prêmios Próximos
-                </h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {resultado.premios_proximos.map((premio) => (
-                    <div
-                      key={premio.id}
-                      className="bg-gradient-to-br from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 border-2 border-yellow-200 dark:border-yellow-800 rounded-xl p-6"
-                    >
-                      <div className="text-4xl mb-3 text-center">⭐</div>
-                      <h4 className="font-bold text-gray-900 dark:text-white text-lg mb-2 text-center">
-                        {premio.nome}
-                      </h4>
-                      {premio.descricao && (
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 text-center">
-                          {premio.descricao}
-                        </p>
-                      )}
-                      <div className="bg-white/50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
-                        <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-                          {premio.preco_em_pontos} pontos
-                        </p>
-                        <p className="text-sm text-orange-600 dark:text-orange-400 mt-1 font-semibold">
-                          Faltam {premio.pontos_faltantes} pontos
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Histórico de Transações */}
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center">
-                <span className="text-3xl mr-3">📊</span>
-                Histórico Recente
-              </h3>
-              
-              {resultado.historico && resultado.historico.length > 0 ? (
-                <div className="space-y-4">
-                  {resultado.historico.map((transacao, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:shadow-md transition-shadow"
-                    >
-                      <div className="flex-1">
-                        <div className="font-medium text-gray-900 dark:text-white">
-                          {transacao.reserva_codigo || `Transação #${transacao.id}`}
-                        </div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400">
-                          {new Date(transacao.created_at).toLocaleDateString('pt-BR', {
-                            day: '2-digit',
-                            month: 'long',
-                            year: 'numeric'
-                          })}
-                        </div>
-                        <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                          {transacao.origem} • {transacao.tipo}
-                        </div>
-                      </div>
-                      <div className="text-right ml-4">
-                        <span className={`text-xl ${getTipoTransacaoColor(transacao.tipo)}`}>
-                          {transacao.pontos > 0 ? '+' : ''}{transacao.pontos} pts
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                  <div className="text-6xl mb-4">📭</div>
-                  <p>Nenhuma transação encontrada</p>
-                </div>
-              )}
-            </div>
-
-            {/* Botão Nova Consulta */}
-            <div className="text-center">
-              <button
-                onClick={() => {
-                  setResultado(null)
-                  setCpf('')
-                  setError('')
+        <section className="card" ref={rewardsRef}>
+          <h2 className="section-title">🎁 Prêmios em destaque</h2>
+          <div className="rewards">
+            {rewards.map((reward) => (
+              <article
+                className="reward-item"
+                key={reward.name}
+                onClick={() => handleReward(reward)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    handleReward(reward)
+                  }
                 }}
-                className="px-8 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors font-medium"
               >
-                🔄 Nova Consulta
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Informações do Programa */}
-        {!resultado && (
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-8 mt-8">
-            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 text-center">
-              💎 Como funciona a jornada Real 👑
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-              <div className="text-center p-6 bg-purple-50 dark:bg-purple-900/20 rounded-xl">
-                <div className="text-4xl mb-3">🏨</div>
-                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Reserve</h4>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Reserve sua hospedagem diretamente com o hotel e comece a participar do nosso Programa de Pontos.
-                </p>
-              </div>
-              <div className="text-center p-6 bg-pink-50 dark:bg-pink-900/20 rounded-xl">
-                <div className="text-4xl mb-3">💰</div>
-                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Acumule</h4>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Quanto melhor a suíte, mais rápido você avança.
-                </p>
-              </div>
-              <div className="text-center p-6 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
-                <div className="text-4xl mb-3">🎁</div>
-                <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Conquiste</h4>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Troque seus pontos por prêmios, diárias grátis e chegue ao prêmio máximo: um iPhone exclusivo.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Modal de Confirmação de Resgate */}
-      {showResgateModal && premioSelecionado && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-4 sm:p-6 text-white flex-shrink-0">
-              <h3 className="text-xl sm:text-2xl font-bold text-center">Confirmar Resgate</h3>
-            </div>
-
-            {/* Conteúdo */}
-            <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
-              {/* Imagem do Prêmio */}
-              <div className="mb-4">
-                {premioSelecionado.imagem_url ? (
-                  <img
-                    src={premioSelecionado.imagem_url}
-                    alt={premioSelecionado.nome}
-                    className="w-full h-32 sm:h-48 object-cover rounded-lg"
-                    onError={(e) => {
-                      e.target.style.display = 'none'
-                      e.target.nextElementSibling.style.display = 'flex'
-                    }}
-                  />
-                ) : null}
-                <div 
-                  className={`${premioSelecionado.imagem_url ? 'hidden' : 'flex'} w-full h-32 sm:h-48 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/30 dark:to-pink-900/30 rounded-lg items-center justify-center text-4xl sm:text-6xl`}
-                >
-                  🏆
-                </div>
-              </div>
-
-              {/* Info do Prêmio */}
-              <div className="text-center mb-6">
-                <h4 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                  {premioSelecionado.nome}
-                </h4>
-                {premioSelecionado.descricao && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    {premioSelecionado.descricao}
-                  </p>
-                )}
-              </div>
-
-              {/* Validação Anti-Fraude */}
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4 mb-4">
-                <div className="flex items-start gap-2">
-                  <span className="text-2xl">🔒</span>
-                  <div>
-                    <p className="font-semibold text-yellow-800 dark:text-yellow-200 mb-1">Validação de Segurança</p>
-                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                      Este resgate será registrado com código único e validado pela recepção.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Resumo de Pontos */}
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 mb-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">Saldo atual:</span>
-                  <span className="font-semibold text-gray-900 dark:text-white">
-                    {resultado?.saldo_pontos || 0} pontos
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">Custo do prêmio:</span>
-                  <span className="font-semibold text-red-600 dark:text-red-400">
-                    -{premioSelecionado.preco_em_pontos} pontos
-                  </span>
-                </div>
-                <div className="border-t border-gray-300 dark:border-gray-600 pt-2 flex justify-between">
-                  <span className="font-semibold text-gray-900 dark:text-white">Novo saldo:</span>
-                  <span className="font-bold text-green-600 dark:text-green-400">
-                    {(resultado?.saldo_pontos || 0) - premioSelecionado.preco_em_pontos} pontos
-                  </span>
-                </div>
-              </div>
-
-              {/* Campo de Observações */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Observações (opcional)
-                </label>
-                <textarea
-                  value={observacoes}
-                  onChange={(e) => setObservacoes(e.target.value)}
-                  placeholder="Ex: Prefiro retirar pela manhã..."
-                  className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white"
-                  rows="3"
-                />
-              </div>
-
-              {/* Botões */}
-              <div className="flex gap-2 sm:gap-3 mt-auto pt-4">
-                <button
-                  onClick={fecharModalResgate}
-                  disabled={resgatando}
-                  className="flex-1 py-2 sm:py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 text-sm sm:text-base"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={confirmarResgate}
-                  disabled={resgatando}
-                  className="flex-1 py-2 sm:py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-700 hover:to-emerald-700 transition-all shadow-lg disabled:opacity-50 text-sm sm:text-base"
-                >
-                  {resgatando ? (
-                    <span className="flex items-center justify-center">
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                      Resgatando...
-                    </span>
+                <div className="reward-thumb" aria-hidden="true">
+                  {reward.image ? (
+                    <img src={reward.image} alt="" />
                   ) : (
-                    '✓ Confirmar Resgate'
+                    reward.icon
                   )}
-                </button>
-              </div>
+                </div>
+                <div>
+                  <h3 className="reward-name">{reward.name}</h3>
+                  <p className="reward-sub">{reward.points} pts</p>
+                </div>
+                <div className="points-chip">{reward.points}<br />pts</div>
+              </article>
+            ))}
+          </div>
+          <button className="mini-btn all-btn" onClick={handleAllRewards} type="button">🎁 Ver todos os prêmios</button>
+        </section>
+
+        <section className="card stats">
+          <div className="stat">
+            <div className="stat-emoji">🔥</div>
+            <div>
+              <small>Sequência atual</small>
+              <strong>🚀 3 estadias seguidas</strong>
+              <span>Continue assim para chegar no próximo nível!</span>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Modal de Sucesso */}
-      {resgateSuccess && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Header de Sucesso */}
-            <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-4 sm:p-6 text-white text-center flex-shrink-0">
-              <div className="text-4xl sm:text-6xl mb-3">🎉</div>
-              <h3 className="text-xl sm:text-2xl font-bold">Resgate Realizado!</h3>
-            </div>
-
-            {/* Conteúdo */}
-            <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
-              <div className="text-center mb-6">
-                <p className="text-gray-600 dark:text-gray-400 mb-4">
-                  Seu prêmio foi resgatado com sucesso!
-                </p>
-                
-                {/* Código de Retirada Seguro */}
-                <div className="bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-800 rounded-xl p-6 mb-4">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <span className="text-2xl">🔐</span>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Código de Retirada Seguro</p>
-                  </div>
-                  <p className="text-3xl font-bold text-purple-600 dark:text-purple-400 tracking-wider text-center">
-                    RES-{String(resgateSuccess.data?.resgate_id || '000000').padStart(6, '0')}
-                  </p>
-                  <p className="text-xs text-center text-gray-500 dark:text-gray-400 mt-2">
-                    ⚠️ Apresente este código + documento com foto
-                  </p>
-                </div>
-
-                {/* Informações */}
-                <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 mb-4 text-left space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">Prêmio:</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">
-                      {resgateSuccess.data?.premio?.nome}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">Pontos utilizados:</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">
-                      {resgateSuccess.data?.pontos_usados} pontos
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">Novo saldo:</span>
-                    <span className="font-semibold text-green-600 dark:text-green-400">
-                      {resgateSuccess.data?.novo_saldo} pontos
-                    </span>
-                  </div>
-                </div>
-
-                {/* Instruções */}
-                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    <strong>📍 Como retirar:</strong><br />
-                    Apresente este código na recepção do Hotel Real Cabo Frio para retirar seu prêmio.
-                  </p>
-                </div>
-              </div>
-
-              {/* Botões */}
-              <div className="space-y-3">
-                {/* Botão WhatsApp */}
-                <WhatsAppButton
-                  clienteNome={resultado?.cliente?.nome || 'Cliente'}
-                  clienteCPF={formatarCPF(resultado?.cliente?.documento || '')}
-                  premioNome={resgateSuccess.data?.premio?.nome || 'Prêmio'}
-                  pontosUsados={resgateSuccess.data?.pontos_usados || 0}
-                  codigoResgate={`RES-${String(resgateSuccess.data?.resgate_id || '000000').padStart(6, '0')}`}
-                  className="w-full"
-                />
-                
-                <button
-                  onClick={() => window.print()}
-                  className="w-full py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors"
-                >
-                  🖨️ Imprimir Comprovante
-                </button>
-                <button
-                  onClick={() => setResgateSuccess(null)}
-                  className="w-full py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                >
-                  Fechar
-                </button>
-              </div>
+          <div className="stat">
+            <div className="stat-emoji">✨</div>
+            <div>
+              <small>Bônus de Nível Experiência</small>
+              <strong>+10% pontos</strong>
+              <span>Mais vantagens para cada nova reserva.</span>
             </div>
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* Footer */}
-      <div className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <p className="text-center text-gray-600 dark:text-gray-400 text-sm">
-            © 2026 Hotel Real Cabo Frio - Todos os direitos reservados
-          </p>
-        </div>
-      </div>
+        <section className="card bottom-cta">
+          <div className="cta-box">
+            <h2 className="cta-title">Continue sua jornada e alcance o topo!</h2>
+            <button
+              className="primary-btn"
+              onClick={() => alert('Ação de reserva iniciada. Integre este botão com sua rota de checkout ou página de reservas.')}
+              type="button"
+            >
+              FAZER NOVA RESERVA
+            </button>
+          </div>
+          <button
+            className="bottom-icon"
+            onClick={() => alert('Central de notificações.')}
+            aria-label="Abrir notificações"
+            type="button"
+          >
+            🔔
+          </button>
+        </section>
+
+        <div className="home-indicator" />
+      </main>
+
+      <style jsx>{`
+        .jornada-page {
+          --bg: #050302;
+          --panel: #0a0705;
+          --panel-2: #120b07;
+          --gold: #f5c465;
+          --gold-2: #d7962e;
+          --gold-3: #8d5a10;
+          --line: rgba(232, 167, 61, 0.55);
+          --soft: rgba(255, 212, 132, 0.88);
+          --text: #f4d28a;
+          --muted: #d3ae6d;
+          --shadow: 0 0 16px rgba(243, 173, 54, 0.2), inset 0 0 14px rgba(255, 195, 92, 0.06);
+          min-height: 100vh;
+          padding: 14px;
+          display: flex;
+          justify-content: center;
+          color: var(--text);
+          font-family: Georgia, "Times New Roman", serif;
+          background:
+            radial-gradient(circle at 50% -5%, rgba(247,178,65,0.14), transparent 35%),
+            radial-gradient(circle at 50% 10%, rgba(247,178,65,0.05), transparent 25%),
+            linear-gradient(180deg, #140c06 0%, #070403 14%, #030202 100%);
+        }
+
+        .phone {
+          width: 100%;
+          max-width: 430px;
+          background: linear-gradient(180deg, rgba(17,11,7,0.98), rgba(6,4,3,0.99));
+          border: 1.5px solid var(--line);
+          border-radius: 28px;
+          padding: 14px 14px 26px;
+          box-shadow: var(--shadow);
+          position: relative;
+          overflow: hidden;
+        }
+
+        .phone::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(circle at 50% 0%, rgba(255, 186, 59, 0.08), transparent 30%);
+          pointer-events: none;
+        }
+
+        .topbar,
+        .bottom-cta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+        }
+
+        .circle-btn {
+          width: 54px;
+          height: 54px;
+          border-radius: 50%;
+          border: 1.5px solid rgba(240, 174, 65, 0.35);
+          display: grid;
+          place-items: center;
+          color: var(--gold);
+          background: radial-gradient(circle at 50% 35%, rgba(255,187,84,0.11), rgba(0,0,0,0.65));
+          box-shadow: inset 0 0 12px rgba(255, 187, 84, 0.08);
+          font-size: 26px;
+          position: relative;
+          flex: 0 0 auto;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .notif-dot {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #ff5d52;
+          box-shadow: 0 0 10px rgba(255, 98, 71, 0.8);
+        }
+
+        .logo-wrap {
+          text-align: center;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .logo-wrap img {
+          width: 250px;
+          max-width: 100%;
+          display: block;
+          margin: 0 auto 6px;
+          filter: drop-shadow(0 0 10px rgba(255, 192, 73, 0.18));
+        }
+
+        .brand-script {
+          font-size: 1.1rem;
+          color: #f6cc7a;
+          font-style: italic;
+          text-shadow: 0 0 10px rgba(255, 190, 78, 0.35);
+        }
+
+        .card {
+          background: linear-gradient(180deg, rgba(10, 7, 5, 0.97), rgba(6, 4, 3, 0.98));
+          border: 1.2px solid var(--line);
+          border-radius: 22px;
+          padding: 16px;
+          box-shadow: var(--shadow);
+          margin-top: 14px;
+          position: relative;
+        }
+
+        .welcome {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+
+        .welcome-main {
+          display: flex;
+          gap: 14px;
+          align-items: center;
+        }
+
+        .avatar-glow {
+          width: 92px;
+          height: 92px;
+          border-radius: 50%;
+          border: 2px solid #e9aa3f;
+          background:
+            radial-gradient(circle at 50% 28%, #f1c06c 0 12px, transparent 13px),
+            radial-gradient(circle at 50% 61%, #dda044 0 20px, transparent 21px),
+            radial-gradient(circle at 50% 50%, rgba(255,193,84,0.08), rgba(0,0,0,0.95));
+          box-shadow: 0 0 18px rgba(255, 176, 58, 0.34), inset 0 0 18px rgba(255, 176, 58, 0.08);
+          position: relative;
+          flex: 0 0 auto;
+        }
+
+        .avatar-glow::before {
+          content: "👑";
+          position: absolute;
+          top: -20px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 20px;
+          filter: drop-shadow(0 0 8px rgba(255, 198, 86, 0.8));
+        }
+
+        .welcome h1,
+        .section-title,
+        .progress-title,
+        .cta-title {
+          margin: 0;
+          font-weight: 700;
+        }
+
+        .welcome h1 {
+          font-size: 1.05rem;
+          line-height: 1.15;
+          margin-bottom: 8px;
+        }
+
+        .welcome p {
+          margin: 0;
+          line-height: 1.35;
+          color: #edd3a0;
+          font-size: 0.86rem;
+        }
+
+        .points-box {
+          border: 1.2px solid rgba(236, 170, 64, 0.48);
+          border-radius: 18px;
+          padding: 14px;
+          background: linear-gradient(180deg, rgba(69,39,9,0.55), rgba(18,10,5,0.8));
+          text-align: center;
+          box-shadow: inset 0 0 14px rgba(255, 185, 71, 0.06);
+        }
+
+        .points-label {
+          color: #f2dfbf;
+          font-size: 0.9rem;
+        }
+
+        .points-spacer {
+          margin-bottom: 12px;
+        }
+
+        .points-value {
+          font-size: 3rem;
+          line-height: 1;
+          margin: 6px 0 8px;
+          color: #f5c465;
+          text-shadow: 0 0 10px rgba(255, 183, 68, 0.18);
+        }
+
+        .mini-btn,
+        .primary-btn {
+          border: 1.2px solid rgba(235, 171, 69, 0.45);
+          border-radius: 14px;
+          cursor: pointer;
+          transition: 0.2s ease;
+          font-family: inherit;
+        }
+
+        .mini-btn {
+          padding: 10px 14px;
+          color: var(--gold);
+          font-weight: 700;
+          background: rgba(9, 7, 5, 0.82);
+          width: 100%;
+          font-size: 1rem;
+        }
+
+        .mini-btn:hover,
+        .primary-btn:hover,
+        .reward-item:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 0 12px rgba(255, 190, 81, 0.16);
+        }
+
+        .progress-title,
+        .section-title,
+        .cta-title {
+          text-align: center;
+          font-size: 0.98rem;
+          margin-bottom: 14px;
+          color: #eebd67;
+        }
+
+        .levels {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          text-align: center;
+          align-items: start;
+          position: relative;
+          padding-top: 22px;
+        }
+
+        .levels::before {
+          content: "";
+          position: absolute;
+          left: 8%;
+          right: 8%;
+          top: 46px;
+          height: 4px;
+          border-radius: 999px;
+          background: linear-gradient(90deg, #f0b74f 0%, #f9dd97 42%, rgba(126,81,16,0.4) 43%, rgba(126,81,16,0.35) 100%);
+          box-shadow: 0 0 14px rgba(255, 188, 77, 0.28);
+          z-index: 0;
+        }
+
+        .level {
+          position: relative;
+          z-index: 1;
+          padding: 0 4px;
+        }
+
+        .level-icon {
+          width: 58px;
+          height: 58px;
+          border-radius: 50%;
+          margin: 0 auto 10px;
+          border: 1.5px solid rgba(239, 175, 67, 0.55);
+          display: grid;
+          place-items: center;
+          font-size: 1.5rem;
+          background: radial-gradient(circle at 50% 35%, rgba(255,194,87,0.4), rgba(89,47,8,0.85));
+          box-shadow: inset 0 0 12px rgba(255, 196, 87, 0.16);
+        }
+
+        .level:nth-child(2) .level-icon {
+          background: radial-gradient(circle at 50% 35%, rgba(255,172,63,0.6), rgba(159,73,6,0.88));
+        }
+
+        .level:nth-child(3) .level-icon {
+          background: radial-gradient(circle at 50% 35%, rgba(255,221,93,0.65), rgba(162,112,6,0.9));
+        }
+
+        .level h3 {
+          margin: 0;
+          font-size: 0.78rem;
+          color: #f0c979;
+        }
+
+        .level .range {
+          display: block;
+          margin-top: 6px;
+          font-size: 0.62rem;
+          font-weight: 700;
+          color: #f3d59b;
+        }
+
+        .level .desc {
+          margin-top: 6px;
+          font-size: 0.58rem;
+          line-height: 1.3;
+          color: #d7ae6e;
+          min-height: 28px;
+        }
+
+        .status-dot {
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          margin: 10px auto 0;
+          border: 1.2px solid rgba(255, 190, 75, 0.45);
+          background: transparent;
+          box-shadow: inset 0 0 8px rgba(255, 190, 75, 0.08);
+        }
+
+        .status-dot.active {
+          background: #34c759;
+          box-shadow: 0 0 10px rgba(52,199,89,0.7);
+          border-color: #34c759;
+        }
+
+        .status-dot.current {
+          background: #f3a43d;
+          box-shadow: 0 0 10px rgba(243,164,61,0.7);
+          border-color: #f3a43d;
+        }
+
+        .bar-wrap {
+          background: linear-gradient(90deg, rgba(251,223,154,0.92), rgba(114,67,14,0.7));
+          border-radius: 999px;
+          padding: 3px;
+          position: relative;
+          overflow: hidden;
+          height: 34px;
+          margin-top: 10px;
+          border: 1px solid rgba(255, 201, 105, 0.18);
+        }
+
+        .bar-fill {
+          position: absolute;
+          left: 0;
+          top: 0;
+          bottom: 0;
+          border-radius: 999px;
+          background: linear-gradient(90deg, #fbe4a2, #ebb14f 70%, #ffd87e 100%);
+          box-shadow: 0 0 18px rgba(255, 194, 76, 0.28);
+        }
+
+        .bar-text {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          font-weight: 700;
+          color: #432300;
+          font-size: 0.95rem;
+          z-index: 2;
+        }
+
+        .progress-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .bar-column {
+          flex: 1;
+        }
+
+        .tub-img {
+          width: 74px;
+          height: 74px;
+          display: grid;
+          place-items: center;
+          filter: drop-shadow(0 0 14px rgba(255, 176, 67, 0.2));
+          border-radius: 18px;
+          background: radial-gradient(circle at 50% 40%, rgba(255,188,79,0.12), rgba(0,0,0,0.35));
+          overflow: hidden;
+        }
+
+        .tub-img img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
+
+        .slogan {
+          margin-top: 10px;
+          text-align: center;
+          font-size: 0.95rem;
+          color: #f0c672;
+          font-weight: 700;
+        }
+
+        .rewards {
+          display: grid;
+          gap: 12px;
+        }
+
+        .reward-item {
+          display: grid;
+          grid-template-columns: 96px 1fr 78px;
+          gap: 12px;
+          align-items: center;
+          border: 1px solid rgba(232, 167, 61, 0.45);
+          border-radius: 18px;
+          padding: 10px;
+          background: linear-gradient(180deg, rgba(18,11,8,0.95), rgba(11,7,4,0.95));
+          transition: 0.2s ease;
+          cursor: pointer;
+        }
+
+        .reward-thumb {
+          width: 100%;
+          height: 84px;
+          border-radius: 14px;
+          background: radial-gradient(circle at 50% 40%, rgba(255,188,79,0.08), rgba(0,0,0,0.45));
+          display: grid;
+          place-items: center;
+          font-size: 2.35rem;
+          overflow: hidden;
+        }
+
+        .reward-thumb img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          filter: drop-shadow(0 0 10px rgba(255, 190, 81, 0.16));
+        }
+
+        .reward-name {
+          font-size: 0.95rem;
+          margin: 0 0 6px;
+          color: #f3d394;
+        }
+
+        .reward-sub {
+          color: #d8ae67;
+          font-size: 0.82rem;
+          margin: 0;
+        }
+
+        .points-chip {
+          border: 1.2px solid rgba(235, 171, 69, 0.42);
+          border-radius: 16px;
+          text-align: center;
+          padding: 10px 8px;
+          color: #f5d18c;
+          font-size: 0.8rem;
+          line-height: 1.05;
+          background: linear-gradient(180deg, rgba(84,47,10,0.4), rgba(18,11,7,0.85));
+          min-width: 70px;
+        }
+
+        .all-btn {
+          margin-top: 14px;
+          width: 100%;
+          background: rgba(11, 8, 6, 0.92);
+          color: var(--gold);
+          padding: 12px 16px;
+          font-weight: 700;
+          font-size: 1rem;
+        }
+
+        .stats {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0;
+          overflow: hidden;
+        }
+
+        .stat {
+          padding: 8px 10px;
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          min-height: 92px;
+        }
+
+        .stat + .stat {
+          border-left: 1px solid rgba(234, 170, 64, 0.22);
+        }
+
+        .stat-emoji {
+          font-size: 2rem;
+          filter: drop-shadow(0 0 8px rgba(255, 173, 58, 0.34));
+        }
+
+        .stat small {
+          color: #eadcc0;
+          display: block;
+          font-size: 0.76rem;
+          margin-bottom: 4px;
+        }
+
+        .stat strong {
+          display: block;
+          font-size: 0.92rem;
+          color: #efc878;
+          margin-bottom: 4px;
+        }
+
+        .stat span {
+          color: #dcb36d;
+          font-size: 0.73rem;
+          line-height: 1.25;
+        }
+
+        .bottom-cta {
+          margin-top: 14px;
+          gap: 10px;
+          align-items: end;
+        }
+
+        .cta-box {
+          flex: 1;
+        }
+
+        .cta-title {
+          margin-bottom: 10px;
+        }
+
+        .primary-btn {
+          width: 100%;
+          padding: 16px;
+          font-size: 1.15rem;
+          font-weight: 700;
+          color: #342000;
+          background: linear-gradient(180deg, #f8d57f 0%, #e4a94a 100%);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 0 14px rgba(255, 188, 74, 0.16);
+        }
+
+        .bottom-icon {
+          width: 58px;
+          height: 58px;
+          border-radius: 16px;
+          border: 1.2px solid rgba(235, 171, 69, 0.45);
+          background: rgba(11, 8, 6, 0.92);
+          color: var(--gold);
+          font-size: 1.55rem;
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .home-indicator {
+          width: 140px;
+          height: 6px;
+          background: rgba(255,255,255,0.9);
+          border-radius: 999px;
+          margin: 14px auto 0;
+        }
+
+        @media (min-width: 390px) {
+          .welcome {
+            grid-template-columns: 1.5fr 1fr;
+          }
+
+          .welcome-main {
+            align-items: center;
+          }
+
+          .welcome h1 {
+            font-size: 1.18rem;
+          }
+
+          .level h3 {
+            font-size: 0.95rem;
+          }
+
+          .level .range {
+            font-size: 0.78rem;
+          }
+
+          .level .desc {
+            font-size: 0.68rem;
+          }
+
+          .reward-name {
+            font-size: 1.06rem;
+          }
+
+          .reward-sub {
+            font-size: 0.95rem;
+          }
+        }
+      `}</style>
     </div>
   )
 }

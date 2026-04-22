@@ -16,6 +16,13 @@ export function AuthProvider({ children }) {
 
   const checkAuth = async () => {
     try {
+      // Em desenvolvimento, desabilitar verificação de autenticação
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔧 [AuthContext] Modo desenvolvimento: pulando verificação de autenticação')
+        setLoading(false)
+        return
+      }
+      
       // Verificar autenticação via cookie (não há localStorage)
       // O cookie é enviado automaticamente pelo axios (withCredentials: true)
       const response = await api.get('/me')
@@ -26,7 +33,12 @@ export function AuthProvider({ children }) {
     } catch (error) {
       // Erro 401 significa não autenticado (normal na primeira visita)
       if (error.response?.status !== 401) {
-        console.error('Erro ao verificar autenticação:', error)
+        // Se for erro de conexão, apenas loga e continua
+        if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
+          console.log('⚠️ [AuthContext] Servidor backend não disponível')
+        } else {
+          console.error('Erro ao verificar autenticação:', error)
+        }
       }
       setUser(null)
     } finally {
@@ -35,11 +47,20 @@ export function AuthProvider({ children }) {
   }
 
   const refreshUser = async () => {
-    const response = await api.get('/me')
-    if (response.data) {
-      setUser(response.data)
+    try {
+      const response = await api.get('/me')
+      if (response.data) {
+        setUser(response.data)
+      }
+      return response.data
+    } catch (error) {
+      // Se for erro de conexão, retorna null
+      if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
+        console.log('⚠️ [AuthContext] Servidor backend não disponível')
+        return null
+      }
+      throw error
     }
-    return response.data
   }
 
   const login = async (email, password) => {
