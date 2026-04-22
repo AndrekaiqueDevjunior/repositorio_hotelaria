@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { toast } from 'react-toastify'
 import { api } from '../../../lib/api'
 import { 
   StatusPagamento,
@@ -9,6 +10,7 @@ import {
   isPagamentoAprovado,
   isPagamentoNegado
 } from '../../../lib/constants/enums'
+import ModalTefGerencial from '../../../components/ModalTefGerencial'
 
 const formatCurrency = (value) => {
   const numero = Number(value || 0)
@@ -26,6 +28,8 @@ export default function PagamentosPage() {
   const [pagamentos, setPagamentos] = useState([])
   const [showPagamentoDetailsModal, setShowPagamentoDetailsModal] = useState(false)
   const [pagamentoDetalhes, setPagamentoDetalhes] = useState(null)
+  const [showTefGerencial, setShowTefGerencial] = useState(false)
+  const [pendenciaStatus, setPendenciaStatus] = useState('')
   const [stats, setStats] = useState({
     total: 0,
     pendentes: 0,
@@ -88,7 +92,44 @@ export default function PagamentosPage() {
 
   useEffect(() => {
     loadPagamentos()
+    const fetchPendenciasStatus = async () => {
+      try {
+        const res = await api.get('/pagamentos/tef/pendencias/status')
+        const message = res.data?.message
+        if (message) {
+          setPendenciaStatus(message)
+          toast.info(message)
+        }
+      } catch (err) {
+        console.error('Erro ao consultar pendencias TEF:', err)
+      }
+    }
+    fetchPendenciasStatus()
   }, [])
+
+  const imprimirTexto = (titulo, texto) => {
+    if (!texto) return
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`
+      <html>
+        <head>
+          <title>${titulo}</title>
+          <style>
+            body { font-family: monospace; white-space: pre-wrap; padding: 16px; }
+            h1 { font-family: sans-serif; font-size: 18px; }
+          </style>
+        </head>
+        <body>
+          <h1>${titulo}</h1>
+          <pre>${texto}</pre>
+        </body>
+      </html>
+    `)
+    win.document.close()
+    win.focus()
+    win.print()
+  }
 
   return (
     <div className="space-y-6">
@@ -100,6 +141,13 @@ export default function PagamentosPage() {
           </p>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => setShowTefGerencial(true)}
+            className="bg-sky-700 text-white px-4 py-2 rounded shadow hover:bg-sky-800 disabled:opacity-50"
+            disabled={loading}
+          >
+            TEF Gerencial
+          </button>
           <button
             onClick={loadPagamentos}
             className="bg-real-blue text-white px-4 py-2 rounded shadow hover:bg-blue-800 disabled:opacity-50"
@@ -113,6 +161,12 @@ export default function PagamentosPage() {
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
           {error}
+        </div>
+      )}
+
+      {pendenciaStatus && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded">
+          {pendenciaStatus}
         </div>
       )}
 
@@ -400,6 +454,63 @@ export default function PagamentosPage() {
                   </div>
                 </div>
               )}
+
+              {(pagamentoDetalhes.tef_cupom_cliente || pagamentoDetalhes.tef_cupom_estabelecimento) && (
+                <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
+                  <h3 className="text-lg font-bold text-gray-800 mb-3">Comprovantes TEF</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white p-3 rounded border">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-gray-700">Via Cliente (Campo 122)</p>
+                        <div className="flex gap-2">
+                          {pagamentoDetalhes.tef_cupom_cliente_arquivo && (
+                            <a
+                              href={pagamentoDetalhes.tef_cupom_cliente_arquivo}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                            >
+                              Abrir arquivo
+                            </a>
+                          )}
+                          <button
+                            onClick={() => imprimirTexto('Cupom Cliente', pagamentoDetalhes.tef_cupom_cliente)}
+                            className="text-xs px-2 py-1 rounded bg-gray-700 text-white hover:bg-gray-800"
+                          >
+                            Imprimir
+                          </button>
+                        </div>
+                      </div>
+                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-52">{pagamentoDetalhes.tef_cupom_cliente || 'Nao disponivel'}</pre>
+                    </div>
+
+                    <div className="bg-white p-3 rounded border">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-gray-700">Via Estabelecimento (Campo 121)</p>
+                        <div className="flex gap-2">
+                          {pagamentoDetalhes.tef_cupom_estabelecimento_arquivo && (
+                            <a
+                              href={pagamentoDetalhes.tef_cupom_estabelecimento_arquivo}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                            >
+                              Abrir arquivo
+                            </a>
+                          )}
+                          <button
+                            onClick={() => imprimirTexto('Cupom Estabelecimento', pagamentoDetalhes.tef_cupom_estabelecimento)}
+                            className="text-xs px-2 py-1 rounded bg-gray-700 text-white hover:bg-gray-800"
+                          >
+                            Imprimir
+                          </button>
+                        </div>
+                      </div>
+                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-52">{pagamentoDetalhes.tef_cupom_estabelecimento || 'Nao disponivel'}</pre>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -413,6 +524,10 @@ export default function PagamentosPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showTefGerencial && (
+        <ModalTefGerencial onClose={() => setShowTefGerencial(false)} />
       )}
     </div>
   )

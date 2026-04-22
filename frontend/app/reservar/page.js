@@ -1,9 +1,14 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import Script from 'next/script'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import { api } from '../../lib/api'
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''
+const WHATSAPP_PHONE = '552226485900'
 
 export default function Reservar() {
   const router = useRouter()
@@ -11,6 +16,20 @@ export default function Reservar() {
   // Estados do fluxo
   const [step, setStep] = useState(1) // 1: Datas, 2: Quarto, 3: Dados, 4: Pagamento, 5: Confirmação
   const [loading, setLoading] = useState(false)
+  const [perfilReserva, setPerfilReserva] = useState('primeira_reserva')
+  const [clienteLookupLoading, setClienteLookupLoading] = useState(false)
+  const [clienteLookupStatus, setClienteLookupStatus] = useState('idle')
+  const [clienteRecorrente, setClienteRecorrente] = useState(null)
+  const [reservaAtivaCliente, setReservaAtivaCliente] = useState(null)
+  const [cupomCodigo, setCupomCodigo] = useState('')
+  const [cupomLoading, setCupomLoading] = useState(false)
+  const [cupomStatus, setCupomStatus] = useState('idle')
+  const [cupomInfo, setCupomInfo] = useState(null)
+  const [captchaStatus, setCaptchaStatus] = useState(TURNSTILE_SITE_KEY ? 'ready' : 'disabled')
+  const [turnstileLoaded, setTurnstileLoaded] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const turnstileContainerRef = useRef(null)
+  const turnstileWidgetIdRef = useRef(null)
   
   // Dados da busca
   const [searchData, setSearchData] = useState({
@@ -107,6 +126,76 @@ export default function Reservar() {
 
     return () => clearInterval(id)
   }, [step, searchData.data_checkin, searchData.data_checkout])
+
+  const resetTurnstile = () => {
+    if (!TURNSTILE_SITE_KEY) return
+
+    try {
+      if (
+        typeof window !== 'undefined' &&
+        window.turnstile &&
+        turnstileWidgetIdRef.current !== null
+      ) {
+        window.turnstile.reset(turnstileWidgetIdRef.current)
+      }
+    } catch (error) {
+      console.error('Erro ao resetar Turnstile:', error)
+    } finally {
+      setTurnstileToken('')
+      setCaptchaStatus('ready')
+    }
+  }
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return
+    if (step !== 3) return
+    if (!turnstileLoaded) return
+    if (!turnstileContainerRef.current) return
+    if (typeof window === 'undefined' || !window.turnstile?.render) return
+
+    if (turnstileWidgetIdRef.current !== null) {
+      return
+    }
+
+    turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
+      sitekey: TURNSTILE_SITE_KEY,
+      action: 'criar_reserva_publica',
+      theme: 'light',
+      callback: (token) => {
+        setTurnstileToken(token)
+        setCaptchaStatus('verified')
+      },
+      'expired-callback': () => {
+        setTurnstileToken('')
+        setCaptchaStatus('ready')
+      },
+      'error-callback': () => {
+        setTurnstileToken('')
+        setCaptchaStatus('error')
+      }
+    })
+  }, [step, turnstileLoaded])
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return
+    if (step === 3 || step === 4 || step === 5) return
+
+    turnstileWidgetIdRef.current = null
+    setTurnstileToken('')
+    setCaptchaStatus('ready')
+  }, [step])
+
+  useEffect(() => {
+    setClienteLookupStatus('idle')
+    setClienteRecorrente(null)
+    setReservaAtivaCliente(null)
+  }, [hospedeData.documento, hospedeData.email])
+
+  useEffect(() => {
+    setCupomStatus('idle')
+    setCupomInfo(null)
+    setCupomCodigo('')
+  }, [searchData.data_checkin, searchData.data_checkout, quartoSelecionado?.numero])
   
   // Selecionar quarto
   const selecionarQuarto = (tipo, quarto) => {
@@ -117,6 +206,63 @@ export default function Reservar() {
       preco_total: tipo.preco_total
     })
     setStep(3)
+  }
+
+  const buscarClienteRecorrente = async () => {
+    const cpfLimpo = hospedeData.documento.replace(/\D/g, '')
+    const emailNormalizado = hospedeData.email.trim().toLowerCase()
+
+    if (cpfLimpo.length !== 11) {
+      toast.warning('Informe um CPF válido para buscar seus dados')
+      return
+    }
+
+    if (!emailNormalizado.includes('@')) {
+      toast.warning('Informe o mesmo email usado na reserva anterior')
+      return
+    }
+
+    setClienteLookupLoading(true)
+
+    try {
+      const response = await api.post('/public/clientes/identificar', {
+        documento: cpfLimpo,
+        email: emailNormalizado
+      })
+
+      const data = response.data
+      if (data?.cliente_encontrado && data?.cliente) {
+        setHospedeData((prev) => ({
+          ...prev,
+          nome_completo: data.cliente.nome_completo || prev.nome_completo,
+          email: data.cliente.email || prev.email,
+          telefone: data.cliente.telefone ? formatTelefone(data.cliente.telefone) : prev.telefone
+        }))
+        setClienteRecorrente(data.cliente)
+        setReservaAtivaCliente(data.reserva_ativa || null)
+        if (data.tem_reserva_ativa) {
+          setClienteLookupStatus('active_reservation')
+          toast.warning(data.mensagem || `${data.cliente.nome_completo}, você já tem uma reserva ativa.`)
+        } else {
+          setClienteLookupStatus('found')
+          toast.success('Dados do cadastro anterior carregados')
+        }
+        return
+      }
+
+      setClienteRecorrente(null)
+      setReservaAtivaCliente(null)
+      setClienteLookupStatus('not_found')
+      toast.info('Nenhum cadastro compatível encontrado para CPF + email')
+    } catch (error) {
+      console.error('Erro ao buscar cliente recorrente:', error)
+      setClienteRecorrente(null)
+      setReservaAtivaCliente(null)
+      setClienteLookupStatus('error')
+      toast.error(error?.response?.data?.detail || 'Erro ao buscar cadastro anterior')
+    } finally {
+      setClienteLookupLoading(false)
+    }
   }
   
   // Criar reserva
@@ -139,10 +285,33 @@ export default function Reservar() {
       toast.warning('Email inválido')
       return
     }
+
+    if (reservaAtivaCliente) {
+      toast.warning(`${hospedeData.nome_completo || 'Cliente'}, você já tem uma reserva ativa.`)
+      return
+    }
     
     setLoading(true)
-    
+    let attemptedCaptcha = false
+    let captchaVerified = false
+
     try {
+      let antibotHeaders = {}
+      if (TURNSTILE_SITE_KEY) {
+        attemptedCaptcha = true
+        if (!turnstileToken) {
+          setCaptchaStatus('error')
+          toast.error('❌ Resolva o captcha antes de confirmar a reserva.')
+          return
+        }
+
+        setCaptchaStatus('checking')
+        antibotHeaders = {
+          'X-Turnstile-Token': turnstileToken,
+          'X-Turnstile-Action': 'criar_reserva_publica'
+        }
+      }
+
       const payload = {
         nome_completo: hospedeData.nome_completo,
         documento: cpfLimpo,
@@ -155,14 +324,21 @@ export default function Reservar() {
         num_hospedes: hospedeData.num_hospedes,
         num_criancas: hospedeData.num_criancas,
         observacoes: hospedeData.observacoes,
-        metodo_pagamento: metodoPagamento
+        metodo_pagamento: metodoPagamento,
+        cupom_codigo: cupomStatus === 'valid' && cupomInfo?.codigo ? cupomInfo.codigo : null
       }
       
-      const response = await api.post('/public/reservas', payload)
+      const response = await api.post(
+        '/public/reservas',
+        payload,
+        Object.keys(antibotHeaders).length ? { headers: antibotHeaders } : undefined
+      )
       
       const data = response.data
       
       if (data.success) {
+        captchaVerified = true
+        setCaptchaStatus(TURNSTILE_SITE_KEY ? 'verified' : 'disabled')
         setReservaConfirmada(data)
         toast.success('🎉 Reserva confirmada com sucesso!')
         setStep(5)
@@ -188,6 +364,11 @@ export default function Reservar() {
       // Tratamento de erros de rede
       if (error.code === 'ECONNREFUSED') {
         toast.error('❌ Servidor indisponível. Tente novamente em alguns instantes.')
+      } else if (error.response?.status === 403) {
+        setCaptchaStatus('error')
+        toast.error(`❌ ${error.response?.data?.detail || 'Captcha inválido ou expirado.'}`)
+      } else if (error.response?.status === 409) {
+        toast.warning(error.response?.data?.detail || `${hospedeData.nome_completo || 'Cliente'}, você já tem uma reserva ativa.`)
       } else if (error.response?.status === 400) {
         toast.error('❌ Dados inválidos. Verifique as informações e tente novamente.')
       } else if (error.response?.status === 500) {
@@ -196,6 +377,9 @@ export default function Reservar() {
         toast.error('❌ Erro ao conectar com o servidor. Tente novamente.')
       }
     } finally {
+      if (TURNSTILE_SITE_KEY && attemptedCaptcha && !captchaVerified) {
+        resetTurnstile()
+      }
       setLoading(false)
     }
   }
@@ -239,8 +423,167 @@ export default function Reservar() {
     return descricoes[tipo] || { titulo: tipo, descricao: '', amenidades: [] }
   }
 
+  const getCaptchaBadge = () => {
+    switch (captchaStatus) {
+      case 'checking':
+        return {
+          label: 'Validando',
+          classes: 'bg-amber-100 text-amber-800 border-amber-200',
+          description: 'Validando o captcha antes de confirmar a reserva.'
+        }
+      case 'verified':
+        return {
+          label: 'Validado',
+          classes: 'bg-green-100 text-green-800 border-green-200',
+          description: 'Captcha concluído. Você pode confirmar a reserva.'
+        }
+      case 'error':
+        return {
+          label: 'Falhou',
+          classes: 'bg-red-100 text-red-800 border-red-200',
+          description: 'O captcha falhou ou expirou. Resolva novamente antes de prosseguir.'
+        }
+      case 'disabled':
+        return {
+          label: 'Dev',
+          classes: 'bg-slate-100 text-slate-700 border-slate-200',
+          description: 'Captcha visível desativado neste ambiente. Ative as chaves para produção.'
+        }
+      case 'ready':
+      default:
+        return {
+          label: 'Pendente',
+          classes: 'bg-blue-100 text-blue-800 border-blue-200',
+          description: 'Resolva o captcha visível antes de confirmar a reserva.'
+        }
+    }
+  }
+
+  const captchaBadge = getCaptchaBadge()
+  const resumoValores = useMemo(() => {
+    const subtotal = Number(quartoSelecionado?.preco_total || 0)
+    const desconto = Number(cupomInfo?.valor_desconto_calculado || 0)
+    const total = cupomStatus === 'valid' && cupomInfo?.valor_final_estimado != null
+      ? Number(cupomInfo.valor_final_estimado)
+      : subtotal
+
+    return { subtotal, desconto, total }
+  }, [quartoSelecionado, cupomInfo, cupomStatus])
+  const whatsappReservaAtivaUrl = reservaAtivaCliente
+    ? `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
+        `Olá Hotel real cabo frio, tudo bem?\n\nGostaria de falar sobre minha reserva.\nCódigo ${reservaAtivaCliente.codigo} | Quarto ${reservaAtivaCliente.quarto_numero} | Status ${reservaAtivaCliente.status}`
+      )}&type=phone_number&app_absent=0`
+    : null
+  const tabsReserva = [
+    {
+      id: 'primeira_reserva',
+      titulo: 'Primeira reserva',
+      descricao: 'Fluxo guiado para quem ainda vai se cadastrar.'
+    },
+    {
+      id: 'ja_sou_cliente',
+      titulo: 'Já sou cliente',
+      descricao: 'Vamos reaproveitar seus dados no passo seguinte.'
+    }
+  ]
+
+  const validarCupom = async () => {
+    if (!cupomCodigo.trim()) {
+      toast.warning('Informe um código de cupom para validar')
+      return
+    }
+
+    if (!quartoSelecionado || !numDiarias) {
+      toast.warning('Selecione as datas e o quarto antes de validar o cupom')
+      return
+    }
+
+    try {
+      setCupomLoading(true)
+      setCupomStatus('checking')
+
+      const response = await api.post('/cupons/validar', {
+        codigo: cupomCodigo.trim().toUpperCase(),
+        suite_tipo: quartoSelecionado.tipo,
+        num_diarias: numDiarias,
+        valor_total_base: Number(quartoSelecionado.preco_total)
+      })
+
+      if (response.data?.valido) {
+        setCupomInfo(response.data)
+        setCupomCodigo(response.data.codigo || cupomCodigo.trim().toUpperCase())
+        setCupomStatus('valid')
+        toast.success(`Cupom ${response.data.codigo} aplicado ao resumo da reserva`)
+        return
+      }
+
+      setCupomInfo(response.data || null)
+      setCupomStatus('invalid')
+      toast.warning(response.data?.mensagem || 'Cupom inválido para esta reserva')
+    } catch (error) {
+      console.error('Erro ao validar cupom:', error)
+      setCupomInfo(null)
+      setCupomStatus('invalid')
+      toast.error(error?.response?.data?.detail || 'Não foi possível validar o cupom agora')
+    } finally {
+      setCupomLoading(false)
+    }
+  }
+
+  const removerCupom = () => {
+    setCupomCodigo('')
+    setCupomInfo(null)
+    setCupomStatus('idle')
+  }
+
+  const renderResumoFinanceiro = (variant = 'default') => {
+    const containerClasses = variant === 'compact'
+      ? 'rounded-xl border border-slate-200 bg-slate-50 p-4'
+      : 'rounded-xl border border-green-100 bg-green-50 p-4'
+    const titleClasses = variant === 'compact'
+      ? 'text-sm font-semibold text-slate-900'
+      : 'text-sm font-semibold text-green-900'
+
+    return (
+      <div className={containerClasses}>
+        <p className={titleClasses}>Resumo financeiro</p>
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-center justify-between text-gray-700">
+            <span>Subtotal da hospedagem</span>
+            <strong>R$ {resumoValores.subtotal.toFixed(2)}</strong>
+          </div>
+          {cupomStatus === 'valid' && cupomInfo ? (
+            <>
+              <div className="flex items-center justify-between text-green-700">
+                <span>Desconto do cupom {cupomInfo.codigo}</span>
+                <strong>- R$ {resumoValores.desconto.toFixed(2)}</strong>
+              </div>
+              {cupomInfo.pontos_bonus > 0 ? (
+                <div className="flex items-center justify-between text-blue-700">
+                  <span>Bônus previsto no checkout</span>
+                  <strong>+ {cupomInfo.pontos_bonus} RP</strong>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          <div className="flex items-center justify-between border-t border-white/70 pt-2 text-base font-bold text-gray-900">
+            <span>Total estimado</span>
+            <span>R$ {resumoValores.total.toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-900 via-blue-800 to-blue-900">
+      {TURNSTILE_SITE_KEY && (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+          strategy="afterInteractive"
+          onLoad={() => setTurnstileLoaded(true)}
+        />
+      )}
       {/* Header */}
       <header className="bg-white/10 backdrop-blur-md border-b border-white/20">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -292,13 +635,81 @@ export default function Reservar() {
         
         {/* Step 1: Datas */}
         {step === 1 && (
-          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-2 shadow-xl backdrop-blur-md">
+              <div className="grid gap-2 md:grid-cols-3">
+                {tabsReserva.map((tab) => {
+                  const ativo = perfilReserva === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setPerfilReserva(tab.id)}
+                      className={`rounded-xl px-5 py-4 text-left transition-all ${
+                        ativo
+                          ? 'bg-white text-blue-900 shadow-lg ring-2 ring-yellow-300/80'
+                          : 'bg-transparent text-white/80 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-base font-bold">{tab.titulo}</p>
+                          <p className={`mt-1 text-sm ${ativo ? 'text-blue-700' : 'text-white/65'}`}>
+                            {tab.descricao}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${
+                            ativo
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-white/10 text-white/60'
+                          }`}
+                        >
+                          {ativo ? 'ativo' : 'opção'}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+                <Link
+                  href="/consultar"
+                  className="rounded-xl px-5 py-4 text-left transition-all bg-transparent text-white/80 hover:bg-white/10 hover:text-white"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-base font-bold">Consultar minha reserva</p>
+                      <p className="mt-1 text-sm text-white/65">
+                        Acesse código, status e instruções da sua reserva atual.
+                      </p>
+                    </div>
+                    <span className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] bg-white/10 text-white/60">
+                      consulta
+                    </span>
+                  </div>
+                </Link>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-gradient-to-r from-yellow-400 to-yellow-500 p-6 text-center">
               <h2 className="text-2xl font-bold text-blue-900">🔍 Buscar Disponibilidade</h2>
-              <p className="text-blue-800">Selecione as datas da sua estadia</p>
+              <p className="text-blue-800">
+                {perfilReserva === 'ja_sou_cliente'
+                  ? 'Selecione as datas da sua estadia e depois recuperamos seu cadastro.'
+                  : 'Selecione as datas da sua estadia'}
+              </p>
             </div>
             
             <div className="p-8">
+              {perfilReserva === 'ja_sou_cliente' && (
+                <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-left">
+                  <p className="text-sm font-semibold text-blue-900">Cliente recorrente</p>
+                  <p className="mt-1 text-sm text-blue-800">
+                    No passo de dados, informe o mesmo CPF e email usados antes para preencher seu cadastro automaticamente.
+                  </p>
+                </div>
+              )}
+
               <div className="grid md:grid-cols-3 gap-6">
                 <div>
                   <label className="block text-gray-700 font-medium mb-2">📅 Check-in</label>
@@ -350,6 +761,7 @@ export default function Reservar() {
                 )}
               </button>
             </div>
+          </div>
           </div>
         )}
         
@@ -573,6 +985,143 @@ export default function Reservar() {
                   </select>
                 </div>
               </div>
+
+              <div className={`rounded-xl border p-4 ${
+                perfilReserva === 'ja_sou_cliente'
+                  ? 'border-blue-200 bg-blue-50'
+                  : 'border-gray-200 bg-gray-50'
+              }`}>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">Já reservou antes?</p>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Informe o mesmo CPF e email usados anteriormente para reaproveitar seu cadastro.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={buscarClienteRecorrente}
+                    disabled={clienteLookupLoading}
+                    className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {clienteLookupLoading ? 'Buscando...' : 'Buscar meus dados'}
+                  </button>
+                </div>
+
+                {clienteLookupStatus === 'found' && clienteRecorrente && (
+                  <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                    Cadastro anterior localizado para <strong>{clienteRecorrente.nome_completo}</strong>.
+                    Revise telefone e demais dados antes de continuar.
+                  </div>
+                )}
+
+                {clienteLookupStatus === 'active_reservation' && clienteRecorrente && reservaAtivaCliente && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <p>
+                      <strong>{clienteRecorrente.nome_completo}</strong>, você já tem uma reserva ativa.
+                    </p>
+                    <p className="mt-2">
+                      Código {reservaAtivaCliente.codigo} | Quarto {reservaAtivaCliente.quarto_numero} | Status {reservaAtivaCliente.status}
+                    </p>
+                    <p className="mt-2">
+                      Cliente recorrente só pode criar nova reserva após ter histórico com check-out realizado e nenhuma reserva aberta.
+                    </p>
+                    {whatsappReservaAtivaUrl && (
+                      <a
+                        href={whatsappReservaAtivaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center rounded-lg border border-amber-300 bg-white px-4 py-2 font-semibold text-amber-900 transition hover:bg-amber-100"
+                      >
+                        Falar no WhatsApp sobre essa reserva
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {clienteLookupStatus === 'not_found' && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Nenhum cadastro compatível foi encontrado. Você pode seguir com uma nova reserva normalmente.
+                  </div>
+                )}
+
+                {clienteLookupStatus === 'error' && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    Não foi possível buscar o cadastro anterior agora. Tente novamente em instantes.
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-900">Cupom de desconto</p>
+                    <p className="mt-1 text-sm text-emerald-800">
+                      Se você recebeu um código promocional, valide agora antes de seguir para o pagamento.
+                    </p>
+                  </div>
+                  {cupomStatus === 'valid' ? (
+                    <span className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                      Aplicado
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 md:flex-row">
+                  <input
+                    type="text"
+                    value={cupomCodigo}
+                    onChange={(e) => {
+                      setCupomCodigo(e.target.value.toUpperCase())
+                      if (cupomStatus !== 'idle') {
+                        setCupomStatus('idle')
+                        setCupomInfo(null)
+                      }
+                    }}
+                    className="flex-1 rounded-lg border-2 border-emerald-200 bg-white p-3 focus:border-emerald-400 focus:outline-none"
+                    placeholder="Ex: CARNAVAL10"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={validarCupom}
+                      disabled={cupomLoading}
+                      className="rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {cupomLoading ? 'Validando...' : 'Validar cupom'}
+                    </button>
+                    {cupomStatus === 'valid' ? (
+                      <button
+                        type="button"
+                        onClick={removerCupom}
+                        className="rounded-lg border border-gray-300 bg-white px-4 py-3 font-semibold text-gray-700 transition hover:bg-gray-50"
+                      >
+                        Remover
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {cupomStatus === 'valid' && cupomInfo ? (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900">
+                    <p>
+                      <strong>{cupomInfo.codigo}</strong> validado com sucesso.
+                      {cupomInfo.tipo_desconto === 'PERCENTUAL'
+                        ? ` Desconto de ${cupomInfo.valor_desconto}% aplicado nesta reserva.`
+                        : ` Desconto fixo de R$ ${Number(cupomInfo.valor_desconto || 0).toFixed(2)} aplicado nesta reserva.`}
+                    </p>
+                    <p className="mt-2">
+                      Total estimado com cupom: <strong>R$ {resumoValores.total.toFixed(2)}</strong>
+                    </p>
+                  </div>
+                ) : null}
+
+                {cupomStatus === 'invalid' ? (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    {cupomInfo?.mensagem || 'O cupom informado não pode ser usado nesta reserva.'}
+                  </div>
+                ) : null}
+              </div>
               
               <div>
                 <label className="block text-gray-700 font-medium mb-1">Observações (opcional)</label>
@@ -584,6 +1133,38 @@ export default function Reservar() {
                   rows={3}
                 />
               </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/80 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">Proteção anti-bot</p>
+                    <p className="mt-1 text-sm text-blue-800">
+                      Resolva o captcha antes de seguir para a etapa de pagamento.
+                    </p>
+                    <p className="mt-2 text-xs text-blue-700">
+                      Isso reduz spam automatizado e valida a solicitação ainda na etapa de dados.
+                    </p>
+                  </div>
+                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${captchaBadge.classes}`}>
+                    {captchaBadge.label}
+                  </span>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-white/70 bg-white/90 p-4">
+                  {TURNSTILE_SITE_KEY ? (
+                    <>
+                      <div ref={turnstileContainerRef} className="min-h-[65px]" />
+                      <p className="mt-3 text-xs text-gray-600">{captchaBadge.description}</p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-600">
+                      Captcha visível desativado neste ambiente. Configure as chaves para habilitar a validação.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {renderResumoFinanceiro('default')}
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -594,7 +1175,8 @@ export default function Reservar() {
                 </button>
                 <button
                   onClick={() => setStep(4)}
-                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all"
+                  disabled={Boolean(reservaAtivaCliente) || (TURNSTILE_SITE_KEY && !turnstileToken)}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all disabled:cursor-not-allowed disabled:bg-blue-300"
                 >
                   Continuar →
                 </button>
@@ -625,7 +1207,7 @@ export default function Reservar() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600">Total</p>
-                  <p className="text-2xl font-bold text-green-600">R$ {quartoSelecionado.preco_total.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-600">R$ {resumoValores.total.toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -697,6 +1279,27 @@ export default function Reservar() {
                     {metodoPagamento === 'pix' && <span className="ml-auto text-green-600 font-bold">✓</span>}
                   </div>
                 </label>
+
+                <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                  metodoPagamento === 'tef' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
+                }`}>
+                  <input
+                    type="radio"
+                    name="pagamento"
+                    value="tef"
+                    checked={metodoPagamento === 'tef'}
+                    onChange={(e) => setMetodoPagamento(e.target.value)}
+                    className="hidden"
+                  />
+                  <div className="flex items-center gap-4">
+                    <span className="text-3xl">🖥️</span>
+                    <div>
+                      <p className="font-bold text-gray-800">TEF (Maquininha)</p>
+                      <p className="text-sm text-gray-600">Pagamento via CliSiTef no balcão</p>
+                    </div>
+                    {metodoPagamento === 'tef' && <span className="ml-auto text-green-600 font-bold">✓</span>}
+                  </div>
+                </label>
                 
                 <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
                   metodoPagamento === 'na_chegada' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
@@ -726,6 +1329,8 @@ export default function Reservar() {
                   Cancelamentos podem ser feitos até 24h antes do check-in sem custo.
                 </p>
               </div>
+
+              {renderResumoFinanceiro('compact')}
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -736,7 +1341,7 @@ export default function Reservar() {
                 </button>
                 <button
                   onClick={criarReserva}
-                  disabled={loading}
+                  disabled={loading || (TURNSTILE_SITE_KEY && !turnstileToken)}
                   className="flex-1 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-all disabled:opacity-50"
                 >
                   {loading ? '⏳ Processando...' : '✅ Confirmar Reserva'}
@@ -789,11 +1394,37 @@ export default function Reservar() {
                     <p className="font-medium">{reservaConfirmada.reserva.num_diarias} {reservaConfirmada.reserva.num_diarias === 1 ? 'diária' : 'diárias'}</p>
                   </div>
                   <div className="bg-green-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-500">Valor Total</p>
-                    <p className="font-bold text-green-600 text-xl">R$ {reservaConfirmada.reserva.valor_total.toFixed(2)}</p>
+                    <p className="text-sm text-gray-500">Valor Final</p>
+                    <p className="font-bold text-green-600 text-xl">
+                      R$ {(reservaConfirmada.reserva.valor_total_com_desconto ?? reservaConfirmada.reserva.valor_total).toFixed(2)}
+                    </p>
                   </div>
                 </div>
               </div>
+
+              {reservaConfirmada.reserva.cupom_uso ? (
+                <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <h3 className="font-bold text-emerald-900">🎟️ Cupom aplicado</h3>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Código</p>
+                      <p className="font-semibold text-emerald-900">{reservaConfirmada.reserva.cupom_uso.codigo}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Desconto</p>
+                      <p className="font-semibold text-emerald-900">
+                        R$ {(reservaConfirmada.reserva.valor_desconto || 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Total final</p>
+                      <p className="font-semibold text-emerald-900">
+                        R$ {(reservaConfirmada.reserva.valor_total_com_desconto || reservaConfirmada.reserva.valor_total).toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               
               {/* Instruções */}
               <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mb-6">

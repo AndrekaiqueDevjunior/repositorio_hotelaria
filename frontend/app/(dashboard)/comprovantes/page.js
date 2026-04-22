@@ -6,9 +6,8 @@
 
 'use client'
 import { useState, useEffect } from 'react'
-import { toast } from 'react-toastify'
 import { api } from '../../../lib/api'
-import { StatusValidacao, STATUS_VALIDACAO_COLORS, STATUS_VALIDACAO_LABELS } from '../../../lib/constants/enums'
+import { StatusValidacao } from '../../../lib/constants/enums'
 
 const DashboardValidacao = () => {
   const [loading, setLoading] = useState(true)
@@ -23,10 +22,53 @@ const DashboardValidacao = () => {
   const [acaoAtual, setAcaoAtual] = useState('')
   const [motivoRecusa, setMotivoRecusa] = useState('')
   const [mostrarCampoRecusa, setMostrarCampoRecusa] = useState(false)
+  const [feedbackAcao, setFeedbackAcao] = useState(null)
 
   useEffect(() => {
     carregarDashboard()
   }, [])
+
+  const mostrarFeedback = (tipo, titulo, mensagem) => {
+    setFeedbackAcao({
+      tipo,
+      titulo,
+      mensagem,
+      timestamp: new Date().toISOString()
+    })
+  }
+
+  const limparFeedback = () => {
+    setFeedbackAcao(null)
+  }
+
+  const formatarHorarioFeedback = (timestamp) => {
+    return new Date(timestamp).toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  }
+
+  const atualizarComprovanteNaTela = (pagamentoId, statusAtual, novoStatus) => {
+    setPendentes(prev => prev.filter(item => item.pagamento_id !== pagamentoId))
+    setEmAnalise(prev => prev.filter(item => item.pagamento_id !== pagamentoId))
+
+    setStats(prev => ({
+      ...prev,
+      aguardando_comprovante: statusAtual === 'AGUARDANDO_COMPROVANTE'
+        ? Math.max(0, (prev.aguardando_comprovante || 0) - 1)
+        : prev.aguardando_comprovante || 0,
+      em_analise: statusAtual === 'EM_ANALISE'
+        ? Math.max(0, (prev.em_analise || 0) - 1)
+        : prev.em_analise || 0,
+      aprovados_hoje: novoStatus === 'APROVADO'
+        ? (prev.aprovados_hoje || 0) + 1
+        : prev.aprovados_hoje || 0,
+      recusados_hoje: novoStatus === 'RECUSADO'
+        ? (prev.recusados_hoje || 0) + 1
+        : prev.recusados_hoje || 0,
+    }))
+  }
 
   const carregarDashboard = async () => {
     try {
@@ -43,7 +85,7 @@ const DashboardValidacao = () => {
       setEmAnalise(response.data.em_analise || [])
     } catch (error) {
       console.error('Erro ao carregar dashboard:', error)
-      toast.error('Erro ao carregar dashboard')
+      mostrarFeedback('erro', 'Falha ao carregar comprovantes', error.response?.data?.detail || 'Não foi possível carregar o dashboard de comprovantes.')
     } finally {
       setLoading(false)
     }
@@ -60,15 +102,16 @@ const DashboardValidacao = () => {
         motivo: motivo,
         usuario_validador_id: 1 // TODO: Pegar do contexto de autenticação
       })
-      
-      toast.success('✅ Pagamento aprovado com sucesso!')
+
+      atualizarComprovanteNaTela(pagamentoId, selectedComprovante?.status_validacao, 'APROVADO')
+      mostrarFeedback('sucesso', 'Comprovante aprovado', `Pagamento #${pagamentoId} aprovado com sucesso.`)
       carregarDashboard()
       setSelectedComprovante(null)
       setMostrarCampoRecusa(false)
       setMotivoRecusa('')
     } catch (error) {
       console.error('Erro ao aprovar:', error)
-      toast.error(error.response?.data?.detail || '❌ Erro ao aprovar pagamento')
+      mostrarFeedback('erro', 'Falha na aprovação', error.response?.data?.detail || 'Erro ao aprovar pagamento.')
     } finally {
       setProcessandoAcao(false)
       setAcaoAtual('')
@@ -77,7 +120,7 @@ const DashboardValidacao = () => {
 
   const handleRecusar = async (pagamentoId, motivo) => {
     if (!motivo.trim()) {
-      toast.error('⚠️ Informe o motivo da recusa')
+      mostrarFeedback('aviso', 'Motivo obrigatório', 'Informe o motivo da recusa antes de continuar.')
       return
     }
 
@@ -91,15 +134,16 @@ const DashboardValidacao = () => {
         motivo: motivo,
         usuario_validador_id: 1 // TODO: Pegar do contexto de autenticação
       })
-      
-      toast.success('❌ Pagamento recusado!')
+
+      atualizarComprovanteNaTela(pagamentoId, selectedComprovante?.status_validacao, 'RECUSADO')
+      mostrarFeedback('recusado', 'Comprovante recusado', `Pagamento #${pagamentoId} recusado com sucesso.`)
       carregarDashboard()
       setSelectedComprovante(null)
       setMostrarCampoRecusa(false)
       setMotivoRecusa('')
     } catch (error) {
       console.error('Erro ao recusar:', error)
-      toast.error(error.response?.data?.detail || '❌ Erro ao recusar pagamento')
+      mostrarFeedback('erro', 'Falha na recusa', error.response?.data?.detail || 'Erro ao recusar pagamento.')
     } finally {
       setProcessandoAcao(false)
       setAcaoAtual('')
@@ -109,11 +153,13 @@ const DashboardValidacao = () => {
   const handleAprovarRapido = async (pagamentoId) => {
     try {
       await api.post(`/comprovantes/${pagamentoId}/aprovar-rapido`)
-      toast.success('Pagamento aprovado rapidamente!')
+      const comprovante = pendentes.find(item => item.pagamento_id === pagamentoId) || emAnalise.find(item => item.pagamento_id === pagamentoId)
+      atualizarComprovanteNaTela(pagamentoId, comprovante?.status_validacao, 'APROVADO')
+      mostrarFeedback('sucesso', 'Aprovação rápida concluída', `Pagamento #${pagamentoId} aprovado rapidamente.`)
       carregarDashboard()
     } catch (error) {
       console.error('Erro ao aprovar rapidamente:', error)
-      toast.error(error.response?.data?.detail || 'Erro ao aprovar pagamento')
+      mostrarFeedback('erro', 'Falha na aprovação rápida', error.response?.data?.detail || 'Erro ao aprovar pagamento.')
     }
   }
 
@@ -140,6 +186,36 @@ const DashboardValidacao = () => {
         return 'bg-red-100 text-red-800'
       default:
         return 'bg-gray-100 text-gray-800'
+    }
+  }
+
+  const getFeedbackStyle = (tipo) => {
+    switch (tipo) {
+      case 'sucesso':
+        return {
+          container: 'border-green-200 bg-green-50 text-green-900',
+          badge: 'bg-green-600 text-white',
+          icon: 'Aprovado'
+        }
+      case 'erro':
+        return {
+          container: 'border-red-200 bg-red-50 text-red-900',
+          badge: 'bg-red-600 text-white',
+          icon: 'Erro'
+        }
+      case 'recusado':
+        return {
+          container: 'border-rose-200 bg-rose-50 text-rose-900',
+          badge: 'bg-rose-600 text-white',
+          icon: 'Recusado'
+        }
+      case 'aviso':
+      default:
+        return {
+          container: 'border-yellow-200 bg-yellow-50 text-yellow-900',
+          badge: 'bg-yellow-500 text-white',
+          icon: 'Aviso'
+        }
     }
   }
 
@@ -245,7 +321,41 @@ const DashboardValidacao = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-8">Validação de Comprovantes</h1>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Validação de Comprovantes</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            Aprove ou recuse comprovantes com retorno visual imediato na tela.
+          </p>
+        </div>
+        {feedbackAcao && (
+          <button
+            onClick={limparFeedback}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            Limpar aviso
+          </button>
+        )}
+      </div>
+
+      {feedbackAcao && (
+        <div className={`mb-6 rounded-2xl border p-4 shadow-sm ${getFeedbackStyle(feedbackAcao.tipo).container}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${getFeedbackStyle(feedbackAcao.tipo).badge}`}>
+                  {getFeedbackStyle(feedbackAcao.tipo).icon}
+                </span>
+                <p className="text-sm text-current/70">
+                  {formatarHorarioFeedback(feedbackAcao.timestamp)}
+                </p>
+              </div>
+              <h2 className="mt-3 text-lg font-semibold">{feedbackAcao.titulo}</h2>
+              <p className="mt-1 text-sm">{feedbackAcao.mensagem}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Estatísticas */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">

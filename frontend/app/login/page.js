@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useAuth } from '../../contexts/AuthContext'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -8,6 +9,10 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { login, refreshUser } = useAuth()
+
+  const redirectTo = searchParams.get('redirect') || '/dashboard'
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -15,27 +20,29 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const response = await fetch('/api/v1/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      })
+      const result = await login(email, password)
 
-      const data = await response.json()
-
-      if (response.ok) {
-        // Login bem-sucedido
-        if (data.requirePasswordChange) {
-          router.push('/primeiro-acesso')
-        } else {
-          router.push('/dashboard')
-        }
-      } else {
-        setError(data.detail || 'Credenciais inválidas')
+      if (!result.success) {
+        setError(result.error || 'Credenciais inválidas')
+        return
       }
+
+      try {
+        await refreshUser()
+      } catch (sessionError) {
+        console.error('❌ [LoginPage] Sessão não validada após login:', sessionError)
+        setError('Login retornou sucesso, mas a sessão não foi validada. Verifique cookies e proxy.')
+        return
+      }
+
+      if (result.requirePasswordChange) {
+        router.replace('/primeiro-acesso')
+        return
+      }
+
+      router.replace(redirectTo)
     } catch (err) {
+      console.error('❌ [LoginPage] Falha inesperada no login:', err)
       setError('Erro ao conectar com o servidor')
     } finally {
       setLoading(false)
@@ -66,7 +73,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
-            <div 
+            <div
               className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded"
               role="alert"
               aria-live="assertive"
@@ -120,7 +127,7 @@ export default function LoginPage() {
 
         <div className="mt-6 text-center text-sm text-gray-500">
           <p className="text-xs">Acesso restrito a funcionários</p>
-          <p className="text-xs text-slate-500 mt-2">🔒 Ambiente seguro</p>
+          <p className="text-xs text-slate-500 mt-2">Ambiente seguro</p>
         </div>
       </div>
     </div>
