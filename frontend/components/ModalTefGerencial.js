@@ -1247,33 +1247,46 @@ export default function ModalTefGerencial({ onClose }) {
     return () => clearTimeout(timer)
   }, [showTefFlow, tefResultado, tefProcessando, tefPrompt])
 
-  useEffect(() => {
-    const sessionId = String(tefResultado?.session_id || '').trim()
+  const shouldAutoFinalizePayload = (payload) => {
+    const sessionId = String(payload?.session_id || '').trim()
     const requiresManualFinalization = SEQUENCES_WITH_CASH_CHANGE.has(String(selectedSequence || ''))
-    const canAutoFinalize = Boolean(
+    return Boolean(
       sessionId &&
-      tefResultado?.finish_required &&
-      !tefResultado?.finish_deferred &&
-      !tefResultado?.finalizado &&
-      !tefResultado?.pendencia_automatica &&
-      !requiresManualFinalization &&
-      !tefProcessando
+      payload?.finish_required &&
+      !payload?.finish_deferred &&
+      !payload?.finalizado &&
+      !payload?.pendencia_automatica &&
+      !requiresManualFinalization
     )
+  }
 
-    if (!canAutoFinalize) {
+  const reserveAutoFinalizeSession = (payload) => {
+    const sessionId = String(payload?.session_id || '').trim()
+    if (!shouldAutoFinalizePayload(payload)) {
       if (!sessionId) {
         tefAutoFinalizeSessionRef.current = ''
       }
-      return undefined
+      return ''
     }
-
     if (tefAutoFinalizeSessionRef.current === sessionId) {
-      return undefined
+      return ''
     }
     tefAutoFinalizeSessionRef.current = sessionId
+    return sessionId
+  }
+
+  useEffect(() => {
+    if (tefProcessando) {
+      return undefined
+    }
+
+    const sessionId = reserveAutoFinalizeSession(tefResultado)
+    if (!sessionId) {
+      return undefined
+    }
 
     const timer = setTimeout(() => {
-      concluirFluxoTef()
+      concluirFluxoTef({ resultOverride: tefResultado, sessionIdOverride: sessionId })
     }, 250)
 
     return () => clearTimeout(timer)
@@ -1844,6 +1857,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       setTefResultado(payload)
       setTefInput('')
       iniciarTimeoutInatividade()
+      const autoFinalizeSessionId = reserveAutoFinalizeSession(payload)
+      if (autoFinalizeSessionId) {
+        setTimeout(() => {
+          concluirFluxoTef({ resultOverride: payload, sessionIdOverride: autoFinalizeSessionId })
+        }, 0)
+      }
       return
     }
 
@@ -2162,19 +2181,23 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     toast.success(`2a etapa preparada: ${config.secondLabel} de R$ ${formatCurrencyDisplay(config.secondAmount)} com o mesmo documento fiscal.`)
   }
 
-  const concluirFluxoTef = async () => {
+  const concluirFluxoTef = async (options = {}) => {
+    const resultOverride = options?.resultOverride || null
+    const currentResult = resultOverride || tefResultado
+    const sessionIdOverride = String(options?.sessionIdOverride || '').trim()
+
     try {
-      if (tefResultado?.finish_deferred) {
+      if (currentResult?.finish_deferred) {
         prepararSegundaEtapaCartaoGuiada()
         return
       }
 
-      if (tefResultado?.pendencia_automatica || tefResultado?.finalizado) {
+      if (currentResult?.pendencia_automatica || currentResult?.finalizado) {
         await encerrarFluxoTef()
         return
       }
 
-      const sessionIdAtual = tefSessionRef.current || tefSessionId || tefResultado?.session_id
+      const sessionIdAtual = sessionIdOverride || tefSessionRef.current || tefSessionId || currentResult?.session_id || tefResultado?.session_id
       if (!sessionIdAtual) {
         await tratarSessaoPerdida('Sessao TEF nao encontrada. Reinicie a sequencia.')
         return
@@ -2207,8 +2230,8 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
       const res = await api.post('/pagamentos/tef/finalizar', {
         session_id: sessionIdAtual,
-        confirm: Boolean(tefResultado?.aprovado),
-        numero_pagamento_nfpag: tefResultado?.nfpag?.numero_pagamento || undefined,
+        confirm: Boolean(currentResult?.aprovado),
+        numero_pagamento_nfpag: currentResult?.nfpag?.numero_pagamento || undefined,
         nfpag_raw: nfpagRawToSend
       }, { timeout: TEF_REQUEST_TIMEOUT_MS })
 
