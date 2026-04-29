@@ -152,6 +152,20 @@ const formatFloatInput = (value, decimals) => {
   return `${intPart},${decPart}`
 }
 
+const formatSitefDateTimeDisplay = (value) => {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length >= 14) {
+    const ano = digits.slice(0, 4)
+    const mes = digits.slice(4, 6)
+    const dia = digits.slice(6, 8)
+    const hora = digits.slice(8, 10)
+    const minuto = digits.slice(10, 12)
+    const segundo = digits.slice(12, 14)
+    return `${dia}/${mes}/${ano} ${hora}:${minuto}:${segundo}`
+  }
+  return String(value || '').trim() || '-'
+}
+
 const toneClasses = {
   green: 'border-green-200 bg-green-50 text-green-800',
   red: 'border-red-200 bg-red-50 text-red-800',
@@ -197,6 +211,34 @@ const renderTefEventInfo = (payload) => {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+const renderTefCommandInfo = (payload) => {
+  const commandId = Number(payload?.command_id)
+  const fieldId = Number(payload?.field_id)
+  const clisitefStatus = payload?.clisitef_status
+  const sessionId = String(payload?.session_id || '').trim()
+  const hasInfo = (
+    Number.isFinite(commandId) && commandId > 0
+  ) || (
+    Number.isFinite(fieldId) && fieldId > 0
+  ) || (
+    clisitefStatus !== undefined && clisitefStatus !== null && String(clisitefStatus).trim() !== ''
+  ) || Boolean(sessionId)
+
+  if (!hasInfo) return null
+
+  return (
+    <div className="mb-4 rounded border border-zinc-200 bg-zinc-50 px-4 py-3 text-zinc-800">
+      <p className="font-semibold">Diagnostico do retorno CliSiTef</p>
+      <div className="mt-2 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+        <p>CommandId: <span className="font-mono">{Number.isFinite(commandId) && commandId > 0 ? commandId : '-'}</span></p>
+        <p>TipoCampo: <span className="font-mono">{Number.isFinite(fieldId) && fieldId > 0 ? fieldId : '-'}</span></p>
+        <p>Retorno CliSiTef: <span className="font-mono">{clisitefStatus ?? '-'}</span></p>
+        <p>Sessao: <span className="font-mono break-all">{sessionId || '-'}</span></p>
+      </div>
     </div>
   )
 }
@@ -422,8 +464,8 @@ const SEQUENCE_PRESETS = [
     id: '10',
     label: 'Seq. 10 - Voltar ao menu anterior',
     functionId: 0,
-    guidance: 'Selecione credito, use MENU INICIAL ou VOLTAR e refaca o fluxo em debito.',
-    expected: 'O retorno ao menu anterior deve funcionar com continua = 1, a transacao final deve ser autorizada e deve haver impressao de cupom.'
+    guidance: 'Primeiro selecione credito. Se escolher a opcao errada em um menu CommandId 21, use o botao VOLTAR AO MENU para enviar continua = 1, retornar ao menu anterior do AgenteCliSiTef e refazer o fluxo em debito.',
+    expected: 'As mensagens retornadas devem ficar visiveis ao operador com os respectivos CommandIds. Depois do retorno ao menu anterior, a transacao em debito deve ser autorizada e imprimir o cupom TEF.'
   },
   {
     id: '11',
@@ -569,7 +611,7 @@ const SEQUENCES_REQUIRE_ORIGINAL_DOCUMENT_REFERENCE = new Set(['12', '13', '14',
 const getSequencePreset = (sequenceId) => SEQUENCE_PRESETS.find((item) => item.id === String(sequenceId || ''))
 const sequenceAutogeneratesFiscalDocument = (sequenceId) => SEQUENCES_AUTOGENERATE_FISCAL_DOCUMENT.has(String(sequenceId || ''))
 const sequenceRequiresOriginalDocumentReference = (sequenceId) => SEQUENCES_REQUIRE_ORIGINAL_DOCUMENT_REFERENCE.has(String(sequenceId || ''))
-const SEQUENCES_PREFER_NSU_HOST_DOCUMENT = new Set(['12'])
+const SEQUENCES_PREFER_NSU_HOST_DOCUMENT = new Set(['12', '17'])
 const MULTIPLE_PAYMENT_TOTALS = {
   '21': 50,
   '28': 50
@@ -896,11 +938,14 @@ const APPROVED_SEQUENCE_FAILURE_HINTS = [
   'trn nao habilitada',
   'nao habilitada',
   'erro pinpad',
+  'sem conexao servidor',
   'sem comunicacao com o sitef',
   'modo invalido',
   'transacao negada',
   'nao autorizada'
 ]
+
+const APPROVED_SEQUENCE_ENVIRONMENT_BLOCK_STATUSES = new Set([-5, -43])
 
 const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro, pendenciaStatus) => {
   const seq = String(sequenceId || '')
@@ -970,16 +1015,24 @@ const evaluateSequenceValidation = (sequenceId, tefResultado, tefPrompt, tefErro
   }
 
   if (approvedSeq.has(seq)) {
+    const explicitFailure = APPROVED_SEQUENCE_FAILURE_HINTS.some((hint) => message.includes(hint))
+    const environmentBlocked = explicitFailure || APPROVED_SEQUENCE_ENVIRONMENT_BLOCK_STATUSES.has(clisitefStatus)
     if (!tefResultado) {
-      const explicitFailure = APPROVED_SEQUENCE_FAILURE_HINTS.some((hint) => message.includes(hint))
-      if (explicitFailure) {
+      if (environmentBlocked) {
         return {
-          status: 'fail',
-          title: 'FAIL',
-          detail: 'Retorno do ambiente indica bloqueio/nao habilitacao (ex.: cartao nao configurado), antes da autorizacao com cupom.'
+          status: 'pending',
+          title: 'BLOQUEADO',
+          detail: 'Ambiente TEF/pinpad bloqueou a execucao antes da autorizacao com cupom. Corrija o equipamento ou a comunicacao e teste novamente.'
         }
       }
       return { status: 'pending', title: 'PENDENTE', detail: 'Aguardando resultado final da transacao.' }
+    }
+    if (environmentBlocked && !aprovado && !hasCupom) {
+      return {
+        status: 'pending',
+        title: 'BLOQUEADO',
+        detail: 'Ambiente TEF/pinpad bloqueou a execucao antes da autorizacao com cupom. O fluxo nao chegou no ponto esperado da sequencia.'
+      }
     }
     const ok = aprovado && hasCupom
     return {
@@ -1109,9 +1162,19 @@ export default function ModalTefGerencial({ onClose }) {
     if (fieldId === 516) {
       const preferNsuHostDocument = sequencePrefersNsuHostDocument(selectedSequence)
       return String(
+        (preferNsuHostDocument && reference?.nsu_host_4077) ||
         (preferNsuHostDocument && reference?.nsu_host) ||
         reference?.campo_516_valor ||
         reference?.campo_516_informado ||
+        ''
+      ).trim()
+    }
+
+    if (fieldId === 4077) {
+      return String(
+        reference?.nsu_host_4077 ||
+        reference?.nsu_host ||
+        reference?.campo_516_valor ||
         ''
       ).trim()
     }
@@ -1247,6 +1310,21 @@ export default function ModalTefGerencial({ onClose }) {
     return () => clearTimeout(timer)
   }, [showTefFlow, tefResultado, tefProcessando, tefPrompt])
 
+  const shouldKeepMultiplePaymentBatchOpen = (payload) => {
+    const sessionId = String(payload?.session_id || '').trim()
+    const batchSessionId = String(deferredBatchSessionId || '').trim()
+    return Boolean(
+      batchSessionId &&
+      sessionId &&
+      sessionId === batchSessionId &&
+      payload?.finish_required &&
+      !payload?.finish_deferred &&
+      !payload?.aprovado &&
+      !payload?.finalizado &&
+      !payload?.pendencia_automatica
+    )
+  }
+
   const shouldAutoFinalizePayload = (payload) => {
     const sessionId = String(payload?.session_id || '').trim()
     const requiresManualFinalization = SEQUENCES_WITH_CASH_CHANGE.has(String(selectedSequence || ''))
@@ -1256,6 +1334,7 @@ export default function ModalTefGerencial({ onClose }) {
       !payload?.finish_deferred &&
       !payload?.finalizado &&
       !payload?.pendencia_automatica &&
+      !shouldKeepMultiplePaymentBatchOpen(payload) &&
       !requiresManualFinalization
     )
   }
@@ -2053,7 +2132,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         cashier_operator: cashierOperator || undefined,
         justificativa: justificativa.trim() || undefined,
         defer_finish: isGuidedFirstStepStart || undefined,
-        session_id: isGuidedSecondStepStart && batchSessionIdToReuse ? batchSessionIdToReuse : undefined
+        session_id: batchSessionIdToReuse && !isGuidedFirstStepStart ? batchSessionIdToReuse : undefined
       }
 
       const res = await api.post('/pagamentos/tef/iniciar-funcao', payload, { timeout: TEF_REQUEST_TIMEOUT_MS })
@@ -2179,6 +2258,36 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     setNfpagExtraFields({})
     setNfpagError('')
     toast.success(`2a etapa preparada: ${config.secondLabel} de R$ ${formatCurrencyDisplay(config.secondAmount)} com o mesmo documento fiscal.`)
+  }
+
+  const retornarAoLoteMultiploAberto = () => {
+    const config = GUIDED_TWO_STEP_CARD_SEQUENCE_CONFIG[String(selectedSequence || '')]
+    if (tefIdleTimerRef.current) {
+      clearTimeout(tefIdleTimerRef.current)
+      tefIdleTimerRef.current = null
+    }
+    tefSessionRef.current = null
+    tefAutoFinalizeSessionRef.current = ''
+    setTefSessionId(null)
+    setTefPrompt(null)
+    setTefInput('')
+    setTefInputMode('manual')
+    setTefErro('')
+    setTefResultado(null)
+    setTefProcessando(false)
+    setShowTefFlow(false)
+    setCupomDialog({ open: false, titulo: '', conteudo: '' })
+    setCupomQueue([])
+    setNfpagError('')
+
+    if (config) {
+      setFunctionId(config.secondFunctionId)
+      setValor(String(config.secondAmount))
+      setTrnAdditionalParameters(config.secondTrnAdditionalParameters || '')
+      setTrnInitParameters(config.secondTrnInitParameters || '')
+    }
+
+    toast.success('Lote multiplo mantido aberto. Escolha outra forma de pagamento para concluir o valor restante.')
   }
 
   const concluirFluxoTef = async (options = {}) => {
@@ -2334,6 +2443,8 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const creditInstallmentMenuHint = ehMenu ? buildCreditInstallmentMenuHint(selectedSequence, tefPrompt, menuOptions) : null
     const retornoCliSiTef = Number(tefResultado?.clisitef_status ?? tefResultado?.detail?.clisitefStatus ?? (isAprovado ? 0 : -1))
     const isDeferredBatchFirstStep = Boolean(tefResultado?.finish_deferred)
+    const keepMultiplePaymentBatchOpen = shouldKeepMultiplePaymentBatchOpen(tefResultado)
+    const backToMenuButtonLabel = 'VOLTAR AO MENU'
     const canPrepareGuidedSecondStep = Boolean(
       guidedTwoStepConfig &&
       isAprovado &&
@@ -2362,6 +2473,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
                 {renderTefEventInfo(tefResultado)}
+                {renderTefCommandInfo(tefResultado)}
                 {renderTefReimpressaoInfo(tefResultado?.reimpressao)}
                 {renderReferenciaReimpressao(tefResultado?.referencia_reimpressao)}
                 <h3 className="text-xl font-bold text-zinc-900 sm:text-2xl lg:text-3xl">{isAutomaticPendingResolution ? 'Tratamento de Pendencias' : `Transacao ${isAprovado ? 'Aprov.' : 'Nao Aprov.'}`}</h3>
@@ -2370,6 +2482,13 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
                     <p className="font-semibold">Finalizacao adiada para o lote</p>
                     <p className="text-sm mt-1">Esta primeira etapa foi aprovada, mas nao sera finalizada agora. Prepare a 2a etapa e envie a Finaliza somente na ultima transacao do lote.</p>
+                  </div>
+                )}
+
+                {keepMultiplePaymentBatchOpen && (
+                  <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+                    <p className="font-semibold">Lote multiplo ainda aberto</p>
+                    <p className="text-sm mt-1">A 2a etapa nao foi aprovada. O sistema nao vai enviar Finaliza agora para permitir outra forma de pagamento com o mesmo TaxInvoiceNumber/DataFiscal. Se a compra for interrompida, cancele o lote.</p>
                   </div>
                 )}
 
@@ -2382,7 +2501,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 )}
 
-                {!isDeferredBatchFirstStep && !fluxoFinalizado && tefResultado?.finish_required && (
+                {!isDeferredBatchFirstStep && !keepMultiplePaymentBatchOpen && !fluxoFinalizado && tefResultado?.finish_required && (
                   <div className="rounded border border-emerald-300 bg-emerald-50 px-4 py-3 text-emerald-900">
                     <p className="font-semibold">Finaliza pendente</p>
                     <p className="text-sm mt-1">Apos conferir ou imprimir os comprovantes, clique em Enviar Finaliza. Em transacao aprovada com Retorno = 0, essa chamada confirma a operacao no SiTef.</p>
@@ -2450,6 +2569,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 <div className="rounded border bg-white p-4">
                   <p className="text-sm text-zinc-700">Fim - Retorno CliSiTef: {retornoCliSiTef} ({getClisitefStatusDescription(retornoCliSiTef)})</p>
                   <p className="font-mono text-sm mt-1">{tefResultado?.message || tefErro || '-'}</p>
+                  <p className="font-mono text-sm mt-1">Data/Hora da transacao: {formatSitefDateTimeDisplay(tefResultado?.data_hora_transacao)}</p>
                   <p className="font-mono text-sm mt-1">NSU Host: {tefResultado?.nsu_host || tefResultado?.nsu || '-'}</p>
                   <p className="font-mono text-sm mt-1">NSU SiTef: {tefResultado?.nsu_sitef || '-'}</p>
                   <p className="font-mono text-sm mt-1">Autorizacao: {tefResultado?.autorizacao || '-'}</p>
@@ -2671,19 +2791,27 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap">
                   <button
                     type="button"
-                    onClick={isDeferredBatchFirstStep ? prepararSegundaEtapaCartaoGuiada : isAutomaticPendingResolution || fluxoFinalizado ? () => encerrarFluxoTef() : concluirFluxoTef}
+                    onClick={
+                      isDeferredBatchFirstStep
+                        ? prepararSegundaEtapaCartaoGuiada
+                        : keepMultiplePaymentBatchOpen
+                          ? retornarAoLoteMultiploAberto
+                          : isAutomaticPendingResolution || fluxoFinalizado
+                            ? () => encerrarFluxoTef()
+                            : concluirFluxoTef
+                    }
                     disabled={tefProcessando}
                     className={tefFlowPrimaryButtonClass}
                   >
-                    {tefProcessando ? '...' : isDeferredBatchFirstStep ? 'Preparar 2a etapa' : isAutomaticPendingResolution || fluxoFinalizado ? 'OK' : 'Enviar Finaliza'}
+                    {tefProcessando ? '...' : isDeferredBatchFirstStep ? 'Preparar 2a etapa' : keepMultiplePaymentBatchOpen ? 'Tentar outra forma' : isAutomaticPendingResolution || fluxoFinalizado ? 'OK' : 'Enviar Finaliza'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => encerrarFluxoTef()}
+                    onClick={keepMultiplePaymentBatchOpen ? concluirFluxoTef : () => encerrarFluxoTef()}
                     disabled={tefProcessando}
                     className={tefFlowSecondaryButtonClass}
                   >
-                    ENCERRAR
+                    {keepMultiplePaymentBatchOpen ? 'Cancelar lote' : 'ENCERRAR'}
                   </button>
                   <button
                     type="button"
@@ -2708,6 +2836,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 {headerText && (
                   <pre className="mb-2 whitespace-pre-wrap break-words text-sm text-zinc-800 sm:text-base">{headerText}</pre>
                 )}
+                {renderTefCommandInfo(tefPrompt)}
                 {renderMensagens(mensagens)}
                 {renderTefEventInfo(tefPrompt)}
                 {renderTefReimpressaoInfo(tefPrompt?.reimpressao)}
@@ -2774,6 +2903,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 ) : ehMenu && menuOptions.length > 0 ? (
                   <div className="mb-4 space-y-3">
+                    <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                      Se selecionar uma opcao errada do menu, use <span className="font-semibold">{backToMenuButtonLabel}</span> para enviar <span className="font-mono">continua = 1</span> e retornar ao menu anterior da CliSiTef.
+                    </div>
                     {creditInstallmentMenuHint && (
                       <div className={`rounded border px-3 py-2 text-sm ${creditInstallmentMenuHint.tone === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-sky-300 bg-sky-50 text-sky-900'}`}>
                         <p className="font-semibold">{creditInstallmentMenuHint.title}</p>
@@ -2943,7 +3075,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className={tefFlowMutedButtonClass}
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : ehProcessandoAutomatico ? (
@@ -2969,7 +3101,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className={tefFlowMutedButtonClass}
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : ehRecibo ? (
@@ -2996,7 +3128,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className={tefFlowMutedButtonClass}
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : ehMenu && !menuNeedsManualSelection ? (
@@ -3015,7 +3147,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className={tefFlowMutedButtonClass}
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : (
@@ -3052,7 +3184,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className={tefFlowMutedButtonClass}
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   )}
@@ -3073,7 +3205,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       disabled={tefProcessando}
                       className={tefFlowMutedButtonClass}
                     >
-                      MENU INICIAL
+                      {backToMenuButtonLabel}
                     </button>
                   </div>
                 )}

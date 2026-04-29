@@ -130,6 +130,20 @@ const formatFloatInput = (value, decimals) => {
   return `${intPart},${decPart}`
 }
 
+const formatSitefDateTimeDisplay = (value) => {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length >= 14) {
+    const ano = digits.slice(0, 4)
+    const mes = digits.slice(4, 6)
+    const dia = digits.slice(6, 8)
+    const hora = digits.slice(8, 10)
+    const minuto = digits.slice(10, 12)
+    const segundo = digits.slice(12, 14)
+    return `${dia}/${mes}/${ano} ${hora}:${minuto}:${segundo}`
+  }
+  return String(value || '').trim() || '-'
+}
+
 const toneClasses = {
   green: 'border-green-200 bg-green-50 text-green-800',
   red: 'border-red-200 bg-red-50 text-red-800',
@@ -167,6 +181,34 @@ const renderTefEventInfo = (payload) => {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+const renderTefCommandInfo = (payload) => {
+  const commandId = Number(payload?.command_id)
+  const fieldId = Number(payload?.field_id)
+  const clisitefStatus = payload?.clisitef_status
+  const sessionId = String(payload?.session_id || '').trim()
+  const hasInfo = (
+    Number.isFinite(commandId) && commandId > 0
+  ) || (
+    Number.isFinite(fieldId) && fieldId > 0
+  ) || (
+    clisitefStatus !== undefined && clisitefStatus !== null && String(clisitefStatus).trim() !== ''
+  ) || Boolean(sessionId)
+
+  if (!hasInfo) return null
+
+  return (
+    <div className="mb-4 rounded border border-zinc-200 bg-zinc-50 px-4 py-3 text-zinc-800">
+      <p className="font-semibold">Diagnostico do retorno CliSiTef</p>
+      <div className="mt-2 grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
+        <p>CommandId: <span className="font-mono">{Number.isFinite(commandId) && commandId > 0 ? commandId : '-'}</span></p>
+        <p>TipoCampo: <span className="font-mono">{Number.isFinite(fieldId) && fieldId > 0 ? fieldId : '-'}</span></p>
+        <p>Retorno CliSiTef: <span className="font-mono">{clisitefStatus ?? '-'}</span></p>
+        <p>Sessao: <span className="font-mono break-all">{sessionId || '-'}</span></p>
+      </div>
     </div>
   )
 }
@@ -917,6 +959,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     const menuOptions = ehMenu ? parseMenuOptions(Number(tefPrompt?.command_id), prompt) : []
     const hasMenuOptions = ehMenu && menuOptions.length > 0
     const retornoCliSiTef = Number(tefResultado?.clisitef_status ?? tefResultado?.detail?.clisitefStatus ?? (isAprovado ? 0 : -1))
+    const backToMenuButtonLabel = 'VOLTAR AO MENU'
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
@@ -943,12 +986,14 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       </div>
                     )}
                     {renderTefEventInfo(tefResultado)}
+                    {renderTefCommandInfo(tefResultado)}
                     {renderTefReimpressaoInfo(tefResultado?.reimpressao)}
                     <h3 className="text-3xl font-bold text-zinc-900">Transacao {isAprovado ? 'Aprov.' : 'Nao Aprov.'}</h3>
 
                 <div className="rounded border bg-white p-4">
                   <p className="text-sm text-zinc-700">Fim - Retorno CliSiTef: {retornoCliSiTef} ({getClisitefStatusDescription(retornoCliSiTef)})</p>
                   <p className="font-mono text-sm mt-1">{tefResultado?.message || tefErro || '-'}</p>
+                  <p className="font-mono text-sm mt-1">Data/Hora da transacao: {formatSitefDateTimeDisplay(tefResultado?.data_hora_transacao)}</p>
                   <p className="font-mono text-sm mt-1">NSU Host: {tefResultado?.nsu_host || tefResultado?.nsu || '-'}</p>
                   <p className="font-mono text-sm mt-1">NSU SiTef: {tefResultado?.nsu_sitef || '-'}</p>
                   <p className="font-mono text-sm mt-1">Autorizacao: {tefResultado?.autorizacao || '-'}</p>
@@ -1314,6 +1359,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                 {headerText && (
                   <pre className="text-sm text-zinc-800 whitespace-pre-wrap mb-2">{headerText}</pre>
                 )}
+                {renderTefCommandInfo(tefPrompt)}
                 {renderMensagens(mensagens)}
                 {renderTefEventInfo(tefPrompt)}
                 {renderTefReimpressaoInfo(tefPrompt?.reimpressao)}
@@ -1337,6 +1383,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 ) : hasMenuOptions ? (
                   <div className="mb-4 space-y-3">
+                    <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                      Se selecionar uma opcao errada do menu, use <span className="font-semibold">{backToMenuButtonLabel}</span> para enviar <span className="font-mono">continua = 1</span> e retornar ao menu anterior da CliSiTef.
+                    </div>
                     <pre className="text-sm text-zinc-900 whitespace-pre-wrap bg-white border border-zinc-300 rounded p-3">{prompt || ''}</pre>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {menuOptions.map((opt) => (
@@ -1493,7 +1542,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className="w-40 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : ehProcessandoAutomatico ? (
@@ -1519,7 +1568,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : ehRecibo ? (
@@ -1546,7 +1595,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : ehAguardarTecla ? (
@@ -1573,7 +1622,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : hasMenuOptions ? (
@@ -1592,7 +1641,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   ) : (
@@ -1629,7 +1678,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                         disabled={tefProcessando}
                         className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
                       >
-                        MENU INICIAL
+                        {backToMenuButtonLabel}
                       </button>
                     </>
                   )}
@@ -1650,7 +1699,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                       disabled={tefProcessando}
                       className="w-36 bg-zinc-400 hover:bg-zinc-500 text-white text-xl font-semibold py-2 rounded disabled:opacity-60"
                     >
-                      MENU INICIAL
+                      {backToMenuButtonLabel}
                     </button>
                   </div>
                 )}

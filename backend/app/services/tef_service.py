@@ -223,6 +223,34 @@ def _log_tef_input(
     )
 
 
+def _log_tef_finish_request(
+    function_id: int | None,
+    session_id: str,
+    confirm: bool,
+    tax_invoice_number: str,
+    tax_invoice_date: str,
+    tax_invoice_time: str,
+    param_adic: str | None = None,
+) -> None:
+    function_part = f"{function_id}" if function_id is not None else "?"
+    param_part = " sim" if str(param_adic or "").strip() else " nao"
+    print(
+        f"[TEF][finish-input] funcao={function_part} session={session_id} confirm={1 if confirm else 0} "
+        f"cupom={tax_invoice_number} data={tax_invoice_date} hora={tax_invoice_time} param_adic={param_part}"
+    )
+
+
+def _log_tef_finish_response(function_id: int | None, session_id: str, response: Dict[str, Any]) -> None:
+    function_part = f"{function_id}" if function_id is not None else "?"
+    service_message = _sanitize_tef_log_data(0, response.get("serviceMessage"))
+    service_part = f" message='{service_message}'" if service_message else ""
+    print(
+        f"[TEF][finish] funcao={function_part} session={session_id} "
+        f"nsu={response.get('nsu') or response.get('nsu_host') or response.get('nsu_sitef') or ''}"
+        f"{service_part}"
+    )
+
+
 def _resolve_final_message(prompt: str, session: Dict[str, Any], clisitef_status: int, aprovado: bool) -> str:
     if str(prompt or "").strip():
         return str(prompt)
@@ -506,7 +534,8 @@ def _build_transaction_reference(session: Dict[str, Any] | None) -> Dict[str, An
     campo_515_ddmmaaaa = _format_date_ddmmyyyy(data_hora_transacao or data_fiscal)
     campo_515_ddmm = campo_515_ddmmaaaa[:4] if campo_515_ddmmaaaa else ""
     campo_515_mmdd = _format_date_mmdd(data_hora_transacao or data_fiscal)
-    nsu_host = str(session.get("nsu_host") or session.get("nsu") or "").strip()
+    nsu_host_4077 = str(session.get("nsu_host_4077") or "").strip()
+    nsu_host = str(nsu_host_4077 or session.get("nsu_host") or session.get("nsu") or "").strip()
     nsu_sitef = str(session.get("nsu_sitef") or "").strip()
     codigo_estabelecimento = str(session.get("codigo_estabelecimento") or "").strip()
     rede_autorizadora = str(session.get("rede_autorizadora") or "").strip()
@@ -537,6 +566,7 @@ def _build_transaction_reference(session: Dict[str, Any] | None) -> Dict[str, An
         "campo_515_ddmm": campo_515_ddmm or None,
         "campo_515_mmdd": campo_515_mmdd or None,
         "nsu_host": nsu_host or None,
+        "nsu_host_4077": nsu_host_4077 or None,
         "nsu_sitef": nsu_sitef or None,
         "codigo_estabelecimento": codigo_estabelecimento or None,
         "rede_autorizadora": rede_autorizadora or None,
@@ -583,7 +613,8 @@ def _build_reimpressao_reference(session: Dict[str, Any] | None) -> Dict[str, An
     campo_515 = str((source_reference or {}).get("campo_515_ddmmaaaa") or _format_date_ddmmyyyy(data_hora_transacao or data_fiscal)).strip()
     campo_515_ddmm = str((source_reference or {}).get("campo_515_ddmm") or (campo_515[:4] if campo_515 else "")).strip()
     campo_515_mmdd = str((source_reference or {}).get("campo_515_mmdd") or _format_date_mmdd(data_hora_transacao or data_fiscal)).strip()
-    nsu_host = str((source_reference or {}).get("nsu_host") or "").strip()
+    nsu_host_4077 = str((source_reference or {}).get("nsu_host_4077") or "").strip()
+    nsu_host = str(nsu_host_4077 or (source_reference or {}).get("nsu_host") or "").strip()
     nsu_sitef = str((source_reference or {}).get("nsu_sitef") or "").strip()
     codigo_estabelecimento = str((source_reference or {}).get("codigo_estabelecimento") or "").strip()
     rede_autorizadora = str((source_reference or {}).get("rede_autorizadora") or "").strip()
@@ -637,6 +668,7 @@ def _build_reimpressao_reference(session: Dict[str, Any] | None) -> Dict[str, An
         "hora_fiscal": hora_fiscal or None,
         "data_hora_transacao": data_hora_transacao or None,
         "nsu_host": nsu_host or None,
+        "nsu_host_4077": nsu_host_4077 or None,
         "nsu_sitef": nsu_sitef or None,
         "codigo_estabelecimento": codigo_estabelecimento or None,
         "rede_autorizadora": rede_autorizadora or None,
@@ -1778,6 +1810,15 @@ class TefService:
             finish_payload["paramAdic"] = param_adic
             finish_payload["trnAdditionalParameters"] = param_adic
 
+        _log_tef_finish_request(
+            session.get("function_id"),
+            session_id,
+            confirm,
+            finish_tax_invoice_number,
+            finish_tax_invoice_date,
+            finish_tax_invoice_time,
+            param_adic,
+        )
         try:
             finish = self._request("POST", "/finishTransaction", finish_payload)
         except requests.RequestException as exc:
@@ -1785,6 +1826,7 @@ class TefService:
                 "success": False,
                 "error": f"Falha ao finalizar TEF: {exc}",
             }
+        _log_tef_finish_response(session.get("function_id"), session_id, finish)
 
         nsu_sitef = finish.get("nsu_sitef") or session.get("nsu_sitef")
         nsu_host = finish.get("nsu_host") or finish.get("nsu") or session.get("nsu_host") or session.get("nsu")
