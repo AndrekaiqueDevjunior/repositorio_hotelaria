@@ -11,6 +11,7 @@ from .cielo_routes import router as cielo_router
 from .premios_routes import router as premios_router
 from .tarifas_routes import router as tarifas_router
 from .notificacao_routes import router as notificacao_router
+from .indicacao_routes import router as indicacao_router
 # from .checkin_routes import router as checkin_router
 # from .consumo_routes import router as consumo_router
 # from .cancelamento_routes import router as cancelamento_router
@@ -31,4 +32,5 @@ __all__ = [
     "premios_router",
     "tarifas_router",
     "notificacao_router",
+    "indicacao_router",
 ]

@@ -261,6 +261,12 @@ class ReservaRepository:
             await NotificationService.notificar_nova_reserva(self.db, nova_reserva)
             await self._notificar_whatsapp_reserva(nova_reserva, "criada")
 
+        try:
+            from app.services.indicacao_service import IndicacaoService
+            await IndicacaoService(self.db).registrar_reserva_realizada(nova_reserva.id)
+        except Exception as e:
+            print(f"[CONVITE REAL] Erro ao registrar reserva realizada: {e}")
+
         return self._serialize_reserva(nova_reserva)
     
     async def get_by_id(self, reserva_id: int) -> Dict[str, Any]:

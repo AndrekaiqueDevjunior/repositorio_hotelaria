@@ -16,6 +16,7 @@ MIGRATIONS=(
     "005_criar_tabelas_premios.sql"
     "006_add_foto_url_funcionarios.sql"
     "007_fix_colunas_faltantes.sql"
+    "008_criar_indicacoes_convite_real.sql"
 )
 
 # Verificar se estamos no diretório correto

@@ -149,6 +149,15 @@ class HospedagemRepository:
             except Exception as e:
                 print(f"[AUDITORIA] Erro ao registrar auditoria check-in (não crítico): {e}")
         
+        try:
+            from app.services.indicacao_service import IndicacaoService
+            await IndicacaoService(self.db).registrar_checkin_realizado(
+                reserva_id=reserva_id,
+                checkin_datetime=hospedagem_atualizada.checkinRealizadoEm,
+            )
+        except Exception as e:
+            print(f"[CONVITE REAL] Erro ao registrar check-in da indicacao: {e}")
+
         return self._serialize(hospedagem_atualizada)
     
     async def checkout(
@@ -229,7 +238,20 @@ class HospedagemRepository:
             funcionario_id=funcionario_id,
             checkout_datetime=checkout_timestamp,
         )
-        
+
+        try:
+            from app.services.indicacao_service import IndicacaoService
+            resultado_indicacao = await IndicacaoService(self.db).processar_credito_indicacao_apos_checkout(
+                reserva_id=reserva_id,
+                funcionario_id=funcionario_id,
+            )
+            if resultado_indicacao.get("creditado"):
+                print(f"[CONVITE REAL] +{resultado_indicacao.get('pontos', 0)} pontos creditados por indicacao")
+            elif resultado_indicacao.get("motivo"):
+                print(f"[CONVITE REAL] Sem credito de indicacao: {resultado_indicacao.get('motivo')}")
+        except Exception as e:
+            print(f"[CONVITE REAL] Erro ao processar credito de indicacao: {e}")
+
         # Criar notificação
         from app.services.notification_service import NotificationService
         await NotificationService.notificar_checkout_realizado(self.db, reserva)

@@ -44,6 +44,8 @@ model Cliente {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   historicoPontos     HistoricoPontos[]
+  indicacoesFeitas    Indicacao[]          @relation("IndicadorIndicacoes")
+  indicacoesRecebidas Indicacao[]          @relation("IndicadoIndicacoes")
   operacoesAntifraude OperacaoAntifraude[]
   pagamentos          Pagamento[]
   reservas            Reserva[]
@@ -83,6 +85,7 @@ model Reserva {
   notificacoes     Notificacao[]
   pagamentos       Pagamento[]
   transacoesPontos TransacaoPontos[]
+  indicacoes        Indicacao[]
   voucher          Voucher?
   hospedagem       Hospedagem?
   cupomUso         CupomUso?
@@ -239,6 +242,7 @@ model TransacaoPontos {
   motivo          String?
   reservaId       Int?           @map("reserva_id")
   createdAt       DateTime       @default(now()) @map("created_at")
+  indicacao        Indicacao?
   cliente         Cliente        @relation(fields: [clienteId], references: [id])
   usuarioPontos   UsuarioPontos  @relation(fields: [usuarioPontosId], references: [id])
   funcionario     Funcionario?   @relation(fields: [funcionarioId], references: [id])
@@ -268,6 +272,34 @@ model HistoricoPontos {
   @@index([clienteId])
   @@index([usuarioPontosId])
   @@map("historico_pontos")
+}
+
+model Indicacao {
+  id                Int              @id @default(autoincrement())
+  clienteIndicadorId Int            @map("cliente_indicador_id")
+  clienteIndicadoId  Int?           @map("cliente_indicado_id")
+  reservaId          Int?           @unique @map("reserva_id")
+  transacaoPontosId  Int?           @unique @map("transacao_pontos_id")
+  cpfIndicador       String         @map("cpf_indicador") @db.VarChar(14)
+  cpfIndicado        String         @unique @map("cpf_indicado") @db.VarChar(14)
+  status             String         @default("enviado")
+  dataEnvio          DateTime       @default(now()) @map("data_envio")
+  dataReserva        DateTime?      @map("data_reserva")
+  dataCheckin        DateTime?      @map("data_checkin")
+  dataCheckout       DateTime?      @map("data_checkout")
+  pontosCreditados   Boolean        @default(false) @map("pontos_creditados")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  indicador          Cliente        @relation("IndicadorIndicacoes", fields: [clienteIndicadorId], references: [id])
+  indicado           Cliente?       @relation("IndicadoIndicacoes", fields: [clienteIndicadoId], references: [id])
+  reserva            Reserva?       @relation(fields: [reservaId], references: [id])
+  transacaoPontos    TransacaoPontos? @relation(fields: [transacaoPontosId], references: [id])
+
+  @@index([clienteIndicadorId])
+  @@index([clienteIndicadoId])
+  @@index([status])
+  @@index([pontosCreditados])
+  @@map("indicacoes")
 }
 
 model Notificacao {

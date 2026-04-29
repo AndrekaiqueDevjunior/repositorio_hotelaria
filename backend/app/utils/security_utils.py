@@ -98,8 +98,7 @@ def generate_card_token(card_number: str, gateway: str = "internal") -> str:
     """
     import hashlib
     import uuid
-    from datetime import datetime
-from app.utils.datetime_utils import now_utc, to_utc
+    from app.utils.datetime_utils import now_utc
     
     # Remover espaços
     clean_number = ''.join(filter(str.isdigit, card_number))
