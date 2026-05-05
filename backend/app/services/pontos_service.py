@@ -118,6 +118,8 @@ class PontosService:
                 }
 
             from app.services.pontos_checkout_service import buscar_regra_ativa
+            from app.services.programa_pontos_service import ProgramaPontosService
+            from app.services.real_points_service import RealPointsService
             from app.utils.datetime_utils import now_utc, to_utc
 
             tipo_suite = (reserva.get("tipo_suite") or "").upper().strip()
@@ -126,16 +128,24 @@ class PontosService:
             checkout_dt = to_utc(reserva.get("checkout_realizado")) or now_utc()
             regra = await buscar_regra_ativa(self.pontos_repo.db, tipo_suite, checkout_dt.date())
 
-            if not regra:
-                pontos_ganhos = 0
-            else:
+            if regra:
                 diarias_base = int(getattr(regra, "diariasBase", 2) or 2)
                 rp_por_base = int(getattr(regra, "rpPorBase", 0) or 0)
                 pontos_ganhos = (num_diarias // diarias_base) * rp_por_base if diarias_base > 0 else 0
+            else:
+                pontos_ganhos, _detalhe = RealPointsService.calcular_rp_oficial(tipo_suite, num_diarias, 0)
+
+            programa_service = ProgramaPontosService(self.pontos_repo.db)
+            nivel = await programa_service.obter_nivel_efetivo_cliente(cliente["id"])
+            calculo_nivel = programa_service.aplicar_bonus_nivel(pontos_ganhos, nivel)
+            pontos_ganhos = calculo_nivel["pontos_total"]
 
             return {
                 "success": True,
                 "pontos_ganhos": pontos_ganhos,
+                "pontos_base": calculo_nivel["pontos_base"],
+                "pontos_bonus_nivel": calculo_nivel["pontos_bonus_nivel"],
+                "nivel": nivel,
                 "valor_reserva": reserva.get("valor_total", reserva["valor_diaria"] * reserva["num_diarias"]),
                 "data_checkout": reserva.get("checkout_realizado", "")
             }

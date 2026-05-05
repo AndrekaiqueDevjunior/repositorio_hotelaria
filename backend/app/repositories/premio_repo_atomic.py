@@ -5,8 +5,15 @@ Implementa resgate de prêmios com lock pessimista para prevenir race conditions
 from typing import Dict, Any, List, Optional
 from prisma import Client
 import logging
+import secrets
+from datetime import timedelta
+
+from app.utils.datetime_utils import now_utc
 
 security_logger = logging.getLogger("security")
+CODIGO_STATUS_ACTIVE = "active"
+CODIGO_STATUS_USED = "used"
+CODIGO_STATUS_EXPIRED = "expired"
 
 
 class PremioRepositoryAtomic:
@@ -244,6 +251,9 @@ class PremioRepositoryAtomic:
                     # Rollback automático ao lançar exceção
                     raise Exception("Estoque esgotado durante o processamento")
             
+            codigo_resgate = await self._gerar_codigo_resgate(transaction)
+            expira_em = now_utc() + timedelta(days=30)
+
             # 5. CRIAR REGISTRO DE RESGATE
             resgate = await transaction.resgatepremio.create(
                 data={
@@ -251,6 +261,9 @@ class PremioRepositoryAtomic:
                     "premioId": premio_id,
                     "pontosUsados": custo,
                     "status": "PENDENTE",
+                    "codigoResgate": codigo_resgate,
+                    "codigoStatus": CODIGO_STATUS_ACTIVE,
+                    "expiraEm": expira_em,
                     "funcionarioId": funcionario_id
                 }
             )
@@ -285,7 +298,10 @@ class PremioRepositoryAtomic:
                 "pontos_usados": custo,
                 "novo_saldo": novo_saldo,
                 "transacao_id": transacao_pontos.id,
-                "cliente_nome": cliente_nome
+                "cliente_nome": cliente_nome,
+                "codigo_resgate": codigo_resgate,
+                "codigo_status": CODIGO_STATUS_ACTIVE,
+                "expira_em": expira_em.isoformat()
             }
         
         # 7. ENVIAR NOTIFICAÇÃO WHATSAPP (FORA DA TRANSAÇÃO)
@@ -293,8 +309,6 @@ class PremioRepositoryAtomic:
             from app.services.whatsapp_service import get_whatsapp_service
             
             whatsapp_service = get_whatsapp_service()
-            codigo_resgate = f"RES-{resgate.id:06d}"
-            
             notificacao_result = await whatsapp_service.enviar_notificacao_resgate_premio(
                 cliente_nome=cliente_nome,
                 cliente_telefone=cliente_telefone,
@@ -319,7 +333,72 @@ class PremioRepositoryAtomic:
             security_logger.error(f"Erro ao enviar notificação WhatsApp: {str(e)}")
         
         return result
-    
+
+    async def usar_codigo_resgate(
+        self,
+        codigo_resgate: str,
+        funcionario_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        codigo = (codigo_resgate or "").strip().upper()
+        if not codigo:
+            return {"success": False, "error": "Codigo de resgate obrigatorio"}
+
+        async with self.db.tx() as transaction:
+            rows = await transaction.query_raw(
+                """
+                SELECT *
+                FROM resgates_premios
+                WHERE codigo_resgate = $1
+                FOR UPDATE
+                """,
+                codigo,
+            )
+            if not rows:
+                return {"success": False, "error": "Codigo de resgate nao encontrado"}
+
+            resgate = rows[0]
+            status_codigo = (resgate.get("codigo_status") or CODIGO_STATUS_ACTIVE).lower()
+            if status_codigo != CODIGO_STATUS_ACTIVE:
+                return {"success": False, "error": f"Codigo ja inutilizado: {status_codigo}"}
+
+            expira_em = resgate.get("expira_em")
+            if expira_em and expira_em < now_utc():
+                await transaction.execute_raw(
+                    """
+                    UPDATE resgates_premios
+                    SET codigo_status = $1, updated_at = NOW()
+                    WHERE id = $2
+                    """,
+                    CODIGO_STATUS_EXPIRED,
+                    int(resgate["id"]),
+                )
+                return {"success": False, "error": "Codigo expirado"}
+
+            usado_em = now_utc()
+            await transaction.execute_raw(
+                """
+                UPDATE resgates_premios
+                SET codigo_status = $1,
+                    usado_em = $2,
+                    status = 'ENTREGUE',
+                    funcionario_entrega_id = $3,
+                    updated_at = NOW()
+                WHERE id = $4
+                """,
+                CODIGO_STATUS_USED,
+                usado_em,
+                funcionario_id,
+                int(resgate["id"]),
+            )
+
+            return {
+                "success": True,
+                "resgate_id": int(resgate["id"]),
+                "codigo_resgate": codigo,
+                "codigo_status": CODIGO_STATUS_USED,
+                "usado_em": usado_em.isoformat(),
+            }
+
     async def listar_resgates_cliente(self, cliente_id: int) -> List[Dict[str, Any]]:
         """Listar resgates de um cliente"""
         resgates = await self.db.resgatepremio.find_many(
@@ -335,6 +414,10 @@ class PremioRepositoryAtomic:
                 "premio_nome": r.premio.nome if r.premio else None,
                 "pontos_usados": r.pontosUsados,
                 "status": r.status,
+                "codigo_resgate": getattr(r, "codigoResgate", None),
+                "codigo_status": getattr(r, "codigoStatus", None),
+                "expira_em": getattr(r, "expiraEm", None).isoformat() if getattr(r, "expiraEm", None) else None,
+                "usado_em": getattr(r, "usadoEm", None).isoformat() if getattr(r, "usadoEm", None) else None,
                 "data_resgate": r.createdAt.isoformat() if r.createdAt else None
             }
             for r in resgates
@@ -346,14 +429,16 @@ class PremioRepositoryAtomic:
         if not resgate:
             return {"success": False, "error": "Resgate não encontrado"}
         
-        if resgate.status == "ENTREGUE":
+        if resgate.status == "ENTREGUE" or getattr(resgate, "codigoStatus", None) == CODIGO_STATUS_USED:
             return {"success": False, "error": "Prêmio já foi entregue"}
         
         await self.db.resgatepremio.update(
             where={"id": resgate_id},
             data={
                 "status": "ENTREGUE",
-                "funcionarioEntregaId": funcionario_id
+                "funcionarioEntregaId": funcionario_id,
+                "codigoStatus": CODIGO_STATUS_USED,
+                "usadoEm": now_utc(),
             }
         )
         
@@ -373,3 +458,14 @@ class PremioRepositoryAtomic:
             "imagem_url": getattr(premio, "imagemUrl", None),
             "created_at": premio.createdAt.isoformat() if premio.createdAt else None
         }
+
+    async def _gerar_codigo_resgate(self, transaction) -> str:
+        for _tentativa in range(10):
+            codigo = f"RW-{secrets.token_hex(3).upper()}"
+            rows = await transaction.query_raw(
+                "SELECT id FROM resgates_premios WHERE codigo_resgate = $1 LIMIT 1",
+                codigo,
+            )
+            if not rows:
+                return codigo
+        raise ValueError("Nao foi possivel gerar codigo unico de resgate")

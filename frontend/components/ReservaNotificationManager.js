@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useToast } from '../contexts/ToastContext'
 import { api } from '../lib/api'
-import { playNotificationSound } from '../sounds/notification-sound'
+import { playCheckoutDueSound, playNotificationSound } from '../sounds/notification-sound'
 
 export default function ReservaNotificationManager() {
   const { addToast } = useToast()
@@ -11,7 +11,7 @@ export default function ReservaNotificationManager() {
   const [isLoading, setIsLoading] = useState(false)
   const [errorCount, setErrorCount] = useState(0)
   const [isPollingEnabled, setIsPollingEnabled] = useState(true)
-  const intervalsRef = useRef({ notification: null, reservation: null })
+  const intervalsRef = useRef({ notification: null, reservation: null, checkout: null })
 
   // Função para verificar notificações do servidor
   const checkServerNotifications = useCallback(async () => {
@@ -22,19 +22,20 @@ export default function ReservaNotificationManager() {
       // Buscar notificações não lidas do servidor
       const res = await api.get('/notificacoes', {
         params: {
-          lida: false,
+          apenas_nao_lidas: true,
           atualizada_apos: lastNotificationCheck,
           limit: 10,
           order_by: 'data_criacao:desc'
         }
       })
 
-      if (res.data && res.data.data && res.data.data.length > 0) {
+      const notificacoes = res.data?.data || res.data?.notificacoes || []
+      if (notificacoes.length > 0) {
         // Atualizar a data da última verificação
         setLastNotificationCheck(new Date().toISOString())
         
         // Processar cada notificação recebida
-        res.data.data.forEach(notificacao => {
+        notificacoes.forEach(notificacao => {
           // Verificar se já exibimos esta notificação
           const notificationKey = `notif-${notificacao.id}`
           if (sessionStorage.getItem(notificationKey)) return
@@ -51,10 +52,10 @@ export default function ReservaNotificationManager() {
             mensagem: notificacao.mensagem,
             tipo: notificacao.tipo || 'info',
             categoria: notificacao.categoria || 'sistema',
-            url_acao: notificacao.urlAcao,
-            reserva_id: notificacao.reservaId,
-            pagamento_id: notificacao.pagamentoId,
-            dados_adicionais: notificacao.dadosAdicionais
+            url_acao: notificacao.urlAcao || notificacao.url_acao,
+            reserva_id: notificacao.reservaId || notificacao.reserva_id,
+            pagamento_id: notificacao.pagamentoId || notificacao.pagamento_id,
+            dados_adicionais: notificacao.dadosAdicionais || notificacao.dados_adicionais
           })
         })
       }
@@ -163,6 +164,36 @@ export default function ReservaNotificationManager() {
     }
   }, [addToast, lastReservaId, isPollingEnabled])
 
+  const checkCheckoutAlerts = useCallback(async () => {
+    if (!isPollingEnabled) return
+
+    try {
+      const res = await api.get('/reservas/checkouts-pendentes-alerta', {
+        params: { limit: 20 }
+      })
+      const alertas = res.data?.alertas || []
+
+      alertas.forEach((alerta) => {
+        const alertKey = `checkout-due-${alerta.id}-${alerta.checkout_previsto}`
+        if (sessionStorage.getItem(alertKey)) return
+
+        sessionStorage.setItem(alertKey, 'true')
+        playCheckoutDueSound()
+        addToast({
+          id: alertKey,
+          titulo: 'Check-out pendente',
+          mensagem: `Quarto ${alerta.quarto_numero || '-'} | ${alerta.cliente_nome || 'Cliente'} | ${alerta.codigo_reserva || ''}`,
+          tipo: 'warning',
+          categoria: 'checkout_pendente',
+          url_acao: `/reservas?id=${alerta.id}`,
+          reserva_id: alerta.id
+        })
+      })
+    } catch (error) {
+      console.error('Erro ao verificar check-outs pendentes:', error)
+    }
+  }, [addToast, isPollingEnabled])
+
   // Configurar os intervalos de verificação
   useEffect(() => {
     // Limpar intervalos existentes antes de criar novos
@@ -172,10 +203,14 @@ export default function ReservaNotificationManager() {
     if (intervalsRef.current.reservation) {
       clearInterval(intervalsRef.current.reservation)
     }
+    if (intervalsRef.current.checkout) {
+      clearInterval(intervalsRef.current.checkout)
+    }
     
     // Verificar imediatamente ao montar
     checkServerNotifications()
     checkNewReservations()
+    checkCheckoutAlerts()
     
     // Configurar intervalos apenas se polling estiver habilitado
     if (isPollingEnabled) {
@@ -184,6 +219,7 @@ export default function ReservaNotificationManager() {
       
       // Verificar reservas a cada 1 minuto (aumentado de 30 segundos)
       intervalsRef.current.reservation = setInterval(checkNewReservations, 60000)
+      intervalsRef.current.checkout = setInterval(checkCheckoutAlerts, 60000)
     }
     
     // Limpar intervalos ao desmontar
@@ -193,6 +229,9 @@ export default function ReservaNotificationManager() {
       }
       if (intervalsRef.current.reservation) {
         clearInterval(intervalsRef.current.reservation)
+      }
+      if (intervalsRef.current.checkout) {
+        clearInterval(intervalsRef.current.checkout)
       }
     }
   }, [isPollingEnabled])

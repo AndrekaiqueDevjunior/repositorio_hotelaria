@@ -3,6 +3,9 @@ Repositório para gerenciamento de prêmios do sistema de fidelidade.
 """
 from typing import Dict, Any, List, Optional
 from prisma import Client
+from app.utils.datetime_utils import now_utc
+
+CODIGO_STATUS_USED = "used"
 
 
 class PremioRepository:
@@ -214,6 +217,10 @@ class PremioRepository:
                 "premio_nome": r.premio.nome if r.premio else None,
                 "pontos_usados": r.pontosUsados,
                 "status": r.status,
+                "codigo_resgate": getattr(r, "codigoResgate", None),
+                "codigo_status": getattr(r, "codigoStatus", None),
+                "expira_em": getattr(r, "expiraEm", None).isoformat() if getattr(r, "expiraEm", None) else None,
+                "usado_em": getattr(r, "usadoEm", None).isoformat() if getattr(r, "usadoEm", None) else None,
                 "data_resgate": r.createdAt.isoformat() if r.createdAt else None
             }
             for r in resgates
@@ -225,14 +232,16 @@ class PremioRepository:
         if not resgate:
             return {"success": False, "error": "Resgate não encontrado"}
         
-        if resgate.status == "ENTREGUE":
+        if resgate.status == "ENTREGUE" or getattr(resgate, "codigoStatus", None) == CODIGO_STATUS_USED:
             return {"success": False, "error": "Prêmio já foi entregue"}
         
         await self.db.resgatepremio.update(
             where={"id": resgate_id},
             data={
                 "status": "ENTREGUE",
-                "funcionarioEntregaId": funcionario_id
+                "funcionarioEntregaId": funcionario_id,
+                "codigoStatus": CODIGO_STATUS_USED,
+                "usadoEm": now_utc(),
             }
         )
         

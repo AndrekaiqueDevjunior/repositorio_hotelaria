@@ -233,7 +233,7 @@ class HospedagemRepository:
         )
         
         # Creditar pontos de fidelidade
-        await self._creditar_pontos_checkout(
+        resultado_pontos_checkout = await self._creditar_pontos_checkout(
             reserva_id=reserva_id,
             funcionario_id=funcionario_id,
             checkout_datetime=checkout_timestamp,
@@ -255,7 +255,39 @@ class HospedagemRepository:
         # Criar notificação
         from app.services.notification_service import NotificationService
         await NotificationService.notificar_checkout_realizado(self.db, reserva)
-        
+
+        try:
+            reserva_cliente = await self.db.reserva.find_unique(
+                where={"id": reserva_id},
+                include={"cliente": True},
+            )
+            cliente_id = getattr(reserva_cliente, "clienteId", None) if reserva_cliente else None
+            if cliente_id:
+                await NotificationService.notificar_premio_proximo(
+                    self.db,
+                    cliente_id=cliente_id,
+                    reserva_id=reserva_id,
+                )
+
+                from app.services.programa_pontos_service import ProgramaPontosService
+                from app.services.whatsapp_service import get_whatsapp_service
+
+                programa = await ProgramaPontosService(self.db).obter_programa_cliente(cliente_id)
+                proximo_premio = programa.get("proximo_premio") or {}
+                cliente = getattr(reserva_cliente, "cliente", None)
+                await get_whatsapp_service().enviar_pontos_pos_checkout(
+                    cliente_nome=getattr(cliente, "nomeCompleto", None) or getattr(reserva_cliente, "clienteNome", "Cliente"),
+                    cliente_telefone=getattr(cliente, "telefone", None),
+                    documento=getattr(cliente, "documento", None),
+                    codigo_reserva=getattr(reserva_cliente, "codigoReserva", None) or str(reserva_id),
+                    saldo_atual=int(programa.get("saldo_atual") or 0),
+                    pontos_ganhos_checkout=int((resultado_pontos_checkout or {}).get("pontos_checkout", 0) or 0),
+                    faltam_pontos_para_proximo_premio=programa.get("faltam_pontos_para_proximo_premio"),
+                    proximo_premio_nome=proximo_premio.get("nome"),
+                )
+        except Exception as e:
+            print(f"[POS CHECKOUT] Erro ao enviar avisos de pontos: {e}")
+
         return self._serialize(hospedagem_atualizada)
     
     async def _creditar_pontos_checkout(
@@ -263,7 +295,7 @@ class HospedagemRepository:
         reserva_id: int,
         funcionario_id: Optional[int] = None,
         checkout_datetime: Optional[datetime] = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
         """
         Creditar pontos RP após checkout (Nova lógica baseada em tipo de suíte + diárias)
         
@@ -288,7 +320,7 @@ class HospedagemRepository:
 
             if not result.get("success"):
                 print(f"[CHECKOUT RP] Erro ao creditar pontos: {result.get('error')}")
-                return
+                return {"success": False, "error": result.get("error")}
 
             if not result.get("creditado"):
                 motivo = result.get("motivo")
@@ -306,9 +338,16 @@ class HospedagemRepository:
                 print(f"[CHECKOUT CUPOM] Bônus creditado: {bonus_result.get('pontos', 0)}")
             elif bonus_result.get("motivo"):
                 print(f"[CHECKOUT CUPOM] Sem bônus: {bonus_result.get('motivo')}")
+            return {
+                "success": True,
+                "pontos_checkout": int(result.get("pontos", 0) or 0) if result.get("creditado") else 0,
+                "pontos_bonus_cupom": int(bonus_result.get("pontos", 0) or 0) if bonus_result.get("creditado") else 0,
+                "checkout": result,
+                "cupom": bonus_result,
+            }
         except Exception as e:
             print(f"[CHECKOUT RP] Erro ao creditar pontos: {str(e)}")
-            return
+            return {"success": False, "error": str(e)}
     
     def _serialize(self, hospedagem) -> Dict[str, Any]:
         """Serializar hospedagem para response"""

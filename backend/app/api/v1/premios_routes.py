@@ -7,7 +7,8 @@ from app.schemas.premio_schema import (
     PremioCreate, PremioUpdate, PremioResponse,
     ResgatePremioRequest, ResgatePremioResponse,
     ResgateHistoricoResponse, ConfirmarEntregaRequest,
-    PremiosDisponiveis, ResgatePremioPublicoRequest
+    PremiosDisponiveis, ResgatePremioPublicoRequest,
+    UsarCodigoResgateRequest
 )
 from app.repositories.premio_repo import PremioRepository
 from app.repositories.premio_repo_atomic import PremioRepositoryAtomic
@@ -302,6 +303,29 @@ async def resgatar_premio(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao processar resgate: {str(e)}")
+
+
+@router.post("/usar-codigo", response_model=dict)
+async def usar_codigo_resgate(
+    request: UsarCodigoResgateRequest,
+    current_user: User = Depends(require_admin_or_manager),
+    _rate_limit: None = Depends(rate_limit_strict)
+):
+    """
+    Usar/inutilizar codigo unico de resgate.
+
+    O mesmo codigo nao pode ser usado duas vezes. Se for necessario outro
+    beneficio, o cliente deve realizar novo resgate e receber novo codigo.
+    """
+    db = get_db()
+    repo = PremioRepositoryAtomic(db)
+    resultado = await repo.usar_codigo_resgate(
+        codigo_resgate=request.codigo_resgate,
+        funcionario_id=current_user.id if hasattr(current_user, 'id') else None,
+    )
+    if not resultado.get("success"):
+        raise HTTPException(status_code=400, detail=resultado.get("error"))
+    return resultado
 
 
 @router.get("/resgates/{cliente_id}", response_model=List[ResgateHistoricoResponse])

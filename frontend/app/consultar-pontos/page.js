@@ -185,6 +185,14 @@ export default function ConsultarPontos() {
       .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
   }
 
+  useEffect(() => {
+    const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+    const documento = params?.get('documento')
+    if (documento && !cpf) {
+      setCpf(formatarCPF(documento))
+    }
+  }, [])
+
   const handleCpfChange = (e) => {
     const formatted = formatarCPF(e.target.value)
     setCpf(formatted)

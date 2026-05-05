@@ -69,6 +69,23 @@ class NotificationService:
             print(f"[NOTIFICAÇÃO] Erro ao criar: {e}")
             return None
     
+    async def existe_notificacao_categoria_reserva(
+        self,
+        categoria: str,
+        reserva_id: Optional[int] = None,
+        url_acao: Optional[str] = None,
+    ) -> bool:
+        try:
+            where: Dict[str, Any] = {"categoria": categoria}
+            if reserva_id is not None:
+                where["reservaId"] = reserva_id
+            if url_acao is not None:
+                where["urlAcao"] = url_acao
+            existente = await self.db.notificacao.find_first(where=where)
+            return existente is not None
+        except Exception:
+            return False
+
     # ==================== RESERVAS ====================
 
     @staticmethod
@@ -287,6 +304,83 @@ class NotificationService:
             categoria="reserva",
             perfil="RECEPCAO",
             reserva_id=reserva_id,
+        )
+
+    @staticmethod
+    async def notificar_premio_proximo(db, cliente_id: int, reserva_id: Optional[int] = None):
+        from app.services.programa_pontos_service import ProgramaPontosService
+
+        service = NotificationService(db)
+        programa = await ProgramaPontosService(db).obter_programa_cliente(cliente_id)
+        if not programa.get("success"):
+            return None
+
+        faltam = programa.get("faltam_pontos_para_proximo_premio")
+        proximo = programa.get("proximo_premio") or {}
+        saldo = int(programa.get("saldo_atual") or 0)
+        if faltam is None:
+            return None
+
+        if not programa.get("premio_proximo"):
+            return None
+
+        cliente = await db.cliente.find_unique(where={"id": cliente_id})
+        cliente_nome = getattr(cliente, "nomeCompleto", "Cliente") if cliente else "Cliente"
+        documento = getattr(cliente, "documento", None) if cliente else None
+        url_acao = f"/consultar-pontos?documento={documento}" if documento else f"/pontos-rp?cliente_id={cliente_id}"
+        if await service.existe_notificacao_categoria_reserva(
+            "premio_proximo",
+            reserva_id=reserva_id,
+            url_acao=url_acao if reserva_id is None else None,
+        ):
+            return None
+
+        if int(faltam) <= 0:
+            titulo = "Premio disponivel"
+            mensagem = f"{cliente_nome} ja pode resgatar {proximo.get('nome', 'um premio')} com {saldo} pontos"
+            tipo = "success"
+        else:
+            titulo = "Premio proximo"
+            mensagem = f"{cliente_nome}: faltam {faltam} pontos para {proximo.get('nome', 'o proximo premio')}"
+            tipo = "warning"
+
+        notificacao = await service.criar_notificacao(
+            titulo=titulo,
+            mensagem=mensagem,
+            tipo=tipo,
+            categoria="premio_proximo",
+            perfil="RECEPCAO",
+            reserva_id=reserva_id,
+            url_acao=url_acao,
+        )
+
+        try:
+            if cliente and int(faltam) > 0:
+                await get_whatsapp_service().enviar_aviso_premio_proximo(
+                    cliente_telefone=getattr(cliente, "telefone", None),
+                    documento=documento,
+                )
+        except Exception as exc:
+            print(f"[WHATSAPP] Erro ao enviar aviso de premio proximo: {exc}")
+
+        return notificacao
+
+    @staticmethod
+    async def notificar_checkout_pendente(db, reserva_row: Dict[str, Any]):
+        service = NotificationService(db)
+        reserva_id = int(reserva_row["id"])
+        if await service.existe_notificacao_categoria_reserva("checkout_pendente", reserva_id=reserva_id):
+            return None
+        quarto = reserva_row.get("quarto_numero")
+        cliente = reserva_row.get("cliente_nome") or "Cliente"
+        return await service.criar_notificacao(
+            titulo="Check-out pendente",
+            mensagem=f"Quarto {quarto} | {cliente}",
+            tipo="warning",
+            categoria="checkout_pendente",
+            perfil="RECEPCAO",
+            reserva_id=reserva_id,
+            url_acao=f"/reservas?id={reserva_id}",
         )
     
     @staticmethod

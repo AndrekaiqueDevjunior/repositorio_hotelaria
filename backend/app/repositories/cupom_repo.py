@@ -20,6 +20,10 @@ STATUS_PAGAMENTO_BLOQUEIA_CUPOM = {
 }
 TIPOS_DESCONTO_VALIDOS = {"PERCENTUAL", "FIXO"}
 CASAS_MONETARIAS = Decimal("0.01")
+CUPOM_STATUS_ACTIVE = "active"
+CUPOM_STATUS_EXPIRED = "expired"
+CUPOM_STATUS_CANCELLED = "cancelled"
+CUPOM_STATUS_MAX_USAGE = "max_usage_reached"
 
 
 class CupomRepository:
@@ -27,7 +31,7 @@ class CupomRepository:
         self.db = db
 
     async def list_all(self, apenas_ativos: bool = False) -> List[Dict[str, Any]]:
-        where = {"ativo": True} if apenas_ativos else {}
+        where = {"ativo": True, "status": CUPOM_STATUS_ACTIVE} if apenas_ativos else {}
         cupons = await self.db.cupom.find_many(where=where, order={"createdAt": "desc"})
         return [self._serialize_cupom(cupom) for cupom in cupons]
 
@@ -62,7 +66,11 @@ class CupomRepository:
                 "limiteTotalUsos": data.get("limite_total_usos"),
                 "limitePorCliente": data.get("limite_por_cliente"),
                 "ativo": data.get("ativo", True),
+                "status": data.get("status") or (CUPOM_STATUS_ACTIVE if data.get("ativo", True) else CUPOM_STATUS_CANCELLED),
+                "trackingSlug": data.get("tracking_slug"),
                 "criadoPor": criado_por,
+                "tipoCampanha": data.get("tipo_campanha"),
+                "clienteIndicadorId": data.get("cliente_indicador_id"),
             }
         )
         return self._serialize_cupom(cupom)
@@ -95,6 +103,15 @@ class CupomRepository:
             update_data["limitePorCliente"] = data.get("limite_por_cliente")
         if "ativo" in data and data.get("ativo") is not None:
             update_data["ativo"] = data["ativo"]
+            update_data["status"] = CUPOM_STATUS_ACTIVE if data["ativo"] else CUPOM_STATUS_CANCELLED
+        if "status" in data and data.get("status") is not None:
+            update_data["status"] = data.get("status")
+        if "tracking_slug" in data:
+            update_data["trackingSlug"] = data.get("tracking_slug")
+        if "tipo_campanha" in data:
+            update_data["tipoCampanha"] = data.get("tipo_campanha")
+        if "cliente_indicador_id" in data:
+            update_data["clienteIndicadorId"] = data.get("cliente_indicador_id")
 
         if not update_data:
             return self._serialize_cupom(existente)
@@ -106,14 +123,20 @@ class CupomRepository:
         existente = await self.db.cupom.find_unique(where={"id": cupom_id})
         if not existente:
             return None
-        cupom = await self.db.cupom.update(where={"id": cupom_id}, data={"ativo": ativo})
+        cupom = await self.db.cupom.update(
+            where={"id": cupom_id},
+            data={"ativo": ativo, "status": CUPOM_STATUS_ACTIVE if ativo else CUPOM_STATUS_CANCELLED},
+        )
         return self._serialize_cupom(cupom)
 
     async def delete(self, cupom_id: int) -> bool:
         existente = await self.db.cupom.find_unique(where={"id": cupom_id})
         if not existente:
             return False
-        await self.db.cupom.update(where={"id": cupom_id}, data={"ativo": False})
+        await self.db.cupom.update(
+            where={"id": cupom_id},
+            data={"ativo": False, "status": CUPOM_STATUS_CANCELLED},
+        )
         return True
 
     async def validar_cupom(
@@ -149,6 +172,7 @@ class CupomRepository:
                 "valido": False,
                 "mensagem": mensagem,
                 "codigo": cupom.codigo,
+                "status": getattr(cupom, "status", CUPOM_STATUS_ACTIVE),
                 "tipo_desconto": cupom.tipoDesconto,
                 "valor_desconto": float(cupom.valorDesconto),
                 "pontos_bonus": int(cupom.pontosBonus or 0),
@@ -167,6 +191,7 @@ class CupomRepository:
             "valido": True,
             "mensagem": "Cupom válido",
             "codigo": cupom.codigo,
+            "status": getattr(cupom, "status", CUPOM_STATUS_ACTIVE),
             "tipo_desconto": cupom.tipoDesconto,
             "valor_desconto": float(cupom.valorDesconto),
             "valor_desconto_calculado": float(valor_desconto_calculado) if valor_desconto_calculado is not None else None,
@@ -229,10 +254,16 @@ class CupomRepository:
 
             cupom = await transaction.cupom.update(
                 where={"id": int(cupom_data["id"])},
-                data={"totalUsos": {"increment": 1}},
+                data=self._montar_update_uso_cupom(cupom_data),
             )
 
-        return self._serialize_cupom_uso(uso, cupom_codigo=cupom.codigo, pontos_bonus=int(cupom.pontosBonus or 0))
+        return self._serialize_cupom_uso(
+            uso,
+            cupom_codigo=cupom.codigo,
+            pontos_bonus=int(cupom.pontosBonus or 0),
+            tipo_campanha=getattr(cupom, "tipoCampanha", None),
+            cliente_indicador_id=getattr(cupom, "clienteIndicadorId", None),
+        )
 
     async def remover_cupom_reserva(self, reserva_id: int) -> Dict[str, Any]:
         async with self.db.tx() as transaction:
@@ -251,9 +282,19 @@ class CupomRepository:
             if uso.cupomId:
                 cupom_data = await transaction.cupom.find_unique(where={"id": uso.cupomId})
                 if cupom_data and int(cupom_data.totalUsos or 0) > 0:
+                    novo_total = int(cupom_data.totalUsos or 0) - 1
+                    update_data: Dict[str, Any] = {"totalUsos": {"decrement": 1}}
+                    limite = getattr(cupom_data, "limiteTotalUsos", None)
+                    if (
+                        getattr(cupom_data, "status", None) == CUPOM_STATUS_MAX_USAGE
+                        and limite is not None
+                        and novo_total < int(limite)
+                    ):
+                        update_data["ativo"] = True
+                        update_data["status"] = CUPOM_STATUS_ACTIVE
                     await transaction.cupom.update(
                         where={"id": uso.cupomId},
-                        data={"totalUsos": {"decrement": 1}},
+                        data=update_data,
                     )
 
         return self._serialize_cupom_uso(
@@ -343,6 +384,8 @@ class CupomRepository:
                 "id": cupom.id,
                 "codigo": cupom.codigo,
                 "ativo": cupom.ativo,
+                "status": getattr(cupom, "status", CUPOM_STATUS_ACTIVE),
+                "tracking_slug": getattr(cupom, "trackingSlug", None),
                 "tipo_desconto": cupom.tipoDesconto,
                 "valor_desconto": cupom.valorDesconto,
                 "pontos_bonus": cupom.pontosBonus,
@@ -353,6 +396,8 @@ class CupomRepository:
                 "limite_total_usos": cupom.limiteTotalUsos,
                 "limite_por_cliente": cupom.limitePorCliente,
                 "total_usos": cupom.totalUsos,
+                "tipo_campanha": getattr(cupom, "tipoCampanha", None),
+                "cliente_indicador_id": getattr(cupom, "clienteIndicadorId", None),
             },
             contexto,
             db or self.db,
@@ -364,6 +409,15 @@ class CupomRepository:
         contexto: Dict[str, Any],
         db: Client,
     ) -> Tuple[bool, str]:
+        status = (cupom_data.get("status") or CUPOM_STATUS_ACTIVE).strip().lower()
+        if status != CUPOM_STATUS_ACTIVE:
+            status_msg = {
+                CUPOM_STATUS_EXPIRED: "Cupom expirado",
+                CUPOM_STATUS_CANCELLED: "Cupom cancelado",
+                CUPOM_STATUS_MAX_USAGE: "Cupom esgotado",
+            }.get(status, "Cupom inativo")
+            return False, status_msg
+
         if not bool(cupom_data.get("ativo")):
             return False, "Cupom inativo"
 
@@ -375,11 +429,13 @@ class CupomRepository:
         data_inicio = to_utc(cupom_data.get("data_inicio"))
         data_fim = to_utc(cupom_data.get("data_fim"))
         if not data_inicio or not data_fim or agora < data_inicio or agora > data_fim:
+            await self._marcar_cupom_expirado_se_possivel(db, cupom_data)
             return False, "Cupom fora da validade"
 
         limite_total_usos = cupom_data.get("limite_total_usos")
         total_usos = int(cupom_data.get("total_usos") or 0)
         if limite_total_usos is not None and total_usos >= int(limite_total_usos):
+            await self._marcar_cupom_esgotado_se_possivel(db, cupom_data)
             return False, "Cupom esgotado"
 
         min_diarias = cupom_data.get("min_diarias")
@@ -401,11 +457,67 @@ class CupomRepository:
             if usos_cliente >= int(limite_por_cliente):
                 return False, "Cliente já atingiu o limite de uso deste cupom"
 
+        tipo_campanha = (cupom_data.get("tipo_campanha") or "").strip().upper()
+        cliente_indicador_id = cupom_data.get("cliente_indicador_id")
+        if tipo_campanha == "CUPOM_AMIGO" and cliente_indicador_id and cliente_id:
+            if int(cliente_indicador_id) == int(cliente_id):
+                return False, "Autoindicacao nao permitida para cupom amigo"
+
+            indicado_rows = await db.query_raw(
+                """
+                SELECT regexp_replace(documento, '\\D', '', 'g') AS cpf
+                FROM clientes
+                WHERE id = $1
+                LIMIT 1
+                """,
+                int(cliente_id),
+            )
+            cpf_indicado = indicado_rows[0]["cpf"] if indicado_rows else None
+            if cpf_indicado:
+                indicacao_rows = await db.query_raw(
+                    """
+                    SELECT cliente_indicador_id
+                    FROM indicacoes
+                    WHERE cpf_indicado = $1
+                    LIMIT 1
+                    """,
+                    cpf_indicado,
+                )
+                if indicacao_rows and int(indicacao_rows[0]["cliente_indicador_id"]) != int(cliente_indicador_id):
+                    return False, "CPF indicado ja usado em outra indicacao"
+
         valor_total_base = contexto.get("valor_total_base")
         if valor_total_base is not None and self._to_decimal(valor_total_base) <= Decimal("0"):
             return False, "Valor base inválido para cálculo do cupom"
 
         return True, "Cupom válido"
+
+    def _montar_update_uso_cupom(self, cupom_data: Dict[str, Any]) -> Dict[str, Any]:
+        limite_total_usos = cupom_data.get("limite_total_usos")
+        total_atual = int(cupom_data.get("total_usos") or 0)
+        data: Dict[str, Any] = {"totalUsos": {"increment": 1}}
+        if limite_total_usos is not None and total_atual + 1 >= int(limite_total_usos):
+            data["ativo"] = False
+            data["status"] = CUPOM_STATUS_MAX_USAGE
+        return data
+
+    async def _marcar_cupom_expirado_se_possivel(self, db: Client, cupom_data: Dict[str, Any]) -> None:
+        try:
+            await db.cupom.update(
+                where={"id": int(cupom_data["id"])},
+                data={"ativo": False, "status": CUPOM_STATUS_EXPIRED},
+            )
+        except Exception:
+            pass
+
+    async def _marcar_cupom_esgotado_se_possivel(self, db: Client, cupom_data: Dict[str, Any]) -> None:
+        try:
+            await db.cupom.update(
+                where={"id": int(cupom_data["id"])},
+                data={"ativo": False, "status": CUPOM_STATUS_MAX_USAGE},
+            )
+        except Exception:
+            pass
 
     def _parse_suites_permitidas(self, raw_value: Optional[str]) -> List[str]:
         if not raw_value:
@@ -487,7 +599,11 @@ class CupomRepository:
             "limite_por_cliente": cupom.limitePorCliente,
             "total_usos": int(cupom.totalUsos or 0),
             "ativo": bool(cupom.ativo),
+            "status": getattr(cupom, "status", CUPOM_STATUS_ACTIVE),
+            "tracking_slug": getattr(cupom, "trackingSlug", None),
             "criado_por": cupom.criadoPor,
+            "tipo_campanha": getattr(cupom, "tipoCampanha", None),
+            "cliente_indicador_id": getattr(cupom, "clienteIndicadorId", None),
             "created_at": cupom.createdAt.isoformat() if cupom.createdAt else None,
             "updated_at": cupom.updatedAt.isoformat() if cupom.updatedAt else None,
         }
@@ -497,7 +613,10 @@ class CupomRepository:
         uso,
         cupom_codigo: Optional[str] = None,
         pontos_bonus: int = 0,
+        tipo_campanha: Optional[str] = None,
+        cliente_indicador_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        cupom = getattr(uso, "cupom", None)
         return {
             "id": uso.id,
             "cupom_id": uso.cupomId,
@@ -506,5 +625,8 @@ class CupomRepository:
             "valor_desconto": float(uso.valorDesconto),
             "valor_final": float(uso.valorFinal),
             "pontos_bonus": int(pontos_bonus or 0),
+            "tipo_campanha": tipo_campanha or getattr(cupom, "tipoCampanha", None),
+            "cliente_indicador_id": cliente_indicador_id or getattr(cupom, "clienteIndicadorId", None),
+            "status": getattr(cupom, "status", None),
             "created_at": uso.createdAt.isoformat() if uso.createdAt else None,
         }

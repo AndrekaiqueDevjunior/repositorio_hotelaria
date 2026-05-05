@@ -29,6 +29,8 @@ class CupomCreateRequest(BaseModel):
     limite_total_usos: Optional[int] = Field(None, ge=1)
     limite_por_cliente: Optional[int] = Field(None, ge=1)
     ativo: bool = True
+    tipo_campanha: Optional[str] = Field(None, max_length=50)
+    cliente_indicador_id: Optional[int] = Field(None, ge=1)
 
     @field_validator("codigo")
     @classmethod
@@ -79,6 +81,8 @@ class CupomUpdateRequest(BaseModel):
     limite_total_usos: Optional[int] = Field(None, ge=1)
     limite_por_cliente: Optional[int] = Field(None, ge=1)
     ativo: Optional[bool] = None
+    tipo_campanha: Optional[str] = None
+    cliente_indicador_id: Optional[int] = Field(None, ge=1)
 
     @field_validator("tipo_desconto")
     @classmethod
@@ -113,6 +117,49 @@ class CupomUpdateRequest(BaseModel):
 
 class CupomStatusRequest(BaseModel):
     ativo: bool
+
+
+class CupomAmigoRequest(BaseModel):
+    cliente_id: int = Field(..., ge=1)
+    percentual_desconto: Decimal = Field(Decimal("5"), gt=0, le=100)
+    pontos_bonus: int = Field(3, ge=0, le=1000)
+    dias_validade: int = Field(30, ge=1, le=365)
+    limite_total_usos: int = Field(1, ge=1)
+    telefone_destino: Optional[str] = None
+    enviar_whatsapp: bool = False
+
+
+class CupomRastreadoRequest(BaseModel):
+    codigo: Optional[str] = Field(None, min_length=3, max_length=50)
+    descricao: Optional[str] = None
+    tipo_campanha: str = Field("DESCONTO", max_length=50)
+    tipo_desconto: str = "PERCENTUAL"
+    valor_desconto: Decimal = Field(..., gt=0)
+    dias_validade: int = Field(30, ge=1, le=365)
+    limite_total_usos: Optional[int] = Field(None, ge=1)
+    limite_por_cliente: Optional[int] = Field(1, ge=1)
+    pontos_bonus: Optional[int] = Field(0, ge=0, le=1000)
+    min_diarias: Optional[int] = Field(None, ge=1, le=365)
+    suites_permitidas: Optional[List[str]] = None
+    influencer_nome: Optional[str] = None
+
+    @field_validator("codigo")
+    @classmethod
+    def validar_codigo_opcional(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        codigo = _normalizar_codigo(value)
+        if not codigo:
+            raise ValueError("Código do cupom é obrigatório")
+        return codigo
+
+    @field_validator("tipo_desconto")
+    @classmethod
+    def validar_tipo_desconto(cls, value: str) -> str:
+        tipo = _normalizar_tipo_desconto(value)
+        if tipo not in TIPOS_DESCONTO_VALIDOS:
+            raise ValueError("tipo_desconto deve ser PERCENTUAL ou FIXO")
+        return tipo
 
 
 class CupomValidarRequest(BaseModel):
@@ -157,6 +204,9 @@ class CupomUsoResponse(BaseModel):
     valor_desconto: float
     valor_final: float
     pontos_bonus: int = 0
+    tipo_campanha: Optional[str] = None
+    cliente_indicador_id: Optional[int] = None
+    status: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -175,7 +225,14 @@ class CupomResponse(BaseModel):
     limite_por_cliente: Optional[int] = None
     total_usos: int = 0
     ativo: bool = True
+    status: str = "active"
+    tracking_slug: Optional[str] = None
+    link_rastreado: Optional[str] = None
+    whatsapp_message: Optional[str] = None
+    whatsapp_share_url: Optional[str] = None
     criado_por: Optional[int] = None
+    tipo_campanha: Optional[str] = None
+    cliente_indicador_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -184,6 +241,7 @@ class CupomValidarResponse(BaseModel):
     valido: bool
     mensagem: str
     codigo: Optional[str] = None
+    status: Optional[str] = None
     tipo_desconto: Optional[str] = None
     valor_desconto: Optional[float] = None
     valor_desconto_calculado: Optional[float] = None

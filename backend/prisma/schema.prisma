@@ -53,6 +53,7 @@ model Cliente {
   transacoesPontos    TransacaoPontos[]
   resgatePremios      ResgatePremio[]
   cupomUsos           CupomUso[]
+  cuponsIndicador     Cupom[]              @relation("ClienteCuponsIndicador")
 
   @@unique([nomeCompleto, documento])
   @@index([tipoHospede])
@@ -396,6 +397,22 @@ model PontosRegra {
   @@map("pontos_regras")
 }
 
+model NivelFidelidade {
+  id              Int      @id @default(autoincrement())
+  codigo          Int      @unique
+  nome            String   @unique
+  pontosMinimos   Int      @default(0) @map("pontos_minimos")
+  bonusPercentual Decimal  @default(0) @map("bonus_percentual") @db.Decimal(5, 2)
+  beneficios      Json?
+  ordem           Int      @default(0)
+  ativo           Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([ativo, pontosMinimos])
+  @@map("niveis_fidelidade")
+}
+
 model TarifaSuite {
   id         Int      @id @default(autoincrement())
   suiteTipo  String   @map("suite_tipo")
@@ -437,6 +454,10 @@ model ResgatePremio {
   premioId             Int          @map("premio_id")
   pontosUsados         Int          @map("pontos_usados")
   status               String       @default("PENDENTE")
+  codigoResgate        String?      @unique @map("codigo_resgate")
+  codigoStatus         String       @default("active") @map("codigo_status")
+  usadoEm              DateTime?    @map("usado_em")
+  expiraEm             DateTime?    @map("expira_em")
   funcionarioId        Int?         @map("funcionario_id")
   funcionarioEntregaId Int?         @map("funcionario_entrega_id")
   createdAt            DateTime     @default(now()) @map("created_at")
@@ -449,6 +470,7 @@ model ResgatePremio {
   @@index([clienteId])
   @@index([premioId])
   @@index([status])
+  @@index([codigoStatus])
   @@map("resgates_premios")
 }
 
@@ -489,14 +511,22 @@ model Cupom {
   limitePorCliente Int?      @map("limite_por_cliente")
   totalUsos       Int        @default(0) @map("total_usos")
   ativo           Boolean    @default(true)
+  status          String     @default("active")
+  trackingSlug    String?    @unique @map("tracking_slug")
   criadoPor       Int?       @map("criado_por")
+  tipoCampanha    String?    @map("tipo_campanha")
+  clienteIndicadorId Int?    @map("cliente_indicador_id")
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
   usos            CupomUso[]
+  clienteIndicador Cliente?  @relation("ClienteCuponsIndicador", fields: [clienteIndicadorId], references: [id])
 
   @@index([codigo])
   @@index([ativo])
+  @@index([status])
   @@index([dataInicio, dataFim])
+  @@index([tipoCampanha])
+  @@index([clienteIndicadorId])
   @@map("cupons")
 }
 

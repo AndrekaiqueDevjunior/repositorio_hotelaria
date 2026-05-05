@@ -10,6 +10,7 @@ from app.repositories.indicacao_repo import (
     IndicacaoRepository,
     normalizar_documento,
 )
+from app.services.programa_pontos_service import ProgramaPontosService
 from app.utils.datetime_utils import now_utc
 
 
@@ -85,6 +86,54 @@ class IndicacaoService:
             data_reserva=getattr(reserva, "createdAt", None) or now_utc(),
         )
         return {"success": True, "atualizada": True, "indicacao": atualizada}
+
+    async def registrar_cupom_amigo_reserva(
+        self,
+        reserva_id: int,
+        cliente_indicador_id: int,
+    ) -> Dict[str, Any]:
+        reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include={"cliente": True})
+        if not reserva or not getattr(reserva, "cliente", None):
+            return {"success": False, "motivo": "reserva_ou_cliente_nao_encontrado"}
+
+        indicador = await self.db.cliente.find_unique(where={"id": cliente_indicador_id})
+        if not indicador:
+            return {"success": False, "motivo": "cliente_indicador_nao_encontrado"}
+
+        cpf_indicador = normalizar_documento(getattr(indicador, "documento", None))
+        cpf_indicado = normalizar_documento(getattr(reserva.cliente, "documento", None))
+        if not cpf_indicador or not cpf_indicado:
+            return {"success": False, "motivo": "cpf_indicador_ou_indicado_ausente"}
+
+        if cpf_indicador == cpf_indicado or int(cliente_indicador_id) == int(reserva.clienteId):
+            return {"success": False, "motivo": "autoindicacao_bloqueada"}
+
+        existente = await self.repo.get_by_cpf_indicado(cpf_indicado)
+        if existente:
+            if int(existente["cliente_indicador_id"]) != int(cliente_indicador_id):
+                return {"success": False, "motivo": "cpf_indicado_ja_usado_em_outra_indicacao"}
+            if not existente.get("reserva_id"):
+                atualizada = await self.repo.vincular_reserva(
+                    indicacao_id=existente["id"],
+                    cliente_indicado_id=reserva.clienteId,
+                    reserva_id=reserva_id,
+                    data_reserva=getattr(reserva, "createdAt", None) or now_utc(),
+                )
+                return {"success": True, "atualizada": True, "indicacao": atualizada}
+            return {"success": True, "atualizada": False, "motivo": "indicacao_ja_vinculada"}
+
+        indicacao = await self.repo.create({
+            "clienteIndicadorId": cliente_indicador_id,
+            "clienteIndicadoId": reserva.clienteId,
+            "reservaId": reserva_id,
+            "cpfIndicador": cpf_indicador,
+            "cpfIndicado": cpf_indicado,
+            "status": STATUS_RESERVADO,
+            "dataEnvio": now_utc(),
+            "dataReserva": getattr(reserva, "createdAt", None) or now_utc(),
+            "pontosCreditados": False,
+        })
+        return {"success": True, "atualizada": True, "indicacao": indicacao}
 
     async def registrar_checkin_realizado(self, reserva_id: int, checkin_datetime=None) -> Dict[str, Any]:
         indicacao = await self._buscar_indicacao_por_reserva_ou_cliente(reserva_id)
@@ -252,11 +301,10 @@ class IndicacaoService:
             raise HTTPException(status_code=404, detail="Cliente nÃ£o encontrado")
 
         indicacoes = await self.repo.list_by_indicador(cliente_id)
-        saldo_atual = await self._obter_saldo(cliente_id)
-        proximo_premio = await self._obter_proximo_premio(saldo_atual)
-        faltam = None
-        if proximo_premio:
-            faltam = max(0, int(proximo_premio["preco_em_pontos"]) - saldo_atual)
+        programa = await ProgramaPontosService(self.db).obter_programa_cliente(cliente_id)
+        saldo_atual = programa.get("saldo_atual", 0)
+        proximo_premio = programa.get("proximo_premio")
+        faltam = programa.get("faltam_pontos_para_proximo_premio")
 
         ultima = indicacoes[0] if indicacoes else None
         status = ultima["status"] if ultima else "sem_indicacao"
@@ -271,6 +319,7 @@ class IndicacaoService:
             "saldo_atual": saldo_atual,
             "faltam_pontos_para_proximo_premio": faltam,
             "proximo_premio": proximo_premio,
+            "programa_pontos": programa,
             "indicacoes": indicacoes,
         }
 

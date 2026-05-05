@@ -8,7 +8,9 @@ from app.middleware.auth_middleware import require_admin_or_manager
 from app.middleware.rate_limit import rate_limit_moderate
 from app.repositories.cupom_repo import CupomRepository
 from app.schemas.cupom_schema import (
+    CupomAmigoRequest,
     CupomCreateRequest,
+    CupomRastreadoRequest,
     CupomResponse,
     CupomStatusRequest,
     CupomUpdateRequest,
@@ -59,6 +61,37 @@ async def criar_cupom(
     current_user: User = Depends(require_admin_or_manager),
 ):
     return await service.create(payload.model_dump(), criado_por=current_user.id)
+
+
+@router.post("/amigo", response_model=dict, status_code=201)
+async def criar_cupom_amigo(
+    payload: CupomAmigoRequest,
+    service: CupomService = Depends(get_cupom_service),
+    current_user: User = Depends(require_admin_or_manager),
+):
+    return await service.criar_cupom_amigo(
+        cliente_id=payload.cliente_id,
+        percentual_desconto=payload.percentual_desconto,
+        pontos_bonus=payload.pontos_bonus,
+        dias_validade=payload.dias_validade,
+        limite_total_usos=payload.limite_total_usos,
+        telefone_destino=payload.telefone_destino,
+        enviar_whatsapp=payload.enviar_whatsapp,
+        criado_por=current_user.id,
+    )
+
+
+@router.post("/rastreado", response_model=dict, status_code=201)
+async def criar_cupom_rastreado(
+    payload: CupomRastreadoRequest,
+    service: CupomService = Depends(get_cupom_service),
+    current_user: User = Depends(require_admin_or_manager),
+):
+    """Criar cupom de desconto ou influencer com link rastreado e validade."""
+    return await service.criar_cupom_rastreado(
+        payload.model_dump(exclude_unset=True),
+        criado_por=current_user.id,
+    )
 
 
 @router.put("/{cupom_id}", response_model=CupomResponse)

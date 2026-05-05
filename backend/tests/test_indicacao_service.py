@@ -82,6 +82,20 @@ class FakeDbForCheckoutDuplicado:
         ])
 
 
+class FakeDbForStatus:
+    def __init__(self):
+        self.cliente = FakeModel(find_unique_result=SimpleNamespace(id=1, documento="12345678909", nivelFidelidade=0))
+        self.usuariopontos = FakeModel(find_unique_result=SimpleNamespace(saldo=12))
+        self.premio = FakeModel(find_first_result=SimpleNamespace(id=4, nome="Voucher especial", precoEmPontos=15, categoria="GERAL"))
+        self.query_calls = 0
+
+    async def query_raw(self, *args):
+        self.query_calls += 1
+        if self.query_calls == 1:
+            return [{"total": 12}]
+        return [{"total": 0}]
+
+
 @pytest.mark.asyncio
 async def test_bloqueia_autoindicacao():
     db = SimpleNamespace(
@@ -126,11 +140,7 @@ async def test_checkout_duplicado_nao_credita_novamente():
 
 @pytest.mark.asyncio
 async def test_calcula_faltam_pontos_para_proximo_premio():
-    db = SimpleNamespace(
-        cliente=FakeModel(find_unique_result=SimpleNamespace(id=1, documento="12345678909")),
-        usuariopontos=FakeModel(find_unique_result=SimpleNamespace(saldo=12)),
-        premio=FakeModel(find_first_result=SimpleNamespace(id=4, nome="Voucher especial", precoEmPontos=15)),
-    )
+    db = FakeDbForStatus()
     service = IndicacaoService(db)
     service.repo = SimpleNamespace(list_by_indicador=lambda cliente_id: _async_return([]))
 

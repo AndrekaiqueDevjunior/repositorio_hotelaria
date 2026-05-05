@@ -6,9 +6,11 @@ from app.schemas.pontos_schema import (
     ValidarReservaResponse, ConviteResponse, EstornarPontosRequest
 )
 from app.services.pontos_service import PontosService, get_pontos_service as _get_pontos_service
+from app.services.programa_pontos_service import ProgramaPontosService
 from app.services.real_points_service import RealPointsService
 from app.repositories.pontos_repo import PontosRepository
 from app.repositories.pontos_repo_atomic import PontosRepositoryAtomic
+from app.repositories.premio_repo import PremioRepository
 from app.repositories.reserva_repo import ReservaRepository
 from app.repositories.cliente_repo import ClienteRepository
 from app.core.database import get_db
@@ -123,6 +125,20 @@ async def consultar_pontos_publico(
         # Buscar saldo e histórico
         saldo_data = await service.get_saldo(cliente['id'])
         historico_data = await service.get_historico(cliente['id'], limit=10)
+        programa_data = await ProgramaPontosService(db).obter_programa_cliente(cliente["id"])
+        premios_repo = PremioRepository(db)
+        premios = await premios_repo.list_all(apenas_ativos=True)
+        saldo_atual = saldo_data.get("saldo", 0)
+        premios_disponiveis = []
+        premios_proximos = []
+        for premio in premios:
+            custo = int(premio.get("preco_em_pontos") or 0)
+            if saldo_atual >= custo:
+                premios_disponiveis.append(premio)
+            elif custo > 0:
+                faltam = custo - saldo_atual
+                if faltam <= 10 or saldo_atual >= int(custo * 0.7):
+                    premios_proximos.append({**premio, "pontos_faltantes": faltam})
         
         return {
             "success": True,
@@ -131,7 +147,14 @@ async def consultar_pontos_publico(
                 "documento": documento_limpo
             },
             "saldo": saldo_data.get('saldo', 0),
-            "historico": historico_data.get('transacoes', [])
+            "saldo_pontos": saldo_data.get('saldo', 0),
+            "historico": historico_data.get('transacoes', []),
+            "programa_pontos": programa_data,
+            "barra_nivel": programa_data.get("barra_nivel") if programa_data.get("success") else None,
+            "barra_premios": programa_data.get("barra_premios") if programa_data.get("success") else None,
+            "faltam_pontos_para_proximo_premio": programa_data.get("faltam_pontos_para_proximo_premio"),
+            "premios_disponiveis": premios_disponiveis,
+            "premios_proximos": premios_proximos,
         }
     except HTTPException:
         raise
@@ -167,6 +190,22 @@ async def obter_saldo_cliente(
         raise HTTPException(
             status_code=500,
             detail=f"Erro ao obter saldo: {str(e)}"
+        )
+
+
+@router.get("/programa/{cliente_id}", response_model=dict)
+async def obter_programa_pontos_cliente(
+    cliente_id: int,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Retornar barras de nivel, premios e dados de fidelidade do cliente."""
+    try:
+        db = get_db()
+        return await ProgramaPontosService(db).obter_programa_cliente(cliente_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao obter programa de pontos: {str(e)}"
         )
 
 @router.get("/historico/{cliente_id}", response_model=dict)

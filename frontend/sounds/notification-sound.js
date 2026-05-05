@@ -15,6 +15,30 @@ export const playNotificationSound = () => {
   }
 }
 
+export const playCheckoutDueSound = () => {
+  try {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+    const gainNode = audioContext.createGain()
+    gainNode.connect(audioContext.destination)
+
+    const tones = [880, 660, 880]
+    tones.forEach((frequency, index) => {
+      const oscillator = audioContext.createOscillator()
+      oscillator.connect(gainNode)
+      oscillator.type = 'triangle'
+      oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime + index * 0.18)
+      oscillator.start(audioContext.currentTime + index * 0.18)
+      oscillator.stop(audioContext.currentTime + index * 0.18 + 0.14)
+    })
+
+    gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime)
+    gainNode.gain.exponentialRampToValueAtTime(0.35, audioContext.currentTime + 0.02)
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.7)
+  } catch (error) {
+    playNotificationSound()
+  }
+}
+
 // Web Audio API fallback
 const playWebAudioSound = () => {
   try {

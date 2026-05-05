@@ -58,6 +58,9 @@ class ResgatePremioResponse(BaseModel):
     pontos_usados: Optional[int] = None
     novo_saldo: Optional[int] = None
     transacao_id: Optional[int] = None
+    codigo_resgate: Optional[str] = None
+    codigo_status: Optional[str] = None
+    expira_em: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -67,11 +70,19 @@ class ResgateHistoricoResponse(BaseModel):
     premio_nome: Optional[str] = None
     pontos_usados: int
     status: str
+    codigo_resgate: Optional[str] = None
+    codigo_status: Optional[str] = None
+    expira_em: Optional[str] = None
+    usado_em: Optional[str] = None
     data_resgate: Optional[str] = None
 
 
 class ConfirmarEntregaRequest(BaseModel):
     resgate_id: int
+
+
+class UsarCodigoResgateRequest(BaseModel):
+    codigo_resgate: str
 
 
 class PremiosDisponiveis(BaseModel):

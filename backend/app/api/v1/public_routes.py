@@ -59,6 +59,31 @@ RESERVA_STATUS_ABERTA = [
 ]
 
 
+def _cpf_valido(documento: str) -> bool:
+    cpf = ''.join(filter(str.isdigit, documento or ""))
+    if len(cpf) != 11 or cpf == cpf[0] * 11:
+        return False
+
+    def _digito(base: str) -> str:
+        soma = sum(int(num) * peso for num, peso in zip(base, range(len(base) + 1, 1, -1)))
+        resto = (soma * 10) % 11
+        return "0" if resto == 10 else str(resto)
+
+    return cpf[-2:] == _digito(cpf[:9]) + _digito(cpf[:10])
+
+
+def _validar_identidade_reserva_publica(documento: str, telefone: str) -> tuple[str, str]:
+    documento_limpo = ''.join(filter(str.isdigit, documento or ""))
+    telefone_limpo = ''.join(filter(str.isdigit, telefone or ""))
+
+    if not _cpf_valido(documento_limpo):
+        raise HTTPException(status_code=400, detail="CPF inválido. Informe um CPF real para reservar.")
+    if len(telefone_limpo) not in (10, 11):
+        raise HTTPException(status_code=400, detail="Telefone inválido. Informe DDD e número.")
+
+    return documento_limpo, telefone_limpo
+
+
 async def _buscar_reserva_aberta_cliente(db, cliente_id: int):
     return await db.reserva.find_first(
         where={
@@ -403,7 +428,7 @@ async def consultar_pontos_cliente(cpf: str):
         pontos_repo = PontosRepository(db)
 
         documento_limpo = ''.join(filter(str.isdigit, cpf))
-        if len(documento_limpo) != 11:
+        if not _cpf_valido(documento_limpo):
             raise HTTPException(status_code=400, detail="CPF inválido")
 
         try:
@@ -462,7 +487,7 @@ async def identificar_cliente_recorrente(
         documento_limpo = ''.join(filter(str.isdigit, payload.documento))
         email_normalizado = payload.email.strip().lower()
 
-        if len(documento_limpo) != 11:
+        if not _cpf_valido(documento_limpo):
             raise HTTPException(status_code=400, detail="CPF inválido")
 
         try:
@@ -527,8 +552,10 @@ async def criar_reserva_publica(
         reserva_repo = ReservaRepository(db)
         cupom_service = CupomService(CupomRepository(db))
 
-        documento_limpo = ''.join(filter(str.isdigit, reserva_data.documento))
-        telefone_limpo = ''.join(filter(str.isdigit, reserva_data.telefone))
+        documento_limpo, telefone_limpo = _validar_identidade_reserva_publica(
+            reserva_data.documento,
+            reserva_data.telefone,
+        )
 
         try:
             cliente = await cliente_repo.get_by_documento(documento_limpo)
@@ -548,7 +575,12 @@ async def criar_reserva_publica(
 
             email_atual = (cliente.get("email") or "").strip().lower()
             email_novo = (reserva_data.email or "").strip().lower()
-            if email_novo and email_novo != email_atual:
+            if email_atual and email_novo and email_novo != email_atual:
+                raise HTTPException(
+                    status_code=403,
+                    detail="CPF já cadastrado com outro e-mail. Use o e-mail do cadastro para autenticar a reserva.",
+                )
+            if email_novo and not email_atual:
                 update_data["email"] = email_novo
 
             telefone_atual = ''.join(filter(str.isdigit, cliente.get("telefone") or ""))

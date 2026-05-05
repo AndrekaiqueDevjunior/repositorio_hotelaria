@@ -21,21 +21,25 @@ class IndicacaoRepository:
             INSERT INTO indicacoes (
                 cliente_indicador_id,
                 cliente_indicado_id,
+                reserva_id,
                 cpf_indicador,
                 cpf_indicado,
                 status,
                 data_envio,
+                data_reserva,
                 pontos_creditados
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             """,
             data["clienteIndicadorId"],
             data.get("clienteIndicadoId"),
+            data.get("reservaId"),
             data["cpfIndicador"],
             data["cpfIndicado"],
             data.get("status", STATUS_ENVIADO),
             data.get("dataEnvio"),
+            data.get("dataReserva"),
             bool(data.get("pontosCreditados", False)),
         )
         return self._serialize(rows[0])

@@ -5,6 +5,7 @@ Servico de notificacao via WhatsApp usando Twilio.
 import logging
 import os
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client
@@ -48,6 +49,9 @@ class WhatsAppService:
 
     def _format_phone_number(self, phone: str) -> str:
         phone = (phone or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        digits = "".join(filter(str.isdigit, phone))
+        if not phone.startswith("+") and not phone.startswith("whatsapp:") and len(digits) in (10, 11):
+            phone = f"+55{digits}"
         if not phone.startswith("+") and not phone.startswith("whatsapp:"):
             phone = f"+{phone}"
         if not phone.startswith("whatsapp:"):
@@ -67,7 +71,7 @@ class WhatsAppService:
         for key, value in params.items():
             if value is None or value == "":
                 continue
-            parts.append(f"{key}={value}")
+            parts.append(f"{quote(str(key))}={quote(str(value))}")
         if not parts:
             return base
         return f"{base}?{'&'.join(parts)}"
@@ -108,6 +112,72 @@ class WhatsAppService:
 
     async def enviar_mensagem_customizada(self, to_number: str, mensagem: str) -> Dict[str, Any]:
         return await self._send_message(to_number, mensagem)
+
+    def montar_link_convite_real(self, codigo: str) -> str:
+        return self._build_link("/reservar", {"cupom": codigo, "origem": "convite_real"})
+
+    def montar_mensagem_convite_real(self, link: str) -> str:
+        return (
+            "Tô na Jornada Real do Hotel Real 😮\n"
+            "Se você reservar por esse link, a gente ganha benefícios\n"
+            f"👉 {link}\n"
+            "Depois me conta 🔥"
+        )
+
+    def montar_whatsapp_share_url(self, mensagem: str) -> str:
+        return f"https://wa.me/?text={quote(mensagem)}"
+
+    async def enviar_convite_real(
+        self,
+        telefone_destino: str,
+        codigo: str,
+        link: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not telefone_destino:
+            return {"success": False, "error": "Telefone de destino nao informado"}
+        link_final = link or self.montar_link_convite_real(codigo)
+        mensagem = self.montar_mensagem_convite_real(link_final)
+        return await self._send_message(telefone_destino, mensagem)
+
+    async def enviar_aviso_premio_proximo(
+        self,
+        cliente_telefone: Optional[str],
+        documento: Optional[str],
+    ) -> Dict[str, Any]:
+        if not cliente_telefone:
+            return {"success": False, "error": "Cliente sem telefone"}
+
+        link_pontos = self._build_link("/consultar-pontos", {"documento": documento})
+        mensagem = (
+            "Você está a poucos pontos do seu próximo prêmio 😮\n"
+            "Falta muito pouco…\n"
+            f"👉 Continue sua jornada: {link_pontos}"
+        )
+        return await self._send_message(cliente_telefone, mensagem)
+
+    async def enviar_confirmacao_checkin_dinheiro(
+        self,
+        codigo_reserva: str,
+        cliente_nome: str,
+        valor: float,
+        comprovante_id: Optional[int] = None,
+        reserva_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        link_reserva = self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
+        link_comprovante = self._build_link("/comprovantes", {"comprovanteId": comprovante_id})
+        linhas = [
+            "Pagamento em dinheiro aguardando liberação de check-in",
+            "",
+            f"Reserva: {codigo_reserva}",
+            f"Cliente: {cliente_nome}",
+            f"Valor: R$ {float(valor or 0):.2f}",
+            "Ação: conferir comprovante e liberar check-in no sistema.",
+        ]
+        if link_reserva:
+            linhas.append(f"Reserva: {link_reserva}")
+        if link_comprovante:
+            linhas.append(f"Comprovante: {link_comprovante}")
+        return await self._send_message(self.notification_number, "\n".join(linhas))
 
     async def enviar_notificacao_resgate_premio(
         self,
@@ -241,6 +311,42 @@ class WhatsAppService:
             linhas.extend(["", f"Acessar: {link_reservas}"])
         mensagem = "\n".join(linhas)
         return await self._send_message(self.notification_number, mensagem)
+
+    async def enviar_pontos_pos_checkout(
+        self,
+        cliente_nome: str,
+        cliente_telefone: Optional[str],
+        documento: Optional[str],
+        codigo_reserva: str,
+        saldo_atual: int,
+        pontos_ganhos_checkout: int = 0,
+        faltam_pontos_para_proximo_premio: Optional[int] = None,
+        proximo_premio_nome: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not cliente_telefone:
+            return {"success": False, "error": "Cliente sem telefone"}
+
+        link_pontos = self._build_link("/consultar-pontos", {"documento": documento})
+        linhas = [
+            "Seus pontos já foram liberados 👑",
+            "Você avançou na Jornada Real",
+        ]
+        if link_pontos:
+            linhas.append(f"👉 Veja seu progresso: {link_pontos}")
+        linhas.extend(["", f"Reserva: {codigo_reserva}"])
+        if pontos_ganhos_checkout:
+            linhas.append(f"Pontos liberados nesta estadia: {pontos_ganhos_checkout}")
+        linhas.append(f"Saldo atual: {int(saldo_atual or 0)} pontos")
+
+        if faltam_pontos_para_proximo_premio is not None and proximo_premio_nome:
+            faltam = int(faltam_pontos_para_proximo_premio)
+            if faltam <= 0:
+                linhas.append(f"Você já pode conferir o prêmio: {proximo_premio_nome}.")
+            else:
+                linhas.append(f"Faltam {faltam} pontos para {proximo_premio_nome}.")
+
+        mensagem = "\n".join(linhas)
+        return await self._send_message(cliente_telefone, mensagem)
 
 
 _whatsapp_service = None

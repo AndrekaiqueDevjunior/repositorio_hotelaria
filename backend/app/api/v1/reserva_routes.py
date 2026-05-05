@@ -91,6 +91,69 @@ async def listar_ultimas_reservas(
             detail=f"Erro ao buscar últimas reservas: {str(e)}"
         )
 
+@router.get("/checkouts-pendentes-alerta", response_model=dict)
+async def listar_checkouts_pendentes_alerta(
+    current_user: User = Depends(get_current_active_user),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """Listar hospedagens com horario de check-out vencido para aviso sonoro na recepcao."""
+    try:
+        db = get_db()
+        from app.utils.datetime_utils import now_utc
+
+        rows = await db.query_raw(
+            """
+            SELECT
+                r.id,
+                r.codigo_reserva,
+                r.cliente_nome,
+                r.quarto_numero,
+                r.checkout_previsto,
+                r.status_reserva,
+                h.status_hospedagem
+            FROM reservas r
+            LEFT JOIN hospedagens h ON h.reserva_id = r.id
+            WHERE r.checkout_previsto <= $1
+              AND r.checkout_real IS NULL
+              AND COALESCE(h.status_hospedagem, r.status_reserva) IN (
+                'CHECKIN_REALIZADO',
+                'HOSPEDADO',
+                'CHECKIN',
+                'EM_ANDAMENTO'
+              )
+            ORDER BY r.checkout_previsto ASC
+            LIMIT $2
+            """,
+            now_utc(),
+            limit,
+        )
+
+        alertas = []
+        for row in rows:
+            notificacao_checkout = await NotificationService.notificar_checkout_pendente(db, row)
+            checkout_previsto = row.get("checkout_previsto")
+            alertas.append({
+                "id": int(row["id"]),
+                "reservation_id": int(row["id"]),
+                "codigo_reserva": row.get("codigo_reserva"),
+                "cliente_nome": row.get("cliente_nome"),
+                "guest_name": row.get("cliente_nome"),
+                "quarto_numero": row.get("quarto_numero"),
+                "room_number": row.get("quarto_numero"),
+                "checkout_previsto": checkout_previsto.isoformat() if hasattr(checkout_previsto, "isoformat") else checkout_previsto,
+                "checkout_time": checkout_previsto.isoformat() if hasattr(checkout_previsto, "isoformat") else checkout_previsto,
+                "status_reserva": row.get("status_reserva"),
+                "status_hospedagem": row.get("status_hospedagem"),
+                "alert_visual": True,
+                "alert_sound": notificacao_checkout is not None,
+                "mensagem": f"Check-out pendente no quarto {row.get('quarto_numero')}",
+            })
+
+        return {"success": True, "alertas": alertas, "total": len(alertas)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar check-outs pendentes: {str(e)}")
+
+
 @router.post("", status_code=201)
 async def criar_reserva(
     reserva: ReservaCreate,
@@ -409,6 +472,22 @@ async def upload_comprovante_reserva(
             where={"id": reserva_id},
             data={"statusReserva": "EM_ANALISE"}
         )
+
+        if dados.metodo_pagamento.upper() == "DINHEIRO":
+            try:
+                from app.services.whatsapp_service import get_whatsapp_service
+
+                comprovante_obj = result.get("comprovante")
+                comprovante_id = getattr(comprovante_obj, "id", None)
+                await get_whatsapp_service().enviar_confirmacao_checkin_dinheiro(
+                    codigo_reserva=getattr(reserva, "codigoReserva", None) or str(reserva_id),
+                    cliente_nome=getattr(reserva, "clienteNome", None) or "Cliente",
+                    valor=float(reserva.valorDiaria) * int(reserva.numDiarias or 0),
+                    comprovante_id=comprovante_id,
+                    reserva_id=reserva_id,
+                )
+            except Exception as whatsapp_error:
+                print(f"[WHATSAPP] Erro ao avisar admin sobre dinheiro/check-in: {whatsapp_error}")
 
         return {
             "success": True,

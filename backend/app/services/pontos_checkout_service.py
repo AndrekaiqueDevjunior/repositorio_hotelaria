@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.repositories.pontos_repo import PontosRepository
+from app.services.programa_pontos_service import ProgramaPontosService
 from app.services.real_points_service import RealPointsService
 from app.utils.datetime_utils import now_utc
 
@@ -69,6 +70,13 @@ async def creditar_rp_no_checkout(
     if pontos <= 0:
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Sem pontos a creditar"}
 
+    programa_service = ProgramaPontosService(db)
+    nivel = await programa_service.obter_nivel_efetivo_cliente(cliente_id)
+    calculo_nivel = programa_service.aplicar_bonus_nivel(pontos, nivel)
+    pontos_base = int(calculo_nivel["pontos_base"])
+    pontos_bonus_nivel = int(calculo_nivel["pontos_bonus_nivel"])
+    pontos = int(calculo_nivel["pontos_total"])
+
     transacao_existente = await db.transacaopontos.find_first(
         where={
             "reservaId": reserva_id,
@@ -96,8 +104,14 @@ async def creditar_rp_no_checkout(
     codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
     temporada = getattr(regra, "temporada", None)
     motivo = f"Checkout reserva {codigo} - Suíte {tipo_suite} - {num_diarias} diárias - {pontos} RP"
+    motivo = f"Checkout reserva {codigo} - Suite {tipo_suite} - {num_diarias} diarias - {pontos} RP"
     if temporada:
         motivo = f"{motivo} - Temporada {temporada}"
+    if pontos_bonus_nivel > 0:
+        motivo = (
+            f"{motivo} - Nivel {nivel['nome']} "
+            f"+{nivel['bonus_percentual']}% ({pontos_base}+{pontos_bonus_nivel})"
+        )
     motivo = f"{motivo} ({motivo_calculo})"
 
     result = await pontos_repo.criar_transacao_pontos(
@@ -114,6 +128,9 @@ async def creditar_rp_no_checkout(
         "success": bool(result.get("success")),
         "creditado": bool(result.get("success")),
         "pontos": pontos if result.get("success") else 0,
+        "pontos_base": pontos_base,
+        "pontos_bonus_nivel": pontos_bonus_nivel,
+        "nivel": nivel,
         "transacao": result,
     }
 

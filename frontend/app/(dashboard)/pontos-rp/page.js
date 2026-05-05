@@ -23,6 +23,7 @@ function PontosRPContent() {
   const [historicoRP, setHistoricoRP] = useState([])
   const [premiosRP, setPremiosRP] = useState([])
   const [regrasRP, setRegrasRP] = useState(null)
+  const [programaPontos, setProgramaPontos] = useState(null)
   
   // Carregar clientes ao iniciar
   useEffect(() => {
@@ -50,8 +51,11 @@ function PontosRPContent() {
       
       if (clientesData && clientesData.length > 0) {
         setClientes(clientesData)
-        setClienteId(clientesData[0].id)
-        setClienteNome(clientesData[0].nome_completo)
+        const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+        const clienteParam = parseInt(params?.get('cliente_id') || '', 10)
+        const clienteInicial = clientesData.find((cliente) => cliente.id === clienteParam) || clientesData[0]
+        setClienteId(clienteInicial.id)
+        setClienteNome(clienteInicial.nomeCompleto || clienteInicial.nome_completo)
       } else {
         toast.error('Nenhum cliente encontrado')
       }
@@ -67,13 +71,16 @@ function PontosRPContent() {
     
     try {
       const res = await api.get(`/pontos/saldo/${clienteId}`)
-      // Adaptar resposta do sistema unificado para formato RP
+      const programaRes = await api.get(`/pontos/programa/${clienteId}`)
+      const programa = programaRes.data?.success ? programaRes.data : null
+      setProgramaPontos(programa)
+
       setSaldoRP({
         saldo_rp: res.data.saldo || 0,
         diarias_pendentes: 0,
-        total_ganhos: 0,
-        total_gastos: 0,
-        primeira_vez: true
+        total_ganhos: programa?.total_pontos_nivel || 0,
+        total_gastos: programa?.total_resgatado || 0,
+        primeira_vez: !programa?.total_pontos_nivel
       })
     } catch (error) {
       console.error('Erro ao carregar saldo RP:', error)
@@ -95,9 +102,18 @@ function PontosRPContent() {
 
   const loadPremiosRP = async () => {
     try {
-      // Sistema de prêmios ainda não implementado no backend unificado
-      // Por enquanto, retornar array vazio sem notificação
-      setPremiosRP([])
+      const res = await api.get(`/premios/disponiveis/${clienteId}`)
+      const disponiveis = (res.data?.premios_disponiveis || []).map((premio) => ({
+        ...premio,
+        rp_necessario: premio.preco_em_pontos,
+        pode_resgatar: true
+      }))
+      const proximos = (res.data?.premios_proximos || []).map((premio) => ({
+        ...premio,
+        rp_necessario: premio.preco_em_pontos,
+        pode_resgatar: false
+      }))
+      setPremiosRP([...disponiveis, ...proximos])
     } catch (error) {
       console.error('Erro ao carregar prêmios RP:', error)
       toast.error('Erro ao carregar prêmios RP')
@@ -154,7 +170,39 @@ function PontosRPContent() {
   }
 
   const formatDate = (dateString) => {
+    if (!dateString) return '-'
     return new Date(dateString).toLocaleString('pt-BR')
+  }
+
+  const renderProgressBar = (titulo, barra, detalhe) => {
+    if (!barra) return null
+
+    const percentual = Math.min(100, Math.max(0, barra.percentual || 0))
+    return (
+      <div className="bg-white p-5 rounded-lg shadow">
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">{titulo}</h3>
+            <p className="text-sm text-gray-600">{detalhe}</p>
+          </div>
+          <div className="text-right">
+            <div className="text-xl font-bold text-purple-700">{percentual}%</div>
+            <div className="text-xs text-gray-500">{barra.pontos || 0} / {barra.meta || 0} pts</div>
+          </div>
+        </div>
+        <div className="h-3 w-full rounded-full bg-gray-200 overflow-hidden">
+          <div
+            className="h-full bg-purple-600 transition-all"
+            style={{ width: `${percentual}%` }}
+          />
+        </div>
+        {barra.faltam_pontos !== null && barra.faltam_pontos !== undefined && (
+          <div className="mt-2 text-sm text-gray-700">
+            Faltam {barra.faltam_pontos} pontos
+          </div>
+        )}
+      </div>
+    )
   }
 
   const renderDashboard = () => (
@@ -178,6 +226,25 @@ function PontosRPContent() {
         </div>
       </div>
 
+      {programaPontos && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {renderProgressBar(
+            `Nivel ${programaPontos.nivel?.nome || 'INICIAL'}`,
+            programaPontos.barra_nivel,
+            programaPontos.barra_nivel?.proximo_nivel
+              ? `Proximo nivel: ${programaPontos.barra_nivel.proximo_nivel.nome}`
+              : 'Nivel maximo atingido'
+          )}
+          {renderProgressBar(
+            'Barra de premios',
+            programaPontos.barra_premios,
+            programaPontos.proximo_premio
+              ? `Proximo premio: ${programaPontos.proximo_premio.nome}`
+              : 'Nenhum premio ativo acima do saldo atual'
+          )}
+        </div>
+      )}
+
       {/* Primeira vez no programa */}
       {saldoRP.primeira_vez && (
         <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg">
@@ -199,12 +266,14 @@ function PontosRPContent() {
               <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
                 <div>
                   <div className="font-medium">Reserva {item.codigo_reserva || item.reserva_id}</div>
-                  <div className="text-sm text-gray-600">{item.detalhamento}</div>
-                  <div className="text-xs text-gray-500">{formatDate(item.data)}</div>
+                  <div className="text-sm text-gray-600">{item.motivo || item.detalhamento || item.origem}</div>
+                  <div className="text-xs text-gray-500">{formatDate(item.created_at || item.data)}</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-lg font-bold text-green-600">+{item.pontos_gerados} RP</div>
-                  <div className="text-xs text-gray-500">{item.tipo_suite}</div>
+                  <div className={`text-lg font-bold ${(item.pontos ?? item.pontos_gerados) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {(item.pontos ?? item.pontos_gerados) >= 0 ? '+' : ''}{item.pontos ?? item.pontos_gerados} RP
+                  </div>
+                  <div className="text-xs text-gray-500">{item.origem || item.tipo_suite}</div>
                 </div>
               </div>
             ))}

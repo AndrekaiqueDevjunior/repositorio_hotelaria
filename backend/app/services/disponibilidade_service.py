@@ -47,12 +47,13 @@ class DisponibilidadeService:
         
         # CORREÇÃO CRÍTICA: Verificar status do quarto
         # Apenas quartos LIVRE podem ser reservados
-        if quarto.status != "LIVRE":
+        if quarto.status in ("BLOQUEADO", "MANUTENCAO", "INATIVO"):
             status_map = {
                 "OCUPADO": "ocupado",
                 "RESERVADO": "reservado",
                 "MANUTENCAO": "em manutenção",
-                "BLOQUEADO": "bloqueado"
+                "BLOQUEADO": "bloqueado",
+                "INATIVO": "inativo"
             }
             motivo = status_map.get(quarto.status, quarto.status.lower())
             return {
@@ -159,7 +160,7 @@ class DisponibilidadeService:
         # CORREÇÃO CRÍTICA: Buscar APENAS quartos LIVRE
         # Quartos OCUPADOS, RESERVADOS, MANUTENCAO e BLOQUEADOS não devem aparecer
         where_clause = {
-            "status": "LIVRE"  # Apenas quartos livres podem ser reservados
+            "status": {"notIn": ["BLOQUEADO", "MANUTENCAO", "INATIVO"]}
         }
         
         if tipo_suite:
