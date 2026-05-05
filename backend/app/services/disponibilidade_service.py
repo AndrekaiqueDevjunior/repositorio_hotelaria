@@ -45,8 +45,8 @@ class DisponibilidadeService:
                 "conflitos": []
             }
         
-        # CORREÇÃO CRÍTICA: Verificar status do quarto
-        # Apenas quartos LIVRE podem ser reservados
+        # Bloqueios operacionais impedem a reserva. Status como OCUPADO/RESERVADO
+        # sao resolvidos pelas reservas conflitantes abaixo para nao esconder datas futuras.
         if quarto.status in ("BLOQUEADO", "MANUTENCAO", "INATIVO"):
             status_map = {
                 "OCUPADO": "ocupado",
@@ -157,8 +157,7 @@ class DisponibilidadeService:
         Returns:
             Lista de quartos disponíveis
         """
-        # CORREÇÃO CRÍTICA: Buscar APENAS quartos LIVRE
-        # Quartos OCUPADOS, RESERVADOS, MANUTENCAO e BLOQUEADOS não devem aparecer
+        # Status operacionais bloqueados nao entram; ocupacao por data vem das reservas.
         where_clause = {
             "status": {"notIn": ["BLOQUEADO", "MANUTENCAO", "INATIVO"]}
         }

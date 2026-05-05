@@ -81,7 +81,7 @@ async def creditar_rp_no_checkout(
         where={
             "reservaId": reserva_id,
             "tipo": "CREDITO",
-            "origem": "CHECKOUT",
+            "origem": {"in": ["CHECKOUT", "RESERVA"]},
         }
     )
 
@@ -123,6 +123,15 @@ async def creditar_rp_no_checkout(
         reserva_id=reserva_id,
         funcionario_id=funcionario_id,
     )
+
+    if result.get("idempotente"):
+        return {
+            "success": True,
+            "creditado": False,
+            "pontos": 0,
+            "motivo": "Pontos ja creditados",
+            "transacao": result,
+        }
 
     return {
         "success": bool(result.get("success")),
@@ -182,6 +191,15 @@ async def creditar_bonus_cupom_no_checkout(
         reserva_id=reserva_id,
         funcionario_id=funcionario_id,
     )
+
+    if result.get("idempotente"):
+        return {
+            "success": True,
+            "creditado": False,
+            "pontos": 0,
+            "motivo": "Bonus do cupom ja creditado",
+            "transacao": result,
+        }
 
     return {
         "success": bool(result.get("success")),

@@ -253,6 +253,7 @@ model TransacaoPontos {
   @@index([usuarioPontosId])
   @@index([funcionarioId])
   @@index([reservaId])
+  @@index([reservaId, origem])
   @@map("transacoes_pontos")
 }
 

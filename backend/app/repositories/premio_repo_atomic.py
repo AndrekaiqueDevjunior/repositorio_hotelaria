@@ -8,7 +8,7 @@ import logging
 import secrets
 from datetime import timedelta
 
-from app.utils.datetime_utils import now_utc
+from app.utils.datetime_utils import now_utc, to_utc
 
 security_logger = logging.getLogger("security")
 CODIGO_STATUS_ACTIVE = "active"
@@ -361,7 +361,7 @@ class PremioRepositoryAtomic:
             if status_codigo != CODIGO_STATUS_ACTIVE:
                 return {"success": False, "error": f"Codigo ja inutilizado: {status_codigo}"}
 
-            expira_em = resgate.get("expira_em")
+            expira_em = to_utc(resgate.get("expira_em"))
             if expira_em and expira_em < now_utc():
                 await transaction.execute_raw(
                     """

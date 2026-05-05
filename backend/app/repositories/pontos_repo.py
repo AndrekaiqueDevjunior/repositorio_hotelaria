@@ -10,6 +10,7 @@ from app.schemas.pontos_schema import (
 # Constantes de segurança
 MAX_PONTOS_POR_TRANSACAO = 1000
 MIN_PONTOS_POR_TRANSACAO = -1000
+ORIGENS_IDEMPOTENTES_POR_RESERVA = {"CHECKOUT", "BONUS_CUPOM", "CONVITE_REAL", "RESERVA"}
 
 
 class PontosRepository:
@@ -66,52 +67,20 @@ class PontosRepository:
                 f"Valor solicitado: {request.pontos}"
             )
         
-        # Obter ou criar registro de pontos
-        usuario_pontos = await self.db.usuariopontos.find_first(
-            where={"clienteId": request.cliente_id}
+        resultado = await self.criar_transacao_pontos(
+            cliente_id=request.cliente_id,
+            pontos=request.pontos,
+            tipo="AJUSTE" if request.pontos > 0 else "DEBITO",
+            origem="AJUSTE_MANUAL",
+            motivo=request.motivo,
+            funcionario_id=funcionario_id,
         )
-        
-        if not usuario_pontos:
-            usuario_pontos = await self.db.usuariopontos.create(
-                data={
-                    "clienteId": request.cliente_id,
-                    "saldo": 0
-                }
-            )
-        
-        saldo_anterior = usuario_pontos.saldo
-        novo_saldo = saldo_anterior + request.pontos
-        
-        # Validar saldo negativo
-        if novo_saldo < 0:
-            raise ValueError("Saldo insuficiente para esta transação")
-        
-        # Atualizar saldo
-        await self.db.usuariopontos.update(
-            where={"id": usuario_pontos.id},
-            data={"saldo": novo_saldo}
-        )
-        
-        # Criar transação COM TODOS OS RELACIONAMENTOS
-        transacao = await self.db.transacaopontos.create(
-            data={
-                "clienteId": request.cliente_id,
-                "usuarioPontosId": usuario_pontos.id,
-                "funcionarioId": funcionario_id,
-                "tipo": "AJUSTE" if request.pontos > 0 else "DEBITO",
-                "pontos": request.pontos,
-                "saldoAnterior": saldo_anterior,
-                "saldoPosterior": novo_saldo,
-                "origem": "AJUSTE_MANUAL",
-                "motivo": request.motivo
-            }
-        )
-        
+
         return {
             "success": True,
-            "transacao_id": transacao.id,
-            "novo_saldo": novo_saldo,
-            "saldo_anterior": saldo_anterior
+            "transacao_id": resultado["transacao_id"],
+            "novo_saldo": resultado["saldo_posterior"],
+            "saldo_anterior": resultado["saldo_anterior"]
         }
     
     async def get_historico(self, cliente_id: int, limit: int = 20) -> Dict[str, Any]:
@@ -215,52 +184,100 @@ class PontosRepository:
                 f"Valor solicitado: {pontos}"
             )
         
-        # Obter ou criar UsuarioPontos
-        usuario_pontos = await self.db.usuariopontos.find_first(
-            where={"clienteId": cliente_id}
+        origem_norm = (origem or "").strip().upper()
+        origens_idempotencia = (
+            ["CHECKOUT", "RESERVA"]
+            if origem_norm in {"CHECKOUT", "RESERVA"}
+            else [origem_norm]
         )
-        
-        if not usuario_pontos:
-            usuario_pontos = await self.db.usuariopontos.create(
-                data={"clienteId": cliente_id, "saldo": 0}
+
+        async with self.db.tx() as transaction:
+            if reserva_id and origem_norm in ORIGENS_IDEMPOTENTES_POR_RESERVA:
+                transacao_existente = await transaction.transacaopontos.find_first(
+                    where={"reservaId": reserva_id, "origem": {"in": origens_idempotencia}}
+                )
+                if transacao_existente:
+                    return {
+                        "success": True,
+                        "idempotente": True,
+                        "transacao_id": transacao_existente.id,
+                        "saldo_anterior": getattr(transacao_existente, "saldoAnterior", 0),
+                        "saldo_posterior": getattr(transacao_existente, "saldoPosterior", 0),
+                        "pontos": getattr(transacao_existente, "pontos", 0),
+                    }
+
+            usuario_pontos_raw = await transaction.query_raw(
+                """
+                SELECT *
+                FROM usuarios_pontos
+                WHERE cliente_id = $1
+                FOR UPDATE
+                """,
+                cliente_id,
             )
-        
-        saldo_anterior = usuario_pontos.saldo
-        saldo_posterior = saldo_anterior + pontos
-        
-        # Validar saldo negativo
-        if saldo_posterior < 0:
-            raise ValueError("Saldo insuficiente para esta transação")
-        
-        # Criar transação COM TODOS OS RELACIONAMENTOS (campos obrigatórios)
-        transacao = await self.db.transacaopontos.create(
-            data={
-                "clienteId": cliente_id,
-                "usuarioPontosId": usuario_pontos.id,
-                "funcionarioId": funcionario_id,
-                "reservaId": reserva_id,
-                "tipo": tipo,
-                "origem": origem,
-                "pontos": pontos,
-                "saldoAnterior": saldo_anterior,
-                "saldoPosterior": saldo_posterior,
-                "motivo": motivo
+
+            if usuario_pontos_raw:
+                usuario_pontos_data = usuario_pontos_raw[0]
+                usuario_pontos_id = int(usuario_pontos_data["id"])
+                saldo_anterior = int(usuario_pontos_data["saldo"])
+            else:
+                usuario_pontos = await transaction.usuariopontos.create(
+                    data={"clienteId": cliente_id, "saldo": 0}
+                )
+                usuario_pontos_id = usuario_pontos.id
+                saldo_anterior = 0
+
+            if reserva_id and origem_norm in ORIGENS_IDEMPOTENTES_POR_RESERVA:
+                transacao_existente = await transaction.transacaopontos.find_first(
+                    where={"reservaId": reserva_id, "origem": {"in": origens_idempotencia}}
+                )
+                if transacao_existente:
+                    return {
+                        "success": True,
+                        "idempotente": True,
+                        "transacao_id": transacao_existente.id,
+                        "saldo_anterior": getattr(transacao_existente, "saldoAnterior", 0),
+                        "saldo_posterior": getattr(transacao_existente, "saldoPosterior", 0),
+                        "pontos": getattr(transacao_existente, "pontos", 0),
+                    }
+
+            saldo_posterior = saldo_anterior + pontos
+
+            if saldo_posterior < 0:
+                raise ValueError("Saldo insuficiente para esta transação")
+
+            await transaction.execute_raw(
+                """
+                UPDATE usuarios_pontos
+                SET saldo = $1, updated_at = NOW()
+                WHERE id = $2
+                """,
+                saldo_posterior,
+                usuario_pontos_id,
+            )
+
+            transacao = await transaction.transacaopontos.create(
+                data={
+                    "clienteId": cliente_id,
+                    "usuarioPontosId": usuario_pontos_id,
+                    "funcionarioId": funcionario_id,
+                    "reservaId": reserva_id,
+                    "tipo": tipo,
+                    "origem": origem_norm,
+                    "pontos": pontos,
+                    "saldoAnterior": saldo_anterior,
+                    "saldoPosterior": saldo_posterior,
+                    "motivo": motivo
+                }
+            )
+
+            return {
+                "success": True,
+                "transacao_id": transacao.id,
+                "saldo_anterior": saldo_anterior,
+                "saldo_posterior": saldo_posterior,
+                "pontos": pontos
             }
-        )
-        
-        # Atualizar saldo
-        await self.db.usuariopontos.update(
-            where={"id": usuario_pontos.id},
-            data={"saldo": saldo_posterior}
-        )
-        
-        return {
-            "success": True,
-            "transacao_id": transacao.id,
-            "saldo_anterior": saldo_anterior,
-            "saldo_posterior": saldo_posterior,
-            "pontos": pontos
-        }
 
     async def listar_ajustes_manuais(
         self,

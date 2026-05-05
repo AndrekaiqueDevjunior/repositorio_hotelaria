@@ -161,6 +161,7 @@ class CupomRepository:
             return {"valido": False, "mensagem": "Cupom não encontrado"}
 
         contexto = {
+            "reserva_id": reserva_id,
             "cliente_id": cliente_id,
             "suite_tipo": (suite_tipo or "").strip().upper() or None,
             "num_diarias": num_diarias,
@@ -224,6 +225,7 @@ class CupomRepository:
 
             cupom_data = cupom_row[0]
             contexto = {
+                "reserva_id": reserva_contexto["id"],
                 "cliente_id": reserva_contexto["cliente_id"],
                 "suite_tipo": reserva_contexto["tipo_suite"],
                 "num_diarias": reserva_contexto["num_diarias"],
@@ -428,7 +430,11 @@ class CupomRepository:
         agora = now_utc()
         data_inicio = to_utc(cupom_data.get("data_inicio"))
         data_fim = to_utc(cupom_data.get("data_fim"))
-        if not data_inicio or not data_fim or agora < data_inicio or agora > data_fim:
+        if not data_inicio or not data_fim:
+            return False, "Cupom fora da validade"
+        if agora < data_inicio:
+            return False, "Cupom ainda nao esta vigente"
+        if agora > data_fim:
             await self._marcar_cupom_expirado_se_possivel(db, cupom_data)
             return False, "Cupom fora da validade"
 
@@ -476,15 +482,25 @@ class CupomRepository:
             if cpf_indicado:
                 indicacao_rows = await db.query_raw(
                     """
-                    SELECT cliente_indicador_id
+                    SELECT cliente_indicador_id, reserva_id, pontos_creditados
                     FROM indicacoes
                     WHERE cpf_indicado = $1
                     LIMIT 1
                     """,
                     cpf_indicado,
                 )
-                if indicacao_rows and int(indicacao_rows[0]["cliente_indicador_id"]) != int(cliente_indicador_id):
-                    return False, "CPF indicado ja usado em outra indicacao"
+                if indicacao_rows:
+                    indicacao_existente = indicacao_rows[0]
+                    reserva_existente_id = indicacao_existente.get("reserva_id")
+                    reserva_contexto_id = contexto.get("reserva_id")
+                    if int(indicacao_existente["cliente_indicador_id"]) != int(cliente_indicador_id):
+                        return False, "CPF indicado ja usado em outra indicacao"
+                    if bool(indicacao_existente.get("pontos_creditados")):
+                        return False, "CPF indicado ja usado em indicacao creditada"
+                    if reserva_existente_id and (
+                        not reserva_contexto_id or int(reserva_existente_id) != int(reserva_contexto_id)
+                    ):
+                        return False, "CPF indicado ja usado em outra reserva"
 
         valor_total_base = contexto.get("valor_total_base")
         if valor_total_base is not None and self._to_decimal(valor_total_base) <= Decimal("0"):

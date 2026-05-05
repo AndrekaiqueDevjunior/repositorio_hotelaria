@@ -19,6 +19,7 @@ MIGRATIONS=(
     "008_criar_indicacoes_convite_real.sql"
     "009_cupom_amigo_programa_pontos.sql"
     "010_jornada_real_complementos.sql"
+    "011_jornada_real_consistencia.sql"
 )
 
 # Verificar se estamos no diretório correto

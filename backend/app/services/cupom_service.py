@@ -3,6 +3,7 @@ import os
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 from fastapi import HTTPException
 
@@ -219,9 +220,13 @@ class CupomService:
         if not codigo:
             return cupom
         slug = cupom.get("tracking_slug")
-        query = f"cupom={codigo}&origem={cupom.get('tipo_campanha') or 'cupom'}"
+        query_params = {
+            "cupom": codigo,
+            "origem": cupom.get("tipo_campanha") or "cupom",
+        }
         if slug:
-            query += f"&ref={slug}"
+            query_params["ref"] = slug
+        query = urlencode(query_params)
         link = f"{self._base_url()}/reservar?{query}"
         cupom["link_rastreado"] = link
 
