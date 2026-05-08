@@ -1212,6 +1212,9 @@ class TefService:
 
     def _should_auto_continue_input_command(self, response: Dict[str, Any]) -> bool:
         command_id = int(response.get("commandId") or 0)
+        if command_id == 23:
+            return True
+
         if command_id not in (31, 35):
             return False
 

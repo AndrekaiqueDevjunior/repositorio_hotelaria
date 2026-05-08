@@ -58,7 +58,7 @@ const resolveInputMode = (commandId) => {
   return 'manual'
 }
 
-const isAutoProcessingPrompt = (prompt) => Number(prompt?.command_id) === 3
+const isAutoProcessingPrompt = (prompt) => [3, 23].includes(Number(prompt?.command_id))
 
 const splitMenuEntries = (value) =>
   String(value || '')
@@ -3055,11 +3055,10 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     <>
                       <button
                         type="button"
-                        onClick={() => continuarFluxoTef(0, '')}
-                        disabled={tefProcessando}
+                        disabled
                         className={tefFlowPrimaryButtonClass}
                       >
-                        Continuar
+                        {tefProcessando ? '...' : 'AGUARDANDO'}
                       </button>
                       <button
                         type="button"

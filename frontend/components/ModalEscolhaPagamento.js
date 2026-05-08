@@ -55,7 +55,7 @@ const resolveInputMode = (commandId) => {
   return 'manual'
 }
 
-const isAutoProcessingPrompt = (prompt) => Number(prompt?.command_id) === 3
+const isAutoProcessingPrompt = (prompt) => [3, 23].includes(Number(prompt?.command_id))
 
 const parseMenuOptions = (commandId, promptText) => {
   const raw = String(promptText || '').trim()
@@ -1522,11 +1522,10 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                     <>
                       <button
                         type="button"
-                        onClick={() => continuarFluxoTef(0, '')}
-                        disabled={tefProcessando}
-                        className="w-40 bg-sky-600 hover:bg-sky-700 text-white text-2xl font-semibold py-2 rounded disabled:opacity-60"
+                        disabled
+                        className="w-40 bg-sky-600 text-white text-2xl font-semibold py-2 rounded opacity-60"
                       >
-                        Continuar
+                        {tefProcessando ? '...' : 'AGUARDANDO'}
                       </button>
                       <button
                         type="button"
