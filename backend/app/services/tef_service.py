@@ -363,8 +363,10 @@ def _build_pending_resolution_message(confirmar: bool, success: bool, data_hora_
     if not success:
         return "Falha ao tratar automaticamente a transacao T.E.F. pendente."
 
-    action_text = "confirmada" if confirmar else "desfeita"
-    parts = [f"Transacao T.E.F. pendente {action_text} automaticamente com sucesso."]
+    if confirmar:
+        parts = ["Transacao T.E.F. realizada com sucesso. Pendencia confirmada automaticamente."]
+    else:
+        parts = ["Transacao T.E.F. pendente desfeita automaticamente com sucesso."]
 
     formatted_datetime = _format_sitef_datetime_display(data_hora_transacao)
     if formatted_datetime:
@@ -375,7 +377,7 @@ def _build_pending_resolution_message(confirmar: bool, success: bool, data_hora_
         parts.append(f"NSU Host: {nsu_host_text}.")
 
     if confirmar:
-        parts.append("Para reimpressao, favor solicitar o ultimo cupom.")
+        parts.append("Para reimpressao, favor solicitar o ultimo cupom. No caso da Cielo, utilize apenas os 6 ultimos digitos do NSU Host.")
 
     return " ".join(parts)
 
