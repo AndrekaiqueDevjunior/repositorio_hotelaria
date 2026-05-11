@@ -199,8 +199,8 @@ async def criar_reserva(
             db = get_db()
             await QuartoValidator.validar_disponibilidade(
                 reserva.quarto_numero,
-                checkin_date.date() if isinstance(checkin_date, datetime) else checkin_date,
-                checkout_date.date() if isinstance(checkout_date, datetime) else checkout_date,
+                checkin_date,
+                checkout_date,
                 db
             )
             

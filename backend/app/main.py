@@ -35,6 +35,8 @@ from app.api.v1 import (
     comprovante_routes,
     cupom_routes,
     indicacao_routes,
+    jornada_routes,
+    codigos_resgate_routes,
 )
 
 app = FastAPI(
@@ -126,6 +128,8 @@ app.include_router(validacao_resgate_routes.router, prefix="/api/v1")
 app.include_router(comprovante_routes.router, prefix="/api/v1")
 app.include_router(cupom_routes.router, prefix="/api/v1")
 app.include_router(indicacao_routes.router, prefix="/api/v1")
+app.include_router(jornada_routes.router, prefix="/api/v1")
+app.include_router(codigos_resgate_routes.router, prefix="/api/v1")
 app.include_router(tarifas_routes.router, prefix="/api/v1")
 app.include_router(auditoria_routes.router, prefix="/api/v1")
 # app.include_router(consumo_routes.router, prefix="/api/v1")

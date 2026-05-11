@@ -364,13 +364,24 @@ class QuartoValidator:
         where_clause = {
             "quartoNumero": quarto_numero,
             "statusReserva": {
-                "in": ["PENDENTE", "CONFIRMADA", "HOSPEDADO"]
+                "in": [
+                    "PENDENTE",
+                    "PENDENTE_PAGAMENTO",
+                    "AGUARDANDO_COMPROVANTE",
+                    "EM_ANALISE",
+                    "CONFIRMADA",
+                    "HOSPEDADO",
+                    "CHECKIN_REALIZADO",
+                    "PAGA_APROVADA",
+                    "CHECKIN_LIBERADO",
+                    "AGUARDANDO_PAGAMENTO",
+                ]
             },
             "OR": [
                 # Check-in durante período existente
                 {
-                    "checkinPrevisto": {"lte": checkout},
-                    "checkoutPrevisto": {"gte": checkin}
+                    "checkinPrevisto": {"lt": checkout},
+                    "checkoutPrevisto": {"gt": checkin}
                 }
             ]
         }

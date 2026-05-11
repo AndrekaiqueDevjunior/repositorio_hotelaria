@@ -3,6 +3,7 @@ Rotas para o sistema de prêmios/recompensas.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
+from pydantic import BaseModel
 from app.schemas.premio_schema import (
     PremioCreate, PremioUpdate, PremioResponse,
     ResgatePremioRequest, ResgatePremioResponse,
@@ -21,6 +22,10 @@ import os
 import httpx
 
 router = APIRouter(prefix="/premios", tags=["premios"])
+
+
+class ResgatePremioPorIdRequest(BaseModel):
+    cliente_id: int
 
 
 async def _validar_recaptcha_publico(request: Request, action_esperada: str) -> None:
@@ -148,6 +153,38 @@ async def obter_premio(
     return premio
 
 
+@router.post("/{premio_id}/resgatar", response_model=dict)
+async def resgatar_premio_por_id(
+    premio_id: int,
+    payload: ResgatePremioPorIdRequest,
+    current_user: User = Depends(get_current_active_user),
+    _rate_limit: None = Depends(rate_limit_strict)
+):
+    """Resgatar premio pelo endpoint padronizado da Jornada Real."""
+    db = get_db()
+    repo = PremioRepositoryAtomic(db)
+    resultado = await repo.resgatar_atomic(
+        premio_id=premio_id,
+        cliente_id=payload.cliente_id,
+        funcionario_id=current_user.id if hasattr(current_user, "id") else None,
+    )
+    if not resultado.get("success"):
+        raise HTTPException(status_code=400, detail=resultado.get("error"))
+    return {
+        "resgate_id": resultado.get("resgate_id"),
+        "status": resultado.get("status"),
+        "premio": {
+            "id": resultado.get("premio", {}).get("id"),
+            "nome": resultado.get("premio", {}).get("nome"),
+            "categoria": resultado.get("premio", {}).get("categoria"),
+        },
+        "pontos_usados": resultado.get("pontos_usados"),
+        "codigo": resultado.get("codigo"),
+        "valido_ate": resultado.get("valido_ate"),
+        "mensagem": resultado.get("mensagem"),
+    }
+
+
 @router.post("", response_model=PremioResponse, status_code=201)
 async def criar_premio(
     premio: PremioCreate,
@@ -236,6 +273,10 @@ async def resgatar_premio_publico(
                 "resgate_id": resultado.get("resgate_id"),
                 "premio": resultado.get("premio"),
                 "pontos_usados": resultado.get("pontos_usados"),
+                "status": resultado.get("status"),
+                "codigo": resultado.get("codigo"),
+                "codigo_resgate": resultado.get("codigo_resgate"),
+                "valido_ate": resultado.get("valido_ate"),
                 "saldo_anterior": saldo_atual,
                 "novo_saldo": resultado.get("novo_saldo"),
                 "observacoes": request.observacoes,
@@ -331,19 +372,18 @@ async def usar_codigo_resgate(
 @router.get("/resgates/{cliente_id}", response_model=List[ResgateHistoricoResponse])
 async def listar_resgates_cliente(
     cliente_id: int,
-    repo: PremioRepository = Depends(get_premio_repo),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Listar histórico de resgates de um cliente.
     """
+    repo = PremioRepositoryAtomic(get_db())
     return await repo.listar_resgates_cliente(cliente_id)
 
 
 @router.post("/resgates/{resgate_id}/entregar", response_model=dict)
 async def confirmar_entrega_premio(
     resgate_id: int,
-    repo: PremioRepository = Depends(get_premio_repo),
     current_user: User = Depends(require_admin_or_manager)
 ):
     """
@@ -351,6 +391,7 @@ async def confirmar_entrega_premio(
     
     Requer: ADMIN ou GERENTE
     """
+    repo = PremioRepositoryAtomic(get_db())
     resultado = await repo.confirmar_entrega(
         resgate_id=resgate_id,
         funcionario_id=current_user.id if hasattr(current_user, 'id') else None

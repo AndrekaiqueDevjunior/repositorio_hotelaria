@@ -14,8 +14,8 @@ NIVEL_INICIAL = 0
 NIVEL_EXPERIENCIA = 1
 NIVEL_REAL = 2
 
-PONTOS_EXPERIENCIA = _int_env("FIDELIDADE_EXPERIENCIA_PONTOS", 20)
-PONTOS_REAL = _int_env("FIDELIDADE_REAL_PONTOS", 60)
+PONTOS_EXPERIENCIA = _int_env("FIDELIDADE_EXPERIENCIA_PONTOS", 50)
+PONTOS_REAL = _int_env("FIDELIDADE_REAL_PONTOS", 90)
 PREMIO_PROXIMO_LIMITE_PONTOS = _int_env("PREMIO_PROXIMO_LIMITE_PONTOS", 3)
 PREMIO_PROXIMO_PERCENTUAL = _int_env("PREMIO_PROXIMO_PERCENTUAL", 20)
 
@@ -23,7 +23,7 @@ PREMIO_PROXIMO_PERCENTUAL = _int_env("PREMIO_PROXIMO_PERCENTUAL", 20)
 NIVEIS_FIDELIDADE = [
     {
         "codigo": NIVEL_INICIAL,
-        "nome": "INICIAL",
+        "nome": "ESSENCIA",
         "pontos_minimos": 0,
         "bonus_percentual": 0,
         "multiplicador": 1.0,
@@ -32,15 +32,15 @@ NIVEIS_FIDELIDADE = [
         "codigo": NIVEL_EXPERIENCIA,
         "nome": "EXPERIENCIA",
         "pontos_minimos": PONTOS_EXPERIENCIA,
-        "bonus_percentual": 20,
-        "multiplicador": 1.2,
+        "bonus_percentual": 0,
+        "multiplicador": 1.0,
     },
     {
         "codigo": NIVEL_REAL,
         "nome": "REAL",
         "pontos_minimos": PONTOS_REAL,
-        "bonus_percentual": 40,
-        "multiplicador": 1.4,
+        "bonus_percentual": 0,
+        "multiplicador": 1.0,
     },
 ]
 
@@ -93,7 +93,7 @@ class ProgramaPontosService:
         if not cliente:
             return self.nivel_por_codigo(0)
 
-        total_pontos_nivel = await self._calcular_total_pontos_nivel(cliente_id)
+        total_pontos_nivel = await self._obter_saldo(cliente_id)
         niveis = await self._obter_niveis_configurados()
         nivel_por_pontos = self._nivel_por_pontos_configurado(total_pontos_nivel, niveis)
         nivel_cadastrado = self._nivel_por_codigo_configurado(getattr(cliente, "nivelFidelidade", 0), niveis)
@@ -108,7 +108,7 @@ class ProgramaPontosService:
             return {"success": False, "error": "Cliente nao encontrado"}
 
         saldo_atual = await self._obter_saldo(cliente_id)
-        total_pontos_nivel = await self._calcular_total_pontos_nivel(cliente_id)
+        total_pontos_nivel = saldo_atual
         total_resgatado = await self._calcular_total_resgatado(cliente_id)
 
         niveis = await self._obter_niveis_configurados()
@@ -163,6 +163,7 @@ class ProgramaPontosService:
             FROM transacoes_pontos
             WHERE cliente_id = $1
               AND pontos > 0
+              AND COALESCE(status, 'liberado') = 'liberado'
             """,
             cliente_id,
         )

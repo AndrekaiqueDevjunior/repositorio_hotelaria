@@ -45,6 +45,7 @@ class PremioRepository:
                 "precoEmRp": preco_rp,
                 "ativo": data.get("ativo", True),
                 "categoria": data.get("categoria", "GERAL"),
+                "categoriaId": data.get("categoria_id"),
                 "estoque": data.get("estoque"),
                 "imagemUrl": data.get("imagem_url")
             }
@@ -70,6 +71,8 @@ class PremioRepository:
             update_data["ativo"] = data["ativo"]
         if "categoria" in data:
             update_data["categoria"] = data["categoria"]
+        if "categoria_id" in data:
+            update_data["categoriaId"] = data["categoria_id"]
         if "estoque" in data:
             update_data["estoque"] = data["estoque"]
         if "imagem_url" in data:
@@ -257,6 +260,7 @@ class PremioRepository:
             "preco_em_rp": getattr(premio, "precoEmRp", premio.precoEmPontos),
             "ativo": premio.ativo,
             "categoria": getattr(premio, "categoria", "GERAL"),
+            "categoria_id": getattr(premio, "categoriaId", None),
             "estoque": getattr(premio, "estoque", None),
             "imagem_url": getattr(premio, "imagemUrl", None),
             "created_at": premio.createdAt.isoformat() if premio.createdAt else None

@@ -1,5 +1,6 @@
 ﻿from typing import Dict, Any, List
 from datetime import datetime, date
+from typing import Optional
 from fastapi import HTTPException
 from app.schemas.reserva_schema import ReservaCreate, ReservaResponse
 from app.repositories.cliente_repo import ClienteRepository
@@ -28,7 +29,7 @@ class ReservaRepository:
     async def _notificar_whatsapp_reserva(self, reserva, evento: str, detalhe: str = None) -> None:
         try:
             whatsapp_service = get_whatsapp_service()
-            valor_total = float(getattr(reserva, "valorDiaria", 0) or 0) * int(getattr(reserva, "numDiarias", 0) or 0)
+            valor_total = self._calcular_valor_total_model(reserva)
             await whatsapp_service.enviar_notificacao_evento_reserva(
                 evento=evento,
                 codigo_reserva=getattr(reserva, "codigoReserva", None) or f"RES-{getattr(reserva, 'id', '')}",
@@ -46,10 +47,34 @@ class ReservaRepository:
 
     def _default_include(self) -> Dict[str, Any]:
         return {
+            "cliente": True,
             "pagamentos": True,
             "hospedagem": True,
             "cupomUso": {"include": {"cupom": True}},
         }
+
+    def _calcular_valor_total_model(self, reserva) -> float:
+        valor_total_salvo = getattr(reserva, "valorTotal", None)
+        if valor_total_salvo is not None:
+            return float(valor_total_salvo)
+        return float(getattr(reserva, "valorDiaria", 0) or 0) * int(getattr(reserva, "numDiarias", 0) or 0)
+
+    def _normalizar_valor_texto(self, valor: Any) -> Optional[str]:
+        if valor is None:
+            return None
+        valor_texto = str(valor).strip()
+        return valor_texto or None
+
+    def _coerce_datetime(self, valor: Any) -> Any:
+        if not isinstance(valor, str):
+            return valor
+        valor_limpo = valor.strip()
+        if not valor_limpo:
+            return valor
+        try:
+            return datetime.fromisoformat(valor_limpo.replace("Z", "+00:00"))
+        except ValueError:
+            return valor
 
     async def _obter_tarifa_diaria(self, suite_tipo: str, checkin_previsto: datetime) -> float:
         tarifa_repo = TarifaSuiteRepository(self.db)
@@ -84,10 +109,16 @@ class ReservaRepository:
         
         # Filtro de busca (nome cliente ou nÃºmero quarto)
         if search:
+            search_digits = re.sub(r"\D", "", search or "")
             where_conditions["OR"] = [
                 {"clienteNome": {"contains": search, "mode": "insensitive"}},
                 {"quartoNumero": {"contains": search, "mode": "insensitive"}},
-                {"codigoReserva": {"contains": search, "mode": "insensitive"}}
+                {"codigoReserva": {"contains": search, "mode": "insensitive"}},
+                {"telefoneContato": {"contains": search_digits or search, "mode": "insensitive"}},
+                {"emailContato": {"contains": search, "mode": "insensitive"}},
+                {"cliente": {"is": {"documento": {"contains": search_digits or search, "mode": "insensitive"}}}},
+                {"cliente": {"is": {"telefone": {"contains": search_digits or search, "mode": "insensitive"}}}},
+                {"cliente": {"is": {"email": {"contains": search, "mode": "insensitive"}}}},
             ]
         
         # Filtro de status
@@ -245,8 +276,15 @@ class ReservaRepository:
                         "checkinPrevisto": reserva.checkin_previsto,
                         "checkoutPrevisto": reserva.checkout_previsto,
                         "valorDiaria": valor_diaria,
+                        "valorTotal": reserva.valor_total,
                         "numDiarias": reserva.num_diarias,
-                        "statusReserva": "PENDENTE"
+                        "statusReserva": "PENDENTE",
+                        "origem": self._normalizar_valor_texto(reserva.origem) or "PARTICULAR",
+                        "responsavelNome": self._normalizar_valor_texto(reserva.responsavel_nome),
+                        "formaPagamento": self._normalizar_valor_texto(reserva.forma_pagamento),
+                        "observacoes": self._normalizar_valor_texto(reserva.observacoes),
+                        "telefoneContato": self._normalizar_valor_texto(reserva.telefone_contato),
+                        "emailContato": self._normalizar_valor_texto(reserva.email_contato),
                     }
                 )
                 break
@@ -816,8 +854,13 @@ class ReservaRepository:
             raise ValueError("Reserva nÃ£o encontrada")
         
         # NÃ£o permite editar reservas jÃ¡ finalizadas
-        if reserva.statusReserva in ("CHECKED_OUT", "CANCELADO"):
+        if reserva.statusReserva in ("CHECKED_OUT", "CHECKOUT_REALIZADO", "CANCELADO", "CANCELADA"):
             raise ValueError("NÃ£o Ã© possÃ­vel editar reservas finalizadas ou canceladas")
+
+        data = dict(data or {})
+        for campo_data in ("checkin_previsto", "checkout_previsto"):
+            if campo_data in data:
+                data[campo_data] = self._coerce_datetime(data[campo_data])
         
         # Mapear campos permitidos para atualizaÃ§Ã£o
         update_data = {}
@@ -838,8 +881,11 @@ class ReservaRepository:
         if "checkout_previsto" in data:
             update_data["checkoutPrevisto"] = data["checkout_previsto"]
         
-        if "valor_diaria" in data:
-            pass
+        if "valor_diaria" in data and data["valor_diaria"] is not None:
+            update_data["valorDiaria"] = float(data["valor_diaria"])
+
+        if "valor_total" in data:
+            update_data["valorTotal"] = float(data["valor_total"]) if data["valor_total"] is not None else None
         
         if "num_diarias" in data:
             update_data["numDiarias"] = data["num_diarias"]
@@ -847,7 +893,38 @@ class ReservaRepository:
         if "tipo_suite" in data or "checkin_previsto" in data:
             suite_tipo = data.get("tipo_suite", reserva.tipoSuite)
             checkin_previsto = data.get("checkin_previsto", reserva.checkinPrevisto)
-            update_data["valorDiaria"] = await self._obter_tarifa_diaria(suite_tipo, checkin_previsto)
+            if "valor_diaria" not in data:
+                update_data["valorDiaria"] = await self._obter_tarifa_diaria(suite_tipo, checkin_previsto)
+
+        campos_texto = {
+            "origem": "origem",
+            "responsavel_nome": "responsavelNome",
+            "forma_pagamento": "formaPagamento",
+            "observacoes": "observacoes",
+            "telefone_contato": "telefoneContato",
+            "email_contato": "emailContato",
+        }
+        for campo_api, campo_banco in campos_texto.items():
+            if campo_api in data:
+                update_data[campo_banco] = self._normalizar_valor_texto(data[campo_api])
+
+        novo_quarto_numero = update_data.get("quartoNumero", reserva.quartoNumero)
+        novo_checkin = update_data.get("checkinPrevisto", reserva.checkinPrevisto)
+        novo_checkout = update_data.get("checkoutPrevisto", reserva.checkoutPrevisto)
+
+        if novo_checkin and novo_checkout and novo_checkout <= novo_checkin:
+            raise ValueError("Data de check-out deve ser posterior ao check-in")
+
+        if any(campo in update_data for campo in ("quartoNumero", "checkinPrevisto", "checkoutPrevisto")):
+            from app.services.disponibilidade_service import DisponibilidadeService
+            disponibilidade = await DisponibilidadeService(self.db).verificar_disponibilidade(
+                novo_quarto_numero,
+                novo_checkin,
+                novo_checkout,
+                reserva_id_excluir=reserva_id,
+            )
+            if not disponibilidade.get("disponivel"):
+                raise ValueError(disponibilidade.get("motivo") or "Quarto nÃ£o disponÃ­vel para o perÃ­odo")
         
         quarto_antigo = getattr(reserva, "quartoNumero", None)
 
@@ -869,7 +946,7 @@ class ReservaRepository:
     def _serialize_reserva(self, reserva) -> Dict[str, Any]:
         """Serializar reserva para response com todos os campos"""
         # Calcular valor total
-        valor_total = float(reserva.valorDiaria) * reserva.numDiarias if reserva.valorDiaria and reserva.numDiarias else 0.0
+        valor_total = self._calcular_valor_total_model(reserva)
         cupom_uso = None
         valor_desconto = 0.0
         valor_total_com_desconto = valor_total
@@ -897,6 +974,12 @@ class ReservaRepository:
                     "status_hospedagem": getattr(hosp, 'statusHospedagem', None),
                     "data_checkin": getattr(hosp, 'checkinRealizadoEm', None),
                     "data_checkout": getattr(hosp, 'checkoutRealizadoEm', None),
+                    "checkin_realizado_por": getattr(hosp, 'checkinRealizadoPor', None),
+                    "checkout_realizado_por": getattr(hosp, 'checkoutRealizadoPor', None),
+                    "assinatura_checkin": getattr(hosp, 'assinaturaCheckin', None),
+                    "assinatura_checkout": getattr(hosp, 'assinaturaCheckout', None),
+                    "checkin_dados": getattr(hosp, 'checkinDados', None),
+                    "checkout_dados": getattr(hosp, 'checkoutDados', None),
                     "created_at": getattr(hosp, 'createdAt', None)
                 }
         except Exception as e:
@@ -941,6 +1024,14 @@ class ReservaRepository:
             "valor_diaria": float(reserva.valorDiaria) if reserva.valorDiaria else 0.0,
             "num_diarias": reserva.numDiarias,
             "valor_total": valor_total,
+            "origem": getattr(reserva, 'origem', None),
+            "responsavel_nome": getattr(reserva, 'responsavelNome', None),
+            "forma_pagamento": getattr(reserva, 'formaPagamento', None),
+            "observacoes": getattr(reserva, 'observacoes', None),
+            "telefone_contato": getattr(reserva, 'telefoneContato', None)
+                or getattr(getattr(reserva, 'cliente', None), 'telefone', None),
+            "email_contato": getattr(reserva, 'emailContato', None)
+                or getattr(getattr(reserva, 'cliente', None), 'email', None),
             "valor_desconto": valor_desconto,
             "valor_total_com_desconto": valor_total_com_desconto,
             "status": status_reserva,

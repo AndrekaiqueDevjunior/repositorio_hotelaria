@@ -208,6 +208,17 @@ async def obter_programa_pontos_cliente(
             detail=f"Erro ao obter programa de pontos: {str(e)}"
         )
 
+
+@router.post("/liberar-pendentes", response_model=dict)
+async def liberar_pontos_pendentes_admin(
+    limit: int = 100,
+    current_user: User = Depends(require_admin_or_manager)
+):
+    """Liberar transacoes de pontos pendentes cujo prazo de 48h ja venceu."""
+    db = get_db()
+    repo = PontosRepository(db)
+    return await repo.liberar_pontos_pendentes(limit=limit)
+
 @router.get("/historico/{cliente_id}", response_model=dict)
 async def obter_historico_cliente(
     cliente_id: int,

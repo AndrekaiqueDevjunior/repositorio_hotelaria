@@ -1,8 +1,7 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from app.repositories.pontos_repo import PontosRepository
-from app.services.programa_pontos_service import ProgramaPontosService
 from app.services.real_points_service import RealPointsService
 from app.utils.datetime_utils import now_utc
 
@@ -34,48 +33,53 @@ async def creditar_rp_no_checkout(
 ) -> Dict[str, Any]:
     reserva = await db.reserva.find_unique(where={"id": reserva_id})
     if not reserva:
-        return {"success": False, "error": "Reserva não encontrada"}
+        return {"success": False, "error": "Reserva nao encontrada"}
 
     cliente_id = getattr(reserva, "clienteId", None)
     if not cliente_id:
         return {"success": False, "error": "Reserva sem clienteId"}
 
+    status_reserva = (getattr(reserva, "statusReserva", None) or "").upper().strip()
+    if status_reserva in {"CANCELADA", "CANCELADO", "NO_SHOW", "NO-SHOW"}:
+        return {
+            "success": True,
+            "creditado": False,
+            "pontos": 0,
+            "motivo": "Reserva cancelada ou no-show nao gera pontos",
+            "status": "bloqueado",
+        }
+
     tipo_suite = (getattr(reserva, "tipoSuite", None) or "").upper().strip()
     num_diarias = int(getattr(reserva, "numDiarias", 0) or 0)
-
     if num_diarias <= 0:
-        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Reserva sem diárias válidas"}
+        return {
+            "success": True,
+            "creditado": False,
+            "pontos": 0,
+            "motivo": "Reserva sem diarias validas",
+        }
 
-    checkout_dt = checkout_datetime or getattr(reserva, "checkoutReal", None)
-    if not checkout_dt:
-        checkout_dt = now_utc()
-
+    checkout_dt = checkout_datetime or getattr(reserva, "checkoutReal", None) or now_utc()
     regra = await buscar_regra_ativa(db, tipo_suite, checkout_dt.date())
 
-    # Calcular pontos: preferir regra configurável no banco; fallback para tabela oficial.
+    pontos, detalhe = RealPointsService.calcular_rp_oficial(tipo_suite, num_diarias, 0)
+    motivo_calculo = f"Tabela oficial Jornada Real: {detalhe}"
+
+    # A migration 013 formaliza as regras do banco com diarias_base = 1.
+    # Se o banco ja estiver atualizado, usamos a regra configurada; se ainda
+    # estiver com regra antiga de blocos, mantemos a tabela oficial como fonte.
     if regra:
-        diarias_base = int(getattr(regra, "diariasBase", 2) or 2)
+        diarias_base = int(getattr(regra, "diariasBase", 1) or 1)
         rp_por_base = int(getattr(regra, "rpPorBase", 0) or 0)
-
-        if diarias_base <= 0 or rp_por_base <= 0:
-            return {"success": True, "creditado": False, "pontos": 0, "motivo": "Regra inválida"}
-
-        blocos = num_diarias // diarias_base
-        pontos = blocos * rp_por_base
-        motivo_calculo = "Regra ativa (pontosregra)"
-    else:
-        pontos, detalhe = RealPointsService.calcular_rp_oficial(tipo_suite, num_diarias, 0)
-        motivo_calculo = f"Tabela oficial RP (fallback): {detalhe}"
+        if diarias_base == 1 and rp_por_base > 0:
+            pontos = num_diarias * rp_por_base
+            motivo_calculo = (
+                f"Regra ativa pontos_regras: {num_diarias} diaria(s) "
+                f"x {rp_por_base} RP = {pontos} RP"
+            )
 
     if pontos <= 0:
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Sem pontos a creditar"}
-
-    programa_service = ProgramaPontosService(db)
-    nivel = await programa_service.obter_nivel_efetivo_cliente(cliente_id)
-    calculo_nivel = programa_service.aplicar_bonus_nivel(pontos, nivel)
-    pontos_base = int(calculo_nivel["pontos_base"])
-    pontos_bonus_nivel = int(calculo_nivel["pontos_bonus_nivel"])
-    pontos = int(calculo_nivel["pontos_total"])
 
     transacao_existente = await db.transacaopontos.find_first(
         where={
@@ -84,36 +88,32 @@ async def creditar_rp_no_checkout(
             "origem": {"in": ["CHECKOUT", "RESERVA"]},
         }
     )
-
     if transacao_existente:
+        liberar_em_existente = getattr(transacao_existente, "liberarEm", None)
         return {
             "success": True,
             "creditado": False,
             "pontos": 0,
-            "motivo": "Pontos já creditados",
+            "motivo": "Pontos ja registrados para esta reserva",
             "transacao": {
                 "transacao_id": transacao_existente.id,
                 "saldo_anterior": getattr(transacao_existente, "saldoAnterior", None),
                 "saldo_posterior": getattr(transacao_existente, "saldoPosterior", None),
                 "pontos": getattr(transacao_existente, "pontos", None),
+                "status": getattr(transacao_existente, "status", "liberado"),
+                "liberar_em": liberar_em_existente.isoformat() if liberar_em_existente else None,
             },
         }
 
-    pontos_repo = PontosRepository(db)
-
     codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
-    temporada = getattr(regra, "temporada", None)
-    motivo = f"Checkout reserva {codigo} - Suíte {tipo_suite} - {num_diarias} diárias - {pontos} RP"
+    temporada = getattr(regra, "temporada", None) if regra else None
     motivo = f"Checkout reserva {codigo} - Suite {tipo_suite} - {num_diarias} diarias - {pontos} RP"
     if temporada:
         motivo = f"{motivo} - Temporada {temporada}"
-    if pontos_bonus_nivel > 0:
-        motivo = (
-            f"{motivo} - Nivel {nivel['nome']} "
-            f"+{nivel['bonus_percentual']}% ({pontos_base}+{pontos_bonus_nivel})"
-        )
     motivo = f"{motivo} ({motivo_calculo})"
 
+    liberar_em = checkout_dt + timedelta(hours=48)
+    pontos_repo = PontosRepository(db)
     result = await pontos_repo.criar_transacao_pontos(
         cliente_id=cliente_id,
         pontos=pontos,
@@ -122,6 +122,8 @@ async def creditar_rp_no_checkout(
         motivo=motivo,
         reserva_id=reserva_id,
         funcionario_id=funcionario_id,
+        status="pendente",
+        liberar_em=liberar_em,
     )
 
     if result.get("idempotente"):
@@ -129,7 +131,7 @@ async def creditar_rp_no_checkout(
             "success": True,
             "creditado": False,
             "pontos": 0,
-            "motivo": "Pontos ja creditados",
+            "motivo": "Pontos ja registrados para esta reserva",
             "transacao": result,
         }
 
@@ -137,11 +139,20 @@ async def creditar_rp_no_checkout(
         "success": bool(result.get("success")),
         "creditado": bool(result.get("success")),
         "pontos": pontos if result.get("success") else 0,
-        "pontos_base": pontos_base,
-        "pontos_bonus_nivel": pontos_bonus_nivel,
-        "nivel": nivel,
+        "pontos_base": pontos,
+        "pontos_bonus_nivel": 0,
+        "status": "pendente",
+        "liberar_em": liberar_em.isoformat(),
         "transacao": result,
     }
+
+
+async def liberar_pontos_pendentes(
+    db,
+    limit: int = 100,
+    agora: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    return await PontosRepository(db).liberar_pontos_pendentes(limit=limit, agora=agora)
 
 
 async def creditar_bonus_cupom_no_checkout(
@@ -151,7 +162,7 @@ async def creditar_bonus_cupom_no_checkout(
 ) -> Dict[str, Any]:
     reserva = await db.reserva.find_unique(where={"id": reserva_id})
     if not reserva:
-        return {"success": False, "error": "Reserva não encontrada"}
+        return {"success": False, "error": "Reserva nao encontrada"}
 
     cliente_id = getattr(reserva, "clienteId", None)
     if not cliente_id:
@@ -166,7 +177,7 @@ async def creditar_bonus_cupom_no_checkout(
 
     pontos_bonus = int(getattr(cupom_uso.cupom, "pontosBonus", 0) or 0)
     if pontos_bonus <= 0:
-        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cupom sem bônus de pontos"}
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cupom sem bonus de pontos"}
 
     transacao_existente = await db.transacaopontos.find_first(
         where={
@@ -176,11 +187,11 @@ async def creditar_bonus_cupom_no_checkout(
         }
     )
     if transacao_existente:
-        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Bônus do cupom já creditado"}
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Bonus do cupom ja creditado"}
 
     pontos_repo = PontosRepository(db)
     codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
-    motivo = f"Bônus do cupom {cupom_uso.cupom.codigo} no checkout da reserva {codigo}"
+    motivo = f"Bonus do cupom {cupom_uso.cupom.codigo} no checkout da reserva {codigo}"
 
     result = await pontos_repo.criar_transacao_pontos(
         cliente_id=cliente_id,

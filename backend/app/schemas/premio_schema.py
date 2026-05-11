@@ -12,6 +12,7 @@ class PremioBase(BaseModel):
     preco_em_pontos: int = Field(..., gt=0)
     preco_em_rp: Optional[int] = None
     categoria: Optional[str] = "GERAL"
+    categoria_id: Optional[int] = None
     estoque: Optional[int] = None
     imagem_url: Optional[str] = None
 
@@ -27,6 +28,7 @@ class PremioUpdate(BaseModel):
     preco_em_rp: Optional[int] = None
     ativo: Optional[bool] = None
     categoria: Optional[str] = None
+    categoria_id: Optional[int] = None
     estoque: Optional[int] = None
     imagem_url: Optional[str] = None
 
@@ -54,13 +56,17 @@ class ResgatePremioPublicoRequest(BaseModel):
 class ResgatePremioResponse(BaseModel):
     success: bool
     resgate_id: Optional[int] = None
-    premio: Optional[PremioResponse] = None
+    status: Optional[str] = None
+    premio: Optional[dict] = None
     pontos_usados: Optional[int] = None
     novo_saldo: Optional[int] = None
     transacao_id: Optional[int] = None
+    codigo: Optional[str] = None
     codigo_resgate: Optional[str] = None
     codigo_status: Optional[str] = None
+    valido_ate: Optional[str] = None
     expira_em: Optional[str] = None
+    mensagem: Optional[str] = None
     error: Optional[str] = None
 
 

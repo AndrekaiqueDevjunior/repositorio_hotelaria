@@ -6,6 +6,7 @@ Gerencia vouchers de confirmação de reserva
 from fastapi import APIRouter, HTTPException, Depends, Body, Response
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Any, Optional
 from app.utils.datetime_utils import now_utc, to_utc
 from app.core.database import get_db
 from reportlab.lib.pagesizes import A4
@@ -33,8 +34,60 @@ class CheckinRequest(BaseModel):
     funcionario_id: int
 
 
+def _format_datetime(value: Any) -> str:
+    if not value:
+        return "-"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    try:
+        return value.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(value)
+
+
+def _valor_total_reserva(reserva) -> float:
+    valor_total = getattr(reserva, "valorTotal", None)
+    if valor_total is not None:
+        return float(valor_total)
+    return float(getattr(reserva, "valorDiaria", 0) or 0) * int(getattr(reserva, "numDiarias", 0) or 0)
+
+
+def _ultimo_pagamento_confirmado(reserva) -> Optional[Any]:
+    pagamentos = getattr(reserva, "pagamentos", None) or []
+    for pagamento in pagamentos:
+        if getattr(pagamento, "statusPagamento", None) in ("PAGO", "CONFIRMADO", "APROVADO"):
+            return pagamento
+    return pagamentos[0] if pagamentos else None
+
+
+def _forma_pagamento_reserva(reserva) -> str:
+    forma = getattr(reserva, "formaPagamento", None)
+    if forma:
+        return str(forma)
+    pagamento = _ultimo_pagamento_confirmado(reserva)
+    if pagamento:
+        metodo = getattr(pagamento, "metodo", None)
+        status = getattr(pagamento, "statusPagamento", None)
+        return f"{metodo or '-'} ({status or '-'})"
+    return "-"
+
+
+def _email_contato(reserva) -> Optional[str]:
+    return getattr(reserva, "emailContato", None) or getattr(getattr(reserva, "cliente", None), "email", None)
+
+
+def _telefone_contato(reserva) -> Optional[str]:
+    return getattr(reserva, "telefoneContato", None) or getattr(getattr(reserva, "cliente", None), "telefone", None)
+
+
 @router.get("/reserva/{reserva_id}")
-async def obter_voucher_por_reserva(reserva_id: int):
+async def obter_voucher_por_reserva(
+    reserva_id: int,
+    current_user: User = Depends(get_current_active_user)
+):
     """Obter voucher de uma reserva"""
     
     db = get_db()
@@ -45,7 +98,8 @@ async def obter_voucher_por_reserva(reserva_id: int):
             'reserva': {
                 'include': {
                     'cliente': True,
-                    'pagamentos': True
+                    'pagamentos': True,
+                    'hospedagem': True
                 }
             }
         }
@@ -74,12 +128,22 @@ async def obter_voucher_por_reserva(reserva_id: int):
                 "tipoSuite": voucher.reserva.tipoSuite,
                 "checkinPrevisto": voucher.reserva.checkinPrevisto,
                 "checkoutPrevisto": voucher.reserva.checkoutPrevisto,
-                "valorTotal": float(voucher.reserva.valorDiaria) * voucher.reserva.numDiarias if voucher.reserva.valorDiaria else 0,
-                "status": voucher.reserva.status,
+                "valorTotal": _valor_total_reserva(voucher.reserva),
+                "formaPagamento": _forma_pagamento_reserva(voucher.reserva),
+                "origem": getattr(voucher.reserva, "origem", None),
+                "responsavelNome": getattr(voucher.reserva, "responsavelNome", None),
+                "observacoes": getattr(voucher.reserva, "observacoes", None),
+                "status": getattr(voucher.reserva, "statusReserva", None) or getattr(voucher.reserva, "status", None),
                 "cliente": {
                     "nomeCompleto": voucher.reserva.cliente.nomeCompleto,
-                    "email": voucher.reserva.cliente.email,
-                    "telefone": voucher.reserva.cliente.telefone
+                    "email": _email_contato(voucher.reserva),
+                    "telefone": _telefone_contato(voucher.reserva)
+                },
+                "hospedagem": {
+                    "checkinRealizadoEm": getattr(getattr(voucher.reserva, "hospedagem", None), "checkinRealizadoEm", None),
+                    "checkoutRealizadoEm": getattr(getattr(voucher.reserva, "hospedagem", None), "checkoutRealizadoEm", None),
+                    "assinaturaCheckinRegistrada": bool(getattr(getattr(voucher.reserva, "hospedagem", None), "assinaturaCheckin", None)),
+                    "assinaturaCheckoutRegistrada": bool(getattr(getattr(voucher.reserva, "hospedagem", None), "assinaturaCheckout", None))
                 }
             }
         }
@@ -98,7 +162,8 @@ async def obter_voucher(codigo: str):
             'reserva': {
                 'include': {
                     'cliente': True,
-                    'pagamentos': True
+                    'pagamentos': True,
+                    'hospedagem': True
                 }
             }
         }
@@ -127,11 +192,22 @@ async def obter_voucher(codigo: str):
                 "tipoSuite": voucher.reserva.tipoSuite,
                 "checkinPrevisto": voucher.reserva.checkinPrevisto,
                 "checkoutPrevisto": voucher.reserva.checkoutPrevisto,
-                "status": voucher.reserva.status,
+                "valorTotal": _valor_total_reserva(voucher.reserva),
+                "formaPagamento": _forma_pagamento_reserva(voucher.reserva),
+                "origem": getattr(voucher.reserva, "origem", None),
+                "responsavelNome": getattr(voucher.reserva, "responsavelNome", None),
+                "observacoes": getattr(voucher.reserva, "observacoes", None),
+                "status": getattr(voucher.reserva, "statusReserva", None) or getattr(voucher.reserva, "status", None),
                 "cliente": {
                     "nomeCompleto": voucher.reserva.cliente.nomeCompleto,
-                    "email": voucher.reserva.cliente.email,
-                    "telefone": voucher.reserva.cliente.telefone
+                    "email": _email_contato(voucher.reserva),
+                    "telefone": _telefone_contato(voucher.reserva)
+                },
+                "hospedagem": {
+                    "checkinRealizadoEm": getattr(getattr(voucher.reserva, "hospedagem", None), "checkinRealizadoEm", None),
+                    "checkoutRealizadoEm": getattr(getattr(voucher.reserva, "hospedagem", None), "checkoutRealizadoEm", None),
+                    "assinaturaCheckinRegistrada": bool(getattr(getattr(voucher.reserva, "hospedagem", None), "assinaturaCheckin", None)),
+                    "assinaturaCheckoutRegistrada": bool(getattr(getattr(voucher.reserva, "hospedagem", None), "assinaturaCheckout", None))
                 }
             }
         }
@@ -293,7 +369,8 @@ async def gerar_voucher_manual(
 async def listar_vouchers(
     status: str = None,
     limit: int = 100,
-    offset: int = 0
+    offset: int = 0,
+    current_user: User = Depends(get_current_active_user)
 ):
     """Listar vouchers com filtros"""
     
@@ -341,7 +418,8 @@ async def gerar_pdf_voucher(codigo: str):
             'reserva': {
                 'include': {
                     'cliente': True,
-                    'pagamentos': True
+                    'pagamentos': True,
+                    'hospedagem': True
                 }
             }
         }
@@ -422,13 +500,17 @@ async def gerar_pdf_voucher(codigo: str):
     story.append(Spacer(1, 12))
     
     reserva_data = [
+        ['Reserva feita por:', getattr(voucher.reserva, "responsavelNome", None) or "-"],
+        ['Origem:', getattr(voucher.reserva, "origem", None) or "-"],
+        ['Observacao:', getattr(voucher.reserva, "observacoes", None) or "-"],
         ['Código Reserva:', voucher.reserva.codigoReserva],
         ['Hóspede:', voucher.reserva.clienteNome],
         ['Tipo Suíte:', voucher.reserva.tipoSuite],
         ['Quarto:', voucher.reserva.quartoNumero],
-        ['Check-in:', datetime.fromisoformat(voucher.reserva.checkinPrevisto).strftime('%d/%m/%Y %H:%M')],
-        ['Check-out:', datetime.fromisoformat(voucher.reserva.checkoutPrevisto).strftime('%d/%m/%Y %H:%M')],
-        ['Valor Total:', f"R$ {float(voucher.reserva.valorDiaria or 0) * voucher.reserva.numDiarias:.2f}"],
+        ['Check-in:', _format_datetime(voucher.reserva.checkinPrevisto)],
+        ['Check-out:', _format_datetime(voucher.reserva.checkoutPrevisto)],
+        ['Forma de pagamento:', _forma_pagamento_reserva(voucher.reserva)],
+        ['Valor Total:', f"R$ {_valor_total_reserva(voucher.reserva):.2f}"],
     ]
     
     tabela_reserva = Table(reserva_data, colWidths=[4*cm, 8*cm])
@@ -457,8 +539,8 @@ async def gerar_pdf_voucher(codigo: str):
         
         cliente_data = [
             ['Nome Completo:', voucher.reserva.cliente.nomeCompleto],
-            ['Email:', voucher.reserva.cliente.email],
-            ['Telefone:', voucher.reserva.cliente.telefone],
+            ['Email:', _email_contato(voucher.reserva) or "-"],
+            ['Telefone:', _telefone_contato(voucher.reserva) or "-"],
         ]
         
         tabela_cliente = Table(cliente_data, colWidths=[4*cm, 8*cm])
@@ -484,10 +566,15 @@ async def gerar_pdf_voucher(codigo: str):
     story.append(Paragraph("CONTROLE DE ACESSO", styles['Heading2']))
     story.append(Spacer(1, 12))
     
+    hospedagem = getattr(voucher.reserva, "hospedagem", None)
+    checkin_realizado = getattr(hospedagem, "checkinRealizadoEm", None) or getattr(voucher, "checkinRealizadoEm", None)
+    checkout_realizado = getattr(hospedagem, "checkoutRealizadoEm", None) or getattr(voucher, "checkoutRealizadoEm", None)
     controle_data = [
-        ['Emissão:', datetime.fromisoformat(voucher.dataEmissao).strftime('%d/%m/%Y %H:%M')],
-        ['Check-in:', voucher.checkinRealizadoEm and datetime.fromisoformat(voucher.checkinRealizadoEm).strftime('%d/%m/%Y %H:%M') or '⏳ Aguardando'],
-        ['Check-out:', voucher.checkoutRealizadoEm and datetime.fromisoformat(voucher.checkoutRealizadoEm).strftime('%d/%m/%Y %H:%M') or '⏳ Aguardando'],
+        ['Emissao:', _format_datetime(voucher.dataEmissao)],
+        ['Check-in:', _format_datetime(checkin_realizado) if checkin_realizado else 'Aguardando'],
+        ['Assinatura check-in:', 'Registrada' if getattr(hospedagem, "assinaturaCheckin", None) else 'Pendente'],
+        ['Check-out:', _format_datetime(checkout_realizado) if checkout_realizado else 'Aguardando'],
+        ['Assinatura check-out:', 'Registrada' if getattr(hospedagem, "assinaturaCheckout", None) else 'Pendente'],
     ]
     
     tabela_controle = Table(controle_data, colWidths=[4*cm, 8*cm])

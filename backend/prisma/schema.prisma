@@ -54,6 +54,7 @@ model Cliente {
   resgatePremios      ResgatePremio[]
   cupomUsos           CupomUso[]
   cuponsIndicador     Cupom[]              @relation("ClienteCuponsIndicador")
+  logsJornada         LogJornada[]
 
   @@unique([nomeCompleto, documento])
   @@index([tipoHospede])
@@ -75,12 +76,17 @@ model Reserva {
   checkinReal      DateTime?         @map("checkin_real")
   checkoutReal     DateTime?         @map("checkout_real")
   valorDiaria      Decimal           @map("valor_diaria") @db.Decimal(10, 2)
+  valorTotal       Decimal?          @map("valor_total") @db.Decimal(10, 2)
   quartoNumero     String            @map("quarto_numero")
   numDiarias       Int               @map("num_diarias")
   clienteNome      String            @map("cliente_nome")
   tipoSuite        String            @map("tipo_suite")
   origem           String            @default("PARTICULAR")
   responsavelNome  String?           @map("responsavel_nome")
+  formaPagamento   String?           @map("forma_pagamento")
+  observacoes      String?
+  telefoneContato  String?           @map("telefone_contato")
+  emailContato     String?           @map("email_contato")
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
   notificacoes     Notificacao[]
@@ -123,6 +129,7 @@ model Funcionario {
   transacoesPontos       TransacaoPontos[]
   resgatesFuncionario    ResgatePremio[]   @relation("ResgatesFuncionario")
   resgatesEntrega        ResgatePremio[]   @relation("ResgatesEntrega")
+  codigosResgate         CodigoResgate[]
   auditorias             Auditoria[]
 
   @@map("funcionarios")
@@ -191,6 +198,10 @@ model Hospedagem {
   numCriancas          Int?      @map("num_criancas")
   placaVeiculo         String?   @map("placa_veiculo")
   observacoes          String?
+  assinaturaCheckin    String?   @map("assinatura_checkin")
+  assinaturaCheckout   String?   @map("assinatura_checkout")
+  checkinDados         Json?     @map("checkin_dados")
+  checkoutDados        Json?     @map("checkout_dados")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   
@@ -240,6 +251,8 @@ model TransacaoPontos {
   pontos          Int
   saldoAnterior   Int            @default(0) @map("saldo_anterior")
   saldoPosterior  Int            @default(0) @map("saldo_posterior")
+  status          String         @default("liberado")
+  liberarEm       DateTime?      @map("liberar_em")
   motivo          String?
   reservaId       Int?           @map("reserva_id")
   createdAt       DateTime       @default(now()) @map("created_at")
@@ -254,6 +267,7 @@ model TransacaoPontos {
   @@index([funcionarioId])
   @@index([reservaId])
   @@index([reservaId, origem])
+  @@index([status, liberarEm])
   @@map("transacoes_pontos")
 }
 
@@ -405,6 +419,7 @@ model NivelFidelidade {
   pontosMinimos   Int      @default(0) @map("pontos_minimos")
   bonusPercentual Decimal  @default(0) @map("bonus_percentual") @db.Decimal(5, 2)
   beneficios      Json?
+  beneficiosNivel BeneficioNivel[]
   ordem           Int      @default(0)
   ativo           Boolean  @default(true)
   createdAt       DateTime @default(now()) @map("created_at")
@@ -412,6 +427,20 @@ model NivelFidelidade {
 
   @@index([ativo, pontosMinimos])
   @@map("niveis_fidelidade")
+}
+
+model BeneficioNivel {
+  id        Int             @id @default(autoincrement())
+  nivelId   Int             @map("nivel_id")
+  titulo    String
+  descricao String?
+  ativo     Boolean         @default(true)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  nivel     NivelFidelidade @relation(fields: [nivelId], references: [id])
+
+  @@index([nivelId, ativo])
+  @@map("beneficios_nivel")
 }
 
 model TarifaSuite {
@@ -437,16 +466,34 @@ model Premio {
   precoEmPontos Int              @map("preco_em_pontos")
   precoEmRp     Int              @default(0) @map("preco_em_rp")
   categoria     String           @default("GERAL")
+  categoriaId   Int?             @map("categoria_id")
   estoque       Int?
   imagemUrl     String?          @map("imagem_url")
   ativo         Boolean          @default(true)
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
   resgates      ResgatePremio[]
+  categoriaRel  CategoriaPremio? @relation(fields: [categoriaId], references: [id])
 
   @@index([ativo])
   @@index([categoria])
+  @@index([categoriaId])
   @@map("premios")
+}
+
+model CategoriaPremio {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  slug      String   @unique
+  descricao String?
+  ordem     Int      @default(0)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  premios   Premio[]
+
+  @@index([ativo, ordem])
+  @@map("categorias_premios")
 }
 
 model ResgatePremio {
@@ -465,6 +512,7 @@ model ResgatePremio {
   updatedAt            DateTime     @updatedAt @map("updated_at")
   cliente              Cliente      @relation(fields: [clienteId], references: [id])
   premio               Premio       @relation(fields: [premioId], references: [id])
+  codigo               CodigoResgate?
   funcionario          Funcionario? @relation("ResgatesFuncionario", fields: [funcionarioId], references: [id])
   funcionarioEntrega   Funcionario? @relation("ResgatesEntrega", fields: [funcionarioEntregaId], references: [id])
 
@@ -473,6 +521,52 @@ model ResgatePremio {
   @@index([status])
   @@index([codigoStatus])
   @@map("resgates_premios")
+}
+
+model CodigoResgate {
+  id            Int            @id @default(autoincrement())
+  resgateId     Int            @unique @map("resgate_id")
+  codigo        String         @unique
+  status        String         @default("ativo")
+  validoAte     DateTime       @map("valido_ate")
+  utilizadoEm   DateTime?      @map("utilizado_em")
+  funcionarioId Int?           @map("funcionario_id")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  resgate       ResgatePremio  @relation(fields: [resgateId], references: [id])
+  funcionario   Funcionario?   @relation(fields: [funcionarioId], references: [id])
+
+  @@index([status])
+  @@index([validoAte])
+  @@map("codigos_resgate")
+}
+
+model LogJornada {
+  id        Int      @id @default(autoincrement())
+  clienteId Int?     @map("cliente_id")
+  acao      String
+  payload   Json?
+  ip        String?
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  cliente   Cliente? @relation(fields: [clienteId], references: [id])
+
+  @@index([clienteId])
+  @@index([acao])
+  @@index([createdAt])
+  @@map("logs_jornada")
+}
+
+model ConfiguracaoJornada {
+  id        Int      @id @default(autoincrement())
+  chave     String   @unique
+  valorJson Json     @map("valor_json")
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([ativo])
+  @@map("configuracoes_jornada")
 }
 
 model Auditoria {

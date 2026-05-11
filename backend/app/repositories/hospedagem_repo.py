@@ -35,6 +35,8 @@ class HospedagemRepository:
         num_criancas: Optional[int] = None,
         placa_veiculo: Optional[str] = None,
         observacoes: Optional[str] = None,
+        assinatura_checkin: Optional[str] = None,
+        checkin_dados: Optional[Dict[str, Any]] = None,
         funcionario_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
@@ -112,7 +114,9 @@ class HospedagemRepository:
                 "numHospedes": num_hospedes,
                 "numCriancas": num_criancas,
                 "placaVeiculo": placa_veiculo,
-                "observacoes": observacoes
+                "observacoes": observacoes,
+                "assinaturaCheckin": assinatura_checkin,
+                "checkinDados": checkin_dados
             }
         )
         
@@ -167,6 +171,8 @@ class HospedagemRepository:
         servicos_extras: float = 0,
         avaliacao: Optional[int] = None,
         comentario_avaliacao: Optional[str] = None,
+        assinatura_checkout: Optional[str] = None,
+        checkout_dados: Optional[Dict[str, Any]] = None,
         funcionario_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
@@ -210,7 +216,9 @@ class HospedagemRepository:
             data={
                 "statusHospedagem": "CHECKOUT_REALIZADO",
                 "checkoutRealizadoEm": checkout_timestamp,
-                "checkoutRealizadoPor": funcionario_id
+                "checkoutRealizadoPor": funcionario_id,
+                "assinaturaCheckout": assinatura_checkout,
+                "checkoutDados": checkout_dados
             }
         )
         
@@ -327,7 +335,13 @@ class HospedagemRepository:
                 if motivo:
                     print(f"[CHECKOUT RP] Sem crédito de pontos: {motivo}")
             else:
-                print(f"[CHECKOUT RP] Pontos creditados: {result.get('pontos', 0)}")
+                if result.get("status") == "pendente":
+                    print(
+                        f"[CHECKOUT RP] Pontos pendentes: {result.get('pontos', 0)} "
+                        f"liberar_em={result.get('liberar_em')}"
+                    )
+                else:
+                    print(f"[CHECKOUT RP] Pontos creditados: {result.get('pontos', 0)}")
 
             bonus_result = await creditar_bonus_cupom_no_checkout(
                 self.db,
@@ -341,6 +355,8 @@ class HospedagemRepository:
             return {
                 "success": True,
                 "pontos_checkout": int(result.get("pontos", 0) or 0) if result.get("creditado") else 0,
+                "pontos_status": result.get("status"),
+                "pontos_liberar_em": result.get("liberar_em"),
                 "pontos_bonus_cupom": int(bonus_result.get("pontos", 0) or 0) if bonus_result.get("creditado") else 0,
                 "checkout": result,
                 "cupom": bonus_result,
@@ -363,6 +379,10 @@ class HospedagemRepository:
             "num_criancas": hospedagem.numCriancas,
             "placa_veiculo": hospedagem.placaVeiculo,
             "observacoes": hospedagem.observacoes,
+            "assinatura_checkin": getattr(hospedagem, "assinaturaCheckin", None),
+            "assinatura_checkout": getattr(hospedagem, "assinaturaCheckout", None),
+            "checkin_dados": getattr(hospedagem, "checkinDados", None),
+            "checkout_dados": getattr(hospedagem, "checkoutDados", None),
             "created_at": hospedagem.createdAt.isoformat() if hospedagem.createdAt else None,
             "updated_at": hospedagem.updatedAt.isoformat() if hospedagem.updatedAt else None
         }

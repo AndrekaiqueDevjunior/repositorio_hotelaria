@@ -2,7 +2,7 @@
 Schemas para Hospedagem (Estado Operacional)
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from app.schemas.status_enums import StatusHospedagem
 
@@ -22,6 +22,8 @@ class HospedagemCheckinRequest(BaseModel):
     num_criancas: Optional[int] = 0
     placa_veiculo: Optional[str] = None
     observacoes: Optional[str] = None
+    assinatura_checkin: Optional[str] = None
+    checkin_dados: Optional[Dict[str, Any]] = None
 
 
 class HospedagemCheckoutRequest(BaseModel):
@@ -30,6 +32,8 @@ class HospedagemCheckoutRequest(BaseModel):
     servicos_extras: Optional[float] = 0
     avaliacao: Optional[int] = 5
     comentario_avaliacao: Optional[str] = None
+    assinatura_checkout: Optional[str] = None
+    checkout_dados: Optional[Dict[str, Any]] = None
 
 
 class HospedagemResponse(BaseModel):
@@ -45,6 +49,10 @@ class HospedagemResponse(BaseModel):
     num_criancas: Optional[int]
     placa_veiculo: Optional[str]
     observacoes: Optional[str]
+    assinatura_checkin: Optional[str] = None
+    assinatura_checkout: Optional[str] = None
+    checkin_dados: Optional[Dict[str, Any]] = None
+    checkout_dados: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

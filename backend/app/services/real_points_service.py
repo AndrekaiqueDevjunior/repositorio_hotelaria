@@ -1,285 +1,165 @@
 """
-📘 REAL POINTS (RP) - SISTEMA OFICIAL DE FIDELIDADE
-==================================================
+REAL POINTS (RP) - SISTEMA OFICIAL DE FIDELIDADE
 
-Implementação única e oficial do sistema de pontos Real Points (RP)
-baseado exclusivamente na regra de negócio fornecida.
+Servico unico para a regra de pontos da Jornada Real.
 
-Regra Principal:
-- Baseado em estadias concluídas (CHECKED_OUT)
-- Pontos a cada 2 diárias completas
-- Apenas checkout gera pontos
-- Tabela oficial por tipo de suíte
+Regra vigente nas telas:
+- Suite Luxo: 1 ponto por diaria
+- Suite Master: 2 pontos por diaria
+- Suite Dupla: 3 pontos por diaria
+- Suite Real: 3 pontos por diaria
 """
 
-from typing import Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
-from decimal import Decimal
+from typing import Any, Dict, Optional, Tuple
 
 
 class RealPointsService:
-    """
-    Serviço oficial de cálculo e gestão de Real Points (RP)
-    
-    Implementa 100% a regra de negócio oficial do Hotel Real Cabo Frio
-    """
-    
-    # 📋 TABELA OFICIAL DE PONTOS - REGRA DE NEGÓCIO
+    """Calculo oficial de Real Points (RP)."""
+
     TABELA_OFICIAL_RP = {
         "LUXO": {
-            "rp_por_bloco": 3,
-            "valor_min_diaria": 300,
-            "valor_max_diaria": 350,
-            "valor_min_2_diarias": 600,
-            "valor_max_2_diarias": 700,
-            "descricao": "Suíte Luxo - 2 diárias R$ 600-700 = 3 RP"
-        },
-        "DUPLA": {
-            "rp_por_bloco": 4,
-            "valor_min_diaria": 600,
-            "valor_max_diaria": 700,
-            "valor_min_2_diarias": 1200,
-            "valor_max_2_diarias": 1400,
-            "descricao": "Suíte Dupla - 2 diárias R$ 1200-1400 = 4 RP"
+            "rp_por_diaria": 1,
+            "descricao": "Suite Luxo - 1 ponto por diaria",
         },
         "MASTER": {
-            "rp_por_bloco": 4,
-            "valor_min_diaria": 400,
-            "valor_max_diaria": 450,
-            "valor_min_2_diarias": 800,
-            "valor_max_2_diarias": 900,
-            "descricao": "Suíte Master - 2 diárias R$ 800-900 = 4 RP"
+            "rp_por_diaria": 2,
+            "descricao": "Suite Master - 2 pontos por diaria",
+        },
+        "DUPLA": {
+            "rp_por_diaria": 3,
+            "descricao": "Suite Dupla - 3 pontos por diaria",
         },
         "REAL": {
-            "rp_por_bloco": 5,
-            "valor_min_diaria": 500,
-            "valor_max_diaria": 600,
-            "valor_min_2_diarias": 1000,
-            "valor_max_2_diarias": 1200,
-            "descricao": "Suíte Real - 2 diárias R$ 1000-1200 = 5 RP"
-        }
+            "rp_por_diaria": 3,
+            "descricao": "Suite Real - 3 pontos por diaria",
+        },
     }
-    
-    # 🎁 SISTEMA OFICIAL DE PRÊMIOS
+
     PREMIOS_OFICIAIS = {
-        "1_diaria_luxo": {
-            "custo_rp": 20,
-            "nome": "1 diária na Suíte Luxo",
-            "descricao": "Estadia de 1 diária na Suíte Luxo",
-            "categoria": "hospedagem"
-        },
-        "luminaria": {
+        "diaria_hidro_champagne": {
             "custo_rp": 25,
-            "nome": "Luminária com carregador",
-            "descricao": "Luminária LED com portas USB",
-            "categoria": "eletronico"
+            "nome": "1 diaria com hidromassagem e champagne cortesia",
+            "descricao": "Experiencia O Retorno do Sonho",
+            "categoria": "O Retorno do Sonho",
         },
-        "cafeteira": {
+        "cafeteira_premium": {
             "custo_rp": 35,
-            "nome": "Cafeteira",
-            "descricao": "Cafeteira elétrica",
-            "categoria": "eletrodomestico"
+            "nome": "Cafeteira Premium",
+            "descricao": "Cafeteira Premium",
+            "categoria": "Rituais do Real",
         },
         "iphone_16": {
-            "custo_rp": 100,
+            "custo_rp": 90,
             "nome": "iPhone 16",
             "descricao": "Smartphone iPhone 16",
-            "categoria": "smartphone"
-        }
+            "categoria": "Tecnologia Real",
+        },
     }
-    
+
     @classmethod
-    def calcular_rp_oficial(cls, suite: str, diarias: int, valor_total: float) -> Tuple[int, str]:
+    def calcular_rp_oficial(cls, suite: str, diarias: int, valor_total: float = 0) -> Tuple[int, str]:
         """
-        Calcula RP segundo a fórmula oficial:
-        
-        blocos = floor(total_diarias / 2)
-        RP_total = blocos × RP_por_tipo_de_suite
-        
-        Args:
-            suite: Tipo de suíte (LUXO, DUPLA, MASTER, REAL)
-            diarias: Número total de diárias
-            valor_total: Valor total da reserva
-            
-        Returns:
-            Tuple[int, str]: (RP calculados, detalhe do cálculo)
+        Calcula RP pela regra vigente:
+
+        RP_total = total_diarias x pontos_por_diaria_da_suite
         """
-        # Normalizar nome da suíte
-        suite_normalizada = suite.upper().strip()
-        
-        # Validar suíte
+        suite_normalizada = (suite or "").upper().strip()
         if suite_normalizada not in cls.TABELA_OFICIAL_RP:
-            return 0, f"Suíte '{suite}' inválida"
-        
-        # Regra: menos de 2 diárias = 0 RP
-        if diarias < 2:
-            return 0, "Menos de 2 diárias (0 RP)"
-        
-        # Obter regra da suíte
+            return 0, f"Suite '{suite}' invalida"
+
+        diarias_int = int(diarias or 0)
+        if diarias_int <= 0:
+            return 0, "Sem diarias validas (0 RP)"
+
         regra = cls.TABELA_OFICIAL_RP[suite_normalizada]
-        rp_por_bloco = regra["rp_por_bloco"]
-        
-        # Calcular blocos de 2 diárias
-        blocos = diarias // 2
-        
-        # Calcular RP total
-        rp_total = blocos * rp_por_bloco
-        
-        # Detalhe do cálculo
-        detalhe = f"{blocos} bloco(s) × {rp_por_bloco} RP = {rp_total} RP"
-        
+        rp_por_diaria = int(regra["rp_por_diaria"])
+        rp_total = diarias_int * rp_por_diaria
+        detalhe = f"{diarias_int} diaria(s) x {rp_por_diaria} RP = {rp_total} RP"
         return rp_total, detalhe
-    
+
     @classmethod
     def validar_requisitos_oficiais(cls, reserva: Dict[str, Any]) -> Tuple[bool, str]:
-        """
-        Valida todos os requisitos obrigatórios antes de conceder RP
-        
-        Args:
-            reserva: Dicionário com dados da reserva
-            
-        Returns:
-            Tuple[bool, str]: (pode_conceder, motivo)
-        """
-        # 1. Status da reserva = CHECKED_OUT
-        status = reserva.get("status", "").upper()
-        if status != "CHECKED_OUT":
-            return False, f"Reserva não está CHECKED_OUT (status: {status})"
-        
-        # 2. Pagamento confirmado
-        pagamento_confirmado = reserva.get("pagamento_confirmado", False)
-        if not pagamento_confirmado:
-            return False, "Pagamento não confirmado"
-        
-        # 3. Número de diárias ≥ 2
+        status = (reserva.get("status") or "").upper()
+        if status not in {"CHECKED_OUT", "CHECKOUT_REALIZADO"}:
+            return False, f"Reserva nao esta em checkout realizado (status: {status})"
+
+        if not reserva.get("pagamento_confirmado", False):
+            return False, "Pagamento nao confirmado"
+
         diarias = int(reserva.get("num_diarias", 0) or 0)
-        if diarias < 2:
-            return False, f"Menos de 2 diárias ({diarias})"
-        
-        # 4. Tipo de suíte definido e válido
-        suite = reserva.get("tipo_suite", "").strip()
+        if diarias <= 0:
+            return False, f"Reserva sem diarias validas ({diarias})"
+
+        suite = (reserva.get("tipo_suite") or "").strip()
         if not suite:
-            return False, "Tipo de suíte não definido"
-        
-        suite_normalizada = suite.upper()
-        if suite_normalizada not in cls.TABELA_OFICIAL_RP:
-            return False, f"Suíte '{suite}' inválida"
-        
-        # 5. Validar valor total (opcional, para antifraude)
+            return False, "Tipo de suite nao definido"
+
+        if suite.upper() not in cls.TABELA_OFICIAL_RP:
+            return False, f"Suite '{suite}' invalida"
+
         valor_total = float(reserva.get("valor_total", 0) or 0)
-        if valor_total <= 0:
-            return False, "Valor total inválido"
-        
+        if valor_total < 0:
+            return False, "Valor total invalido"
+
         return True, "Todos os requisitos atendidos"
-    
+
     @classmethod
     def validar_antifraude(cls, reserva: Dict[str, Any]) -> Tuple[bool, str]:
-        """
-        Validações antifraude essenciais
-        
-        Args:
-            reserva: Dicionário com dados da reserva
-            
-        Returns:
-            Tuple[bool, str]: (valido, motivo)
-        """
-        # 1. Check-out manual sem hospedagem real
         checkout_realizado = reserva.get("checkout_realizado")
         if not checkout_realizado:
-            return False, "Check-out não realizado"
-        
-        # 2. Reserva criada e encerrada no mesmo dia (sem pernoite)
+            return False, "Check-out nao realizado"
+
         data_criacao = reserva.get("created_at")
         data_checkout = reserva.get("checkout_realizado")
-        
         if data_criacao and data_checkout:
             if isinstance(data_criacao, str):
-                data_criacao = datetime.fromisoformat(data_criacao.replace('Z', '+00:00'))
+                data_criacao = datetime.fromisoformat(data_criacao.replace("Z", "+00:00"))
             if isinstance(data_checkout, str):
-                data_checkout = datetime.fromisoformat(data_checkout.replace('Z', '+00:00'))
-            
-            # Calcular diferença em horas
+                data_checkout = datetime.fromisoformat(data_checkout.replace("Z", "+00:00"))
+
             diferenca_horas = (data_checkout - data_criacao).total_seconds() / 3600
-            
-            if diferenca_horas < 24:  # Menos de 24 horas
-                return False, f"Reserva encerrada em menos de 24h ({diferenca_horas:.1f}h)"
-        
-        # 3. Alteração de datas após checkout (simulação)
-        # Em implementação real, verificaria logs de alteração
-        
-        return True, "Validações antifraude OK"
-    
+            if diferenca_horas < 1:
+                return False, f"Reserva encerrada em menos de 1h ({diferenca_horas:.1f}h)"
+
+        return True, "Validacoes antifraude OK"
+
     @classmethod
     def pode_resgatar_premio(cls, cliente_rp: int, premio_id: str) -> Tuple[bool, str]:
-        """
-        Verifica se cliente pode resgatar prêmio
-        
-        Args:
-            cliente_rp: Saldo atual de RP do cliente
-            premio_id: ID do prêmio desejado
-            
-        Returns:
-            Tuple[bool, str]: (pode_resgatar, motivo)
-        """
-        # Validar prêmio
         if premio_id not in cls.PREMIOS_OFICIAIS:
-            return False, f"Prêmio '{premio_id}' inválido"
-        
+            return False, f"Premio '{premio_id}' invalido"
+
         premio = cls.PREMIOS_OFICIAIS[premio_id]
-        custo_rp = premio["custo_rp"]
-        
-        # Verificar saldo suficiente
-        if cliente_rp < custo_rp:
+        custo_rp = int(premio["custo_rp"])
+        if int(cliente_rp or 0) < custo_rp:
             return False, f"RP insuficiente (tem: {cliente_rp}, precisa: {custo_rp})"
-        
+
         return True, "Pode resgatar"
-    
+
     @classmethod
     def get_premio(cls, premio_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Obtém detalhes do prêmio
-        
-        Args:
-            premio_id: ID do prêmio
-            
-        Returns:
-            Dict com detalhes do prêmio ou None
-        """
         return cls.PREMIOS_OFICIAIS.get(premio_id)
-    
+
     @classmethod
     def listar_premios(cls) -> Dict[str, Dict[str, Any]]:
-        """
-        Lista todos os prêmios disponíveis
-        
-        Returns:
-            Dict com todos os prêmios
-        """
         return cls.PREMIOS_OFICIAIS.copy()
-    
+
     @classmethod
     def get_tabela_oficial(cls) -> Dict[str, Dict[str, Any]]:
-        """
-        Obtém tabela oficial de pontos
-        
-        Returns:
-            Dict com tabela oficial de RP
-        """
         return cls.TABELA_OFICIAL_RP.copy()
-    
+
     @classmethod
     def simular_calculo(cls, suite: str, diarias: int, valor_total: float) -> Dict[str, Any]:
-        """
-        Simula cálculo completo com todas as validações
-        
-        Args:
-            suite: Tipo de suíte
-            diarias: Número de diárias
-            valor_total: Valor total
-            
-        Returns:
-            Dict com resultado completo da simulação
-        """
+        reserva_simulada = {
+            "status": "CHECKOUT_REALIZADO",
+            "pagamento_confirmado": True,
+            "num_diarias": diarias,
+            "tipo_suite": suite,
+            "valor_total": valor_total,
+            "created_at": datetime.now(timezone.utc),
+            "checkout_realizado": datetime.now(timezone.utc),
+        }
+
         resultado = {
             "suite": suite,
             "diarias": diarias,
@@ -287,78 +167,46 @@ class RealPointsService:
             "rp_calculados": 0,
             "pode_conceder": False,
             "validacoes": [],
-            "erros": []
+            "erros": [],
         }
-        
-        # Simular reserva para validação
-        reserva_simulada = {
-            "status": "CHECKED_OUT",
-            "pagamento_confirmado": True,
-            "num_diarias": diarias,
-            "tipo_suite": suite,
-            "valor_total": valor_total,
-            "created_at": datetime.now(timezone.utc),
-            "checkout_realizado": datetime.now(timezone.utc)
-        }
-        
-        # Validar requisitos oficiais
+
         pode, motivo = cls.validar_requisitos_oficiais(reserva_simulada)
         if pode:
-            resultado["validacoes"].append("✅ Requisitos oficiais OK")
+            resultado["validacoes"].append("Requisitos oficiais OK")
         else:
-            resultado["erros"].append(f"❌ Requisitos: {motivo}")
-        
-        # Validar antifraude
+            resultado["erros"].append(f"Requisitos: {motivo}")
+
         valido, motivo = cls.validar_antifraude(reserva_simulada)
         if valido:
-            resultado["validacoes"].append("✅ Antifraude OK")
+            resultado["validacoes"].append("Antifraude OK")
         else:
-            resultado["erros"].append(f"❌ Antifraude: {motivo}")
-        
-        # Calcular RP se passou nas validações
+            resultado["erros"].append(f"Antifraude: {motivo}")
+
         if pode and valido:
             rp, detalhe = cls.calcular_rp_oficial(suite, diarias, valor_total)
             resultado["rp_calculados"] = rp
             resultado["pode_conceder"] = True
-            resultado["validacoes"].append(f"✅ Cálculo: {detalhe}")
-        
+            resultado["validacoes"].append(f"Calculo: {detalhe}")
+
         return resultado
 
 
-# 🎯 INSTÂNCIA GLOBAL PARA COMPATIBILIDADE
 real_points_service = RealPointsService()
 
 
-# 🧪 FUNÇÕES DE TESTE E DEMONSTRAÇÃO
 def demo_real_points():
-    """Demonstração do sistema Real Points"""
-    
-    print("📘 REAL POINTS (RP) - DEMONSTRAÇÃO OFICIAL")
+    print("REAL POINTS (RP) - DEMONSTRACAO OFICIAL")
     print("=" * 60)
-    
-    # Exemplos oficiais
     exemplos = [
         {"suite": "LUXO", "diarias": 2, "valor": 650},
         {"suite": "REAL", "diarias": 4, "valor": 1100},
         {"suite": "MASTER", "diarias": 3, "valor": 850},
         {"suite": "DUPLA", "diarias": 2, "valor": 1300},
-        {"suite": "LUXO", "diarias": 1, "valor": 350},
-        {"suite": "REAL", "diarias": 6, "valor": 1650}
     ]
-    
-    print("\n📊 EXEMPLOS OFICIAIS:")
+
     for ex in exemplos:
         rp, detalhe = RealPointsService.calcular_rp_oficial(ex["suite"], ex["diarias"], ex["valor"])
-        print(f"   {ex['suite']} - {ex['diarias']} diárias: {rp} RP ({detalhe})")
-    
-    print("\n🎁 PRÊMIOS DISPONÍVEIS:")
-    for premio_id, premio in RealPointsService.PREMIOS_OFICIAIS.items():
-        print(f"   {premio['custo_rp']} RP - {premio['nome']}")
-    
-    print("\n📋 TABELA OFICIAL DE PONTOS:")
-    for suite, regra in RealPointsService.TABELA_OFICIAL_RP.items():
-        print(f"   {suite}: {regra['rp_por_bloco']} RP por 2 diárias")
-        print(f"      Faixa: R$ {regra['valor_min_2_diarias']}-{regra['valor_max_2_diarias']}")
+        print(f"{ex['suite']} - {ex['diarias']} diarias: {rp} RP ({detalhe})")
 
 
 if __name__ == "__main__":

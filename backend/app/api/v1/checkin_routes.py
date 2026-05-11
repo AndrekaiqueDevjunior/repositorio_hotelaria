@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 from datetime import datetime, date
 
 from app.core.database import get_db
@@ -41,7 +42,7 @@ class CheckinRequest(BaseModel):
     documentos_conferidos: bool = True
     termos_aceitos: bool = True
     assinatura_digital: str = None
-    hospedes: List[HospedeCheckinData] = []
+    hospedes: List[HospedeCheckinData] = Field(default_factory=list)
     
     @validator('num_hospedes_real')
     def validate_num_hospedes(cls, v):
@@ -78,13 +79,20 @@ class CheckoutRequest(BaseModel):
     comentario_hospede: str = None
     forma_acerto: str = None
     observacoes_checkout: str = None
-    consumos_adicionais: List[ConsumoAdicional] = []
+    assinatura_digital: str = None
+    consumos_adicionais: List[ConsumoAdicional] = Field(default_factory=list)
     
     @validator('avaliacao_hospede')
     def validate_avaliacao(cls, v):
         if not (1 <= v <= 5):
             raise ValueError('Avaliação deve ser entre 1 e 5')
         return v
+
+
+def _model_to_dict(model: BaseModel) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return jsonable_encoder(model.model_dump())
+    return jsonable_encoder(model.dict())
 
 
 def _normalizar_status_pagamento_para_validacao(status_pagamento: Optional[str]) -> str:
@@ -176,6 +184,8 @@ async def realizar_checkin(
             num_criancas=dados_checkin.num_criancas,
             placa_veiculo=dados_checkin.veiculo_placa,
             observacoes=dados_checkin.observacoes_checkin,
+            assinatura_checkin=dados_checkin.assinatura_digital,
+            checkin_dados=_model_to_dict(dados_checkin),
             funcionario_id=current_user.id,
         )
  
@@ -222,7 +232,7 @@ async def consultar_checkin(
         return {
             "reserva_id": reserva.id,
             "codigo_reserva": reserva.codigoReserva,
-            "status_reserva": reserva.status_reserva,
+            "status_reserva": getattr(reserva, "statusReserva", None) or getattr(reserva, "status", None),
             "hospedagem": {
                 "status_hospedagem": reserva.hospedagem.statusHospedagem,
                 "checkin_realizado_em": reserva.hospedagem.checkinRealizadoEm,
@@ -231,6 +241,8 @@ async def consultar_checkin(
                 "num_criancas": reserva.hospedagem.numCriancas,
                 "placa_veiculo": reserva.hospedagem.placaVeiculo,
                 "observacoes": reserva.hospedagem.observacoes,
+                "assinatura_checkin": getattr(reserva.hospedagem, "assinaturaCheckin", None),
+                "checkin_dados": getattr(reserva.hospedagem, "checkinDados", None),
             },
         }
     except HTTPException:
@@ -296,6 +308,8 @@ async def realizar_checkout(
             servicos_extras=float(dados_checkout.servicos_extras or 0),
             avaliacao=int(dados_checkout.avaliacao_hospede or 5),
             comentario_avaliacao=dados_checkout.comentario_hospede,
+            assinatura_checkout=dados_checkout.assinatura_digital,
+            checkout_dados=_model_to_dict(dados_checkout),
             funcionario_id=current_user.id,
         )
  
@@ -342,11 +356,13 @@ async def consultar_checkout(
         return {
             "reserva_id": reserva.id,
             "codigo_reserva": reserva.codigoReserva,
-            "status_reserva": reserva.status_reserva,
+            "status_reserva": getattr(reserva, "statusReserva", None) or getattr(reserva, "status", None),
             "hospedagem": {
                 "status_hospedagem": reserva.hospedagem.statusHospedagem,
                 "checkout_realizado_em": reserva.hospedagem.checkoutRealizadoEm,
                 "checkout_realizado_por": reserva.hospedagem.checkoutRealizadoPor,
+                "assinatura_checkout": getattr(reserva.hospedagem, "assinaturaCheckout", None),
+                "checkout_dados": getattr(reserva.hospedagem, "checkoutDados", None),
             },
         }
     except HTTPException:

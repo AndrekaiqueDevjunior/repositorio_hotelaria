@@ -657,7 +657,13 @@ async def criar_reserva_publica(
                 checkin_previsto=checkin_dt,
                 checkout_previsto=checkout_dt,
                 valor_diaria=valor_diaria,
-                num_diarias=num_diarias
+                valor_total=valor_total_base,
+                num_diarias=num_diarias,
+                origem="SITE",
+                forma_pagamento=reserva_data.metodo_pagamento,
+                observacoes=reserva_data.observacoes,
+                telefone_contato=telefone_limpo,
+                email_contato=reserva_data.email
             ),
             notificar=not bool(cupom_codigo)
         )
