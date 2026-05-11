@@ -33,6 +33,21 @@ const TEF_PROCESSING_POLL_DELAY_MS = 800
 const REPRINT_LOOKUP_ERROR_PATTERNS = ['documento inexistente', 'doc inexistente', 'doc nao encontrado', 'doc nao encontrando', 'transacao nao encontrada na log', 'transacao nao encontrada no log', 'rede nao existe']
 const MULTIPLE_PAYMENT_CREDIT_ADDITIONAL_PARAMETERS = '{[10;16;17;18;19;27;28;35;3988;42;43;44];MultiplosCupons=1;VersaoAutomacaoCielo=PEG}'
 const MULTIPLE_PAYMENT_DEBIT_ADDITIONAL_PARAMETERS = '{[10;18;24;26;27;28;29;30;34;35;3988;44;73];MultiplosCupons=1;VersaoAutomacaoCielo=PEG}'
+const INVALID_TLS_TOKEN_VALUES = new Set([['1111', '2222', '3333', '4444'].join('-')])
+
+const isInvalidTlsToken = (value) => INVALID_TLS_TOKEN_VALUES.has(String(value || '').trim())
+const containsInvalidTlsToken = (value) => {
+  const normalized = String(value || '')
+  return Array.from(INVALID_TLS_TOKEN_VALUES).some((token) => normalized.includes(token))
+}
+const sanitizeTlsToken = (value) => {
+  const normalized = String(value || '').trim()
+  return isInvalidTlsToken(normalized) ? '' : normalized
+}
+const sanitizeTlsParameters = (value) => {
+  const normalized = String(value || '').trim()
+  return containsInvalidTlsToken(normalized) ? '' : normalized
+}
 const MULTIPLE_PAYMENT_WALLET_ADDITIONAL_PARAMETERS = '{MultiplosCupons=1;VersaoAutomacaoCielo=PEG}'
 
 const defaultValorPrompt = (prompt) => {
@@ -387,7 +402,6 @@ const FUNCTION_OPTIONS = [
 const JUSTIFICATIVA_REQUIRED_FUNCTIONS = new Set()
 
 const DEFAULT_TLS_TOKEN = process.env.NEXT_PUBLIC_TEF_TLS_TOKEN || ''
-const PRE_HOMO_TLS_TOKEN = '1111-2222-3333-4444'
 
 const SEQUENCE_PRESETS = [
   {
@@ -1137,6 +1151,18 @@ export default function ModalTefGerencial({ onClose }) {
   const nfpagTypeOptions = useMemo(() => getNfpagTypeOptions(tefResultado?.nfpag), [tefResultado])
   const nfpagSelectedType = useMemo(() => getNfpagTypeDetail(tefResultado?.nfpag, nfpagTipo), [tefResultado, nfpagTipo])
 
+  useEffect(() => {
+    if (isInvalidTlsToken(tlsToken)) {
+      setTlsToken('')
+    }
+    if (containsInvalidTlsToken(trnInitParameters)) {
+      setTrnInitParameters('')
+    }
+    if (containsInvalidTlsToken(sessionParameters)) {
+      setSessionParameters('')
+    }
+  }, [tlsToken, trnInitParameters, sessionParameters])
+
 
   const resolvePromptDefaultInput = (payload, fallbackValue) => {
     if (!sequenceRequiresOriginalDocumentReference(selectedSequence)) return fallbackValue
@@ -1595,7 +1621,10 @@ export default function ModalTefGerencial({ onClose }) {
 
   const runFunction699Probe = async () => {
     const fiscal = buildFiscalStamp()
-    const tokenToUse = String(tlsToken || PRE_HOMO_TLS_TOKEN).trim() || PRE_HOMO_TLS_TOKEN
+    const tokenToUse = sanitizeTlsToken(tlsToken)
+    if (!tokenToUse) {
+      throw new Error('Token TLS obrigatorio para executar o diagnostico da funcao 699.')
+    }
     const initParam = `[TipoComunicacaoExterna=TLSGWP;TokenRegistro=${tokenToUse}]`
     const startPayload = {
       function_id: 699,
@@ -1948,10 +1977,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     setTefResultado(null)
     setTefPrompt(payload)
     const fieldId = Number(payload?.field_id)
-    const tokenRegistroSolicitado = fieldId === 2988 && tlsToken.trim()
+    const sanitizedTlsToken = sanitizeTlsToken(tlsToken)
+    const tokenRegistroSolicitado = fieldId === 2988 && sanitizedTlsToken
     const fallbackPromptValue = defaultValorPrompt(payload)
     const promptValue = tokenRegistroSolicitado
-      ? tlsToken.trim()
+      ? sanitizedTlsToken
       : resolvePromptDefaultInput(payload, fallbackPromptValue)
     setTefInput(promptValue)
     setTefInputMode(resolveInputMode(Number(payload?.command_id)))
@@ -2001,12 +2031,15 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         }
       }
 
-      const trnInitLower = String(trnInitParameters || '').toLowerCase()
-      const sessionParamsLower = String(sessionParameters || '').toLowerCase()
+      const sanitizedTlsToken = sanitizeTlsToken(tlsToken)
+      const sanitizedTrnInitParameters = sanitizeTlsParameters(trnInitParameters)
+      const sanitizedSessionParameters = sanitizeTlsParameters(sessionParameters)
+      const trnInitLower = String(sanitizedTrnInitParameters || '').toLowerCase()
+      const sessionParamsLower = String(sanitizedSessionParameters || '').toLowerCase()
       const tlsObrigatorio = functionId === 669 || functionId === 699 || selectedSequence === '20'
       const tlsJaInformadoNoInit = trnInitLower.includes('tokenregistro') || trnInitLower.includes('tipocomunicacaoexterna=tlsgwp')
       const tlsJaInformadoNaSessao = sessionParamsLower.includes('tokenregistro') || sessionParamsLower.includes('tipocomunicacaoexterna=tlsgwp')
-      if (tlsObrigatorio && !tlsToken.trim() && !tlsJaInformadoNoInit && !tlsJaInformadoNaSessao) {
+      if (tlsObrigatorio && !sanitizedTlsToken && !tlsJaInformadoNoInit && !tlsJaInformadoNaSessao) {
         setTefErro('Token TLS obrigatorio para a sequencia TLS.')
         setTefProcessando(false)
         return
@@ -2070,10 +2103,10 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         }
       }
 
-      let trnInitParametersValue = trnInitParameters || undefined
+      let trnInitParametersValue = sanitizedTrnInitParameters || undefined
       const deveInjetarTokenTls = tlsObrigatorio || trnInitLower.includes('tipocomunicacaoexterna=tlsgwp')
-      if (deveInjetarTokenTls && tlsToken.trim()) {
-        const tlsParam = `[TipoComunicacaoExterna=TLSGWP;TokenRegistro=${tlsToken.trim()}]`
+      if (deveInjetarTokenTls && sanitizedTlsToken) {
+        const tlsParam = `[TipoComunicacaoExterna=TLSGWP;TokenRegistro=${sanitizedTlsToken}]`
         if (trnInitParametersValue) {
           if (!trnInitParametersValue.includes('TokenRegistro')) {
             trnInitParametersValue = `${trnInitParametersValue};${tlsParam}`
@@ -2125,7 +2158,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         enforce_fiscal_document: originalDocumentReferenceRequired || undefined,
         trn_additional_parameters: trnAdditionalParameters || undefined,
         trn_init_parameters: trnInitParametersValue,
-        session_parameters: sessionParameters || undefined,
+        session_parameters: sanitizedSessionParameters || undefined,
         sitef_ip: sitefIp || undefined,
         store_id: storeId || undefined,
         terminal_id: terminalId || undefined,
@@ -3525,7 +3558,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   type="text"
                   value={tlsToken}
                   onChange={(e) => setTlsToken(e.target.value)}
-                  placeholder="Ex: 1111-2222-3333-4444"
+                  placeholder="Informe o TokenRegistro fornecido pela Fiserv"
                   className="w-full border border-gray-300 rounded px-3 py-2"
                 />
                 <p className="text-xs text-gray-500 mt-1">

@@ -21,6 +21,7 @@ TEF_REPRINT_REFERENCE_TTL_SECONDS = 60 * 60 * 24 * 7
 TEF_REPRINT_REFERENCE_HISTORY_LIMIT = 12
 TEF_REPRINT_REFERENCE_MEMORY: Dict[str, list[Dict[str, Any]]] = {}
 LAST_GENERATED_CUPOM_FISCAL = ""
+INVALID_TLS_TOKEN_VALUES = {"-".join(("1111", "2222", "3333", "4444"))}
 REPRINT_LOOKUP_FIELD_IDS = {146, 515, 516, 601}
 REPRINT_FLOW_FUNCTION_IDS = {110, 112, 113, 114}
 APPROVED_REFERENCE_FUNCTION_IDS = {0, 2, 3}
@@ -34,6 +35,18 @@ PENDING_RESOLUTION_FIELD_KEYS = {
     211: "function_id_original",
     1319: "valor_original",
 }
+
+
+def _contains_invalid_tls_token(value: str | None) -> bool:
+    normalized = str(value or "")
+    return any(token in normalized for token in INVALID_TLS_TOKEN_VALUES)
+
+
+def _sanitize_tls_parameters(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized or _contains_invalid_tls_token(normalized):
+        return None
+    return normalized
 
 TEF_EVENT_LABELS: Dict[int, str] = {
     5000: "Aguardando leitura de cartao",
@@ -1067,18 +1080,21 @@ class TefService:
         return f"{settings.TEF_PARMSCLIENT_PREFIX}{';'.join(partes)}"
 
     def _resolve_session_parameters(self, session_parameters: str | None) -> str | None:
-        if session_parameters:
-            return session_parameters
-        if settings.TEF_SESSION_PARAMETERS:
-            return settings.TEF_SESSION_PARAMETERS
+        sanitized_session_parameters = _sanitize_tls_parameters(session_parameters)
+        if sanitized_session_parameters:
+            return sanitized_session_parameters
+        sanitized_default_session_parameters = _sanitize_tls_parameters(settings.TEF_SESSION_PARAMETERS)
+        if sanitized_default_session_parameters:
+            return sanitized_default_session_parameters
         parametros_adicionais = self._build_parametros_adicionais()
         return parametros_adicionais or None
 
     def _resolve_trn_init_parameters(self, function_id: int, trn_init_parameters: str | None) -> str | None:
-        if trn_init_parameters:
-            return trn_init_parameters
+        sanitized_trn_init = _sanitize_tls_parameters(trn_init_parameters)
+        if sanitized_trn_init:
+            return sanitized_trn_init
 
-        default_trn_init = settings.TEF_TRN_INIT_PARAMETERS or None
+        default_trn_init = _sanitize_tls_parameters(settings.TEF_TRN_INIT_PARAMETERS)
         if not default_trn_init:
             return None
 
