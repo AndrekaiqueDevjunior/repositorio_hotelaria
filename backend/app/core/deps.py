@@ -5,6 +5,8 @@ from prisma import Prisma
 from jose import jwt
 from datetime import datetime, timedelta
 from enum import Enum
+import os
+import secrets
 
 # Prisma client instance
 db = Prisma()
@@ -26,7 +28,7 @@ class Usuario:
 security = HTTPBearer(auto_error=False)
 
 # JWT Secret (in production, use environment variable)
-JWT_SECRET = "hotel-real-cabo-frio-secret-key"
+JWT_SECRET = os.getenv("SECRET_KEY") or f"dev-secret-{secrets.token_urlsafe(32)}"
 JWT_ALGORITHM = "HS256"
 
 

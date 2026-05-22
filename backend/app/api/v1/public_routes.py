@@ -19,6 +19,7 @@ from app.services.consulta_publica_service import ConsultaPublicaService
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
 from app.middleware.rate_limit import rate_limit_strict
+from app.core.cache import redis_lock
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -649,24 +650,25 @@ async def criar_reserva_publica(
             if not validacao_cupom.get("valido"):
                 raise HTTPException(status_code=400, detail=validacao_cupom.get("mensagem") or "Cupom inválido")
 
-        reserva_criada = await reserva_repo.create(
-            ReservaCreate(
-                cliente_id=cliente["id"],
-                quarto_numero=reserva_data.quarto_numero,
-                tipo_suite=tipo_suite,
-                checkin_previsto=checkin_dt,
-                checkout_previsto=checkout_dt,
-                valor_diaria=valor_diaria,
-                valor_total=valor_total_base,
-                num_diarias=num_diarias,
-                origem="SITE",
-                forma_pagamento=reserva_data.metodo_pagamento,
-                observacoes=reserva_data.observacoes,
-                telefone_contato=telefone_limpo,
-                email_contato=reserva_data.email
-            ),
-            notificar=not bool(cupom_codigo)
-        )
+        async with redis_lock(f"quarto:{reserva_data.quarto_numero}", timeout=10):
+            reserva_criada = await reserva_repo.create(
+                ReservaCreate(
+                    cliente_id=cliente["id"],
+                    quarto_numero=reserva_data.quarto_numero,
+                    tipo_suite=tipo_suite,
+                    checkin_previsto=checkin_dt,
+                    checkout_previsto=checkout_dt,
+                    valor_diaria=valor_diaria,
+                    valor_total=valor_total_base,
+                    num_diarias=num_diarias,
+                    origem="SITE",
+                    forma_pagamento=reserva_data.metodo_pagamento,
+                    observacoes=reserva_data.observacoes,
+                    telefone_contato=telefone_limpo,
+                    email_contato=reserva_data.email
+                ),
+                notificar=not bool(cupom_codigo)
+            )
 
         if cupom_codigo:
             try:

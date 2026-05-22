@@ -383,8 +383,8 @@ export default function Reservas() {
     }
 
     setLoading(true)
-    const checkinPrevisto = new Date(`${form.data_entrada}T15:00:00`)
-    const checkoutPrevisto = new Date(`${form.data_saida}T12:00:00`)
+    const checkinPrevisto = new Date(`${form.data_entrada}T12:00:00`)
+    const checkoutPrevisto = new Date(`${form.data_saida}T11:00:00`)
     
     const payload = {
       cliente_id: Number(form.cliente_id),

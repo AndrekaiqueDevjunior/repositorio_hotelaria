@@ -1,4 +1,5 @@
 import asyncio
+import os
 from app.core.database import get_db
 from app.core.security import hash_password
 
@@ -9,7 +10,7 @@ async def create_admin():
     # Criar usuário admin
     admin_data = {
         "email": "admin@hotel.com",
-        "senha_hash": hash_password("admin123"),
+        "senha_hash": hash_password(os.environ["ADMIN_PASSWORD"]),
         "nome": "Administrador do Sistema",
         "nome_completo": "Administrador do Sistema",
         "is_active": True,

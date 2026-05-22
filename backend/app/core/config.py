@@ -63,8 +63,8 @@ class Settings(BaseSettings):
     TEF_CNPJ_AUTOMACAO: str = os.getenv("TEF_CNPJ_AUTOMACAO", "")
     TEF_PARAMETROS_ADICIONAIS: str = os.getenv("TEF_PARAMETROS_ADICIONAIS", "")
     # Senha de supervisor para validaÃ§Ã£o do TipoCampo 500
-    TEF_SUPERVISOR_PASSWORD: str = os.getenv("TEF_SUPERVISOR_PASSWORD", os.getenv("ADMIN_PASSWORD", "admin123"))
-    TEF_AUTO_RESOLVE_PENDING: bool = os.getenv("TEF_AUTO_RESOLVE_PENDING", "false").lower() == "true"
+    TEF_SUPERVISOR_PASSWORD: str = os.getenv("TEF_SUPERVISOR_PASSWORD", os.getenv("ADMIN_PASSWORD", ""))
+    TEF_AUTO_RESOLVE_PENDING: bool = os.getenv("TEF_AUTO_RESOLVE_PENDING", "true").lower() == "true"
     TEF_AUTO_RESOLVE_PENDING_ACTION: str = os.getenv("TEF_AUTO_RESOLVE_PENDING_ACTION", "confirm").strip().lower()
 
     @property
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     SMS_TWILIO_FROM_NUMBER: str = os.getenv("SMS_TWILIO_FROM_NUMBER", "")
 
     # Admin
-    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
 
     # Redis
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")

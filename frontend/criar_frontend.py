@@ -129,7 +129,7 @@ import { api } from '@/lib/api'
 export default function Login() {
   const router = useRouter()
   const [email, setEmail] = useState('admin@hotelreal.com.br')
-  const [password, setPassword] = useState('admin123')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
 
   const handleLogin = async (e) => {

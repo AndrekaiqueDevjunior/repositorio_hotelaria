@@ -15,11 +15,14 @@ TEF_PENDING_STATUS: Dict[str, Any] = {"message": None, "detail": None, "created_
 INTERACTIVE_CONTINUE_MAX_ITERATIONS = 400
 PENDING_CONTINUE_MAX_ITERATIONS = 200
 TEF_SESSION_CACHE_PREFIX = "tef:interactive:session:"
+TEF_FINALIZED_SESSION_CACHE_PREFIX = "tef:interactive:finalized:"
+TEF_FINALIZED_SESSION_TTL_SECONDS = 60 * 60 * 24
 TEF_REPRINT_REFERENCE_CACHE_PREFIX = "tef:reprint:reference:"
 TEF_REPRINT_REFERENCE_GLOBAL_KEY = f"{TEF_REPRINT_REFERENCE_CACHE_PREFIX}global"
 TEF_REPRINT_REFERENCE_TTL_SECONDS = 60 * 60 * 24 * 7
 TEF_REPRINT_REFERENCE_HISTORY_LIMIT = 12
 TEF_REPRINT_REFERENCE_MEMORY: Dict[str, list[Dict[str, Any]]] = {}
+TEF_FINALIZED_SESSIONS: Dict[str, Dict[str, Any]] = {}
 LAST_GENERATED_CUPOM_FISCAL = ""
 INVALID_TLS_TOKEN_VALUES = {"-".join(("1111", "2222", "3333", "4444"))}
 REPRINT_LOOKUP_FIELD_IDS = {146, 515, 516, 601}
@@ -791,6 +794,9 @@ class TefService:
     def _session_cache_key(self, session_id: str) -> str:
         return f"{TEF_SESSION_CACHE_PREFIX}{session_id}"
 
+    def _finalized_session_cache_key(self, session_id: str) -> str:
+        return f"{TEF_FINALIZED_SESSION_CACHE_PREFIX}{session_id}"
+
     def _session_cache_ttl(self) -> int:
         return max(int(self.session_timeout) * 3, 300)
 
@@ -848,6 +854,34 @@ class TefService:
         TEF_INTERACTIVE_SESSIONS.pop(session_id, None)
         try:
             await cache.delete(self._session_cache_key(session_id))
+        except Exception:
+            pass
+
+    async def _get_finalized_session(self, session_id: str) -> Dict[str, Any] | None:
+        finalized = TEF_FINALIZED_SESSIONS.get(session_id)
+        if finalized:
+            return dict(finalized)
+
+        try:
+            cached = await cache.get(self._finalized_session_cache_key(session_id))
+        except Exception:
+            cached = None
+
+        if isinstance(cached, dict):
+            TEF_FINALIZED_SESSIONS[session_id] = dict(cached)
+            return dict(cached)
+
+        return None
+
+    async def _persist_finalized_session(self, session_id: str, result: Dict[str, Any]) -> None:
+        finalized = dict(result or {})
+        TEF_FINALIZED_SESSIONS[session_id] = finalized
+        try:
+            await cache.set(
+                self._finalized_session_cache_key(session_id),
+                finalized,
+                ttl=TEF_FINALIZED_SESSION_TTL_SECONDS,
+            )
         except Exception:
             pass
 
@@ -1505,6 +1539,23 @@ class TefService:
         defer_finish: bool = False,
         session_id: str | None = None,
     ) -> Dict[str, Any]:
+        if session_id:
+            existing_session = await self._get_interactive_session(session_id)
+            if existing_session and not self._is_session_expired(existing_session):
+                last_response = existing_session.get("last_response")
+                if isinstance(last_response, dict):
+                    replay = self._build_interactive_payload(session_id, last_response)
+                    replay["idempotent_replay"] = True
+                    return replay
+                replay = await self.continuar_fluxo_interativo(session_id, continue_flag=0, data="")
+                replay["idempotent_replay"] = True
+                return replay
+
+            finalized_session = await self._get_finalized_session(session_id)
+            if finalized_session:
+                finalized_session["idempotent_replay"] = True
+                return finalized_session
+
         if function_id in (2, 3, 122) and valor is None:
             return {
                 "success": False,
@@ -1794,6 +1845,11 @@ class TefService:
         confirm: bool,
         param_adic: str | None = None,
     ) -> Dict[str, Any]:
+        finalized_session = await self._get_finalized_session(session_id)
+        if finalized_session:
+            finalized_session["idempotent_replay"] = True
+            return finalized_session
+
         session = await self._get_interactive_session(session_id)
         if not session:
             return {
@@ -1871,9 +1927,7 @@ class TefService:
         if aprovado:
             await self._store_approved_transaction_reference(session)
 
-        await self._drop_session(session_id)
-
-        return {
+        result = {
             "success": aprovado,
             "finalizado": True,
             "aprovado": aprovado,
@@ -1902,6 +1956,9 @@ class TefService:
             "message": finish.get("serviceMessage") or ("Transacao aprovada" if aprovado else "Transacao nao aprovada"),
             "detail": finish,
         }
+        await self._persist_finalized_session(session_id, result)
+        await self._drop_session(session_id)
+        return result
 
     async def cancelar_fluxo_interativo(self, session_id: str) -> Dict[str, Any]:
         session = await self._get_interactive_session(session_id)

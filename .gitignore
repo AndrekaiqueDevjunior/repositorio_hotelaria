@@ -37,11 +37,25 @@ venv.bak/
 *~
 .DS_Store
 
-# Environment variables
+# Environment variables and local secrets
 .env
-.env.local
-.env.*.local
-.env.production
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.*.example
+!env.docker.example
+!frontend/.env.example
+!frontend/.env.*.example
+!backend/.env.example
+!backend/.env.*.example
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+.env.production.txt
+.env.backup*
+*.env.backup*
 
 # Database
 *.db
@@ -51,6 +65,8 @@ venv.bak/
 # Logs
 *.log
 logs/
+*cookies.txt
+*headers.txt
 
 # Next.js
 .next/
@@ -149,6 +165,8 @@ static/media/
 
 # Backups
 *.backup
+*.backup.*
+*_backup.py
 backup/
 backups/
 

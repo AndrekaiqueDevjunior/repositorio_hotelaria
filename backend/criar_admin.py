@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Script para criar usuário admin padrão"""
 import asyncio
+import os
 from app.core.database import get_db, connect_db, disconnect_db
 from app.repositories.funcionario_repo import FuncionarioRepository
 from app.schemas.funcionario_schema import FuncionarioCreate
@@ -12,7 +13,9 @@ async def criar_admin():
     repo = FuncionarioRepository(db)
     
     email = "admin@hotelreal.com.br"
-    senha = "admin123"
+    senha = os.environ.get("ADMIN_PASSWORD")
+    if not senha:
+        raise RuntimeError("Defina ADMIN_PASSWORD no ambiente antes de criar o admin.")
     
     try:
         # Verificar se já existe

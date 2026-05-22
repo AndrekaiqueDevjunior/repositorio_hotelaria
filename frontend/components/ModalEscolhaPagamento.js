@@ -1,8 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { toast } from 'react-toastify'
 import { api } from '../lib/api'
+import {
+  TEF_PENDENCIAS_CHECK_EVENT,
+  hasTefPendenciasStartupCheck,
+  markTefPendenciasChecked
+} from '../services/tefPendencias'
 import {
   NFPAG_COLLECTION_LABELS,
   NFPAG_FIELD_OPTIONS,
@@ -38,6 +44,13 @@ const TEF_IDLE_TIMEOUT_MS = Math.max(resolveTimeoutMs(process.env.NEXT_PUBLIC_TE
 const TEF_IDLE_TIMEOUT_SECONDS = Math.max(Math.round(TEF_IDLE_TIMEOUT_MS / 1000), 60)
 const TEF_REQUEST_TIMEOUT_MS = resolveTimeoutMs(process.env.NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS, 180000)
 const TEF_PROCESSING_POLL_DELAY_MS = 800
+
+const gerarTefIdempotencyKey = (reservaId) => {
+  const random = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `tef-${reservaId || 'reserva'}-${random}`
+}
 
 const defaultValorPrompt = (prompt) => {
   if (Number(prompt?.command_id) === 22) {
@@ -239,6 +252,7 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
   const tefSessionRef = useRef(null)
   const tefStartRequestedRef = useRef(false)
   const tefIdleTimerRef = useRef(null)
+  const tefIdempotencyKeyRef = useRef(null)
 
   const [showTefFlow, setShowTefFlow] = useState(false)
   const [tefSessionId, setTefSessionId] = useState(null)
@@ -249,6 +263,8 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
   const [tefErro, setTefErro] = useState('')
   const [tefResultado, setTefResultado] = useState(null)
   const [pendenciaStatus, setPendenciaStatus] = useState('')
+  const [tefPendenciasVerificadas, setTefPendenciasVerificadas] = useState(false)
+  const [tefPendenciasProcessando, setTefPendenciasProcessando] = useState(false)
   const [cupomDialog, setCupomDialog] = useState({ open: false, titulo: '', conteudo: '' })
   const [cupomQueue, setCupomQueue] = useState([])
   const [comprovanteMetodo, setComprovanteMetodo] = useState('')
@@ -335,6 +351,7 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
     }
     tefSessionRef.current = null
     tefStartRequestedRef.current = false
+    tefIdempotencyKeyRef.current = null
     setTefSessionId(null)
     setTefPrompt(null)
     setTefInput('')
@@ -361,6 +378,7 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
 
   const abrirFluxoTef = async () => {
     resetTefFlow()
+    tefIdempotencyKeyRef.current = gerarTefIdempotencyKey(reserva?.id)
     setShowTefFlow(true)
     tefStartRequestedRef.current = true
     await iniciarFluxoTef()
@@ -629,6 +647,19 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
   }, [tefResultado])
 
   useEffect(() => {
+    const atualizarStatusPendencias = () => {
+      setTefPendenciasVerificadas(hasTefPendenciasStartupCheck())
+    }
+
+    atualizarStatusPendencias()
+    window.addEventListener(TEF_PENDENCIAS_CHECK_EVENT, atualizarStatusPendencias)
+
+    return () => {
+      window.removeEventListener(TEF_PENDENCIAS_CHECK_EVENT, atualizarStatusPendencias)
+    }
+  }, [])
+
+  useEffect(() => {
     const buscarPendencias = async () => {
       if (!showTefFlow) return
       try {
@@ -643,6 +674,39 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
     }
     buscarPendencias()
   }, [showTefFlow])
+
+  const processarPendenciasAntesDaVenda = async () => {
+    setTefPendenciasProcessando(true)
+    setTefErro('')
+
+    try {
+      const res = await api.post('/pagamentos/tef/pendencias', {}, { timeout: TEF_REQUEST_TIMEOUT_MS })
+      const message = res.data?.message || 'Tratamento de pendencias TEF executado.'
+      setPendenciaStatus(message)
+
+      if (res.data?.success === false) {
+        setTefErro(message)
+        toast.warning(message)
+        return false
+      }
+
+      markTefPendenciasChecked({
+        source: 'payment_modal',
+        result: res.data
+      })
+      setTefPendenciasVerificadas(true)
+      toast.success(message)
+      return true
+    } catch (err) {
+      const message = err.response?.data?.detail || 'Falha ao tratar pendencias TEF.'
+      setPendenciaStatus(message)
+      setTefErro(message)
+      toast.error(message)
+      return false
+    } finally {
+      setTefPendenciasProcessando(false)
+    }
+  }
 
   useEffect(() => {
     if (!tefResultado || comprovanteMetodo !== 'impressao') return
@@ -762,11 +826,20 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
       setTefErro('')
       setTefProcessando(true)
+      if (!tefIdempotencyKeyRef.current) {
+        tefIdempotencyKeyRef.current = gerarTefIdempotencyKey(reserva.id)
+      }
+      const tefIdempotencyKey = tefIdempotencyKeyRef.current
 
       const res = await api.post('/pagamentos/tef/iniciar', {
         reserva_id: parseInt(reserva.id, 10),
-        valor: valorReserva
-      }, { timeout: TEF_REQUEST_TIMEOUT_MS })
+        valor: valorReserva,
+        session_id: tefIdempotencyKey,
+        idempotency_key: tefIdempotencyKey
+      }, {
+        timeout: TEF_REQUEST_TIMEOUT_MS,
+        headers: { 'Idempotency-Key': tefIdempotencyKey }
+      })
 
       aplicarRespostaInterativa(res.data)
     } catch (err) {
@@ -839,15 +912,23 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       setTefErro('')
       setComprovanteErro('')
       setTefProcessando(true)
+      if (!tefIdempotencyKeyRef.current) {
+        tefIdempotencyKeyRef.current = sessionIdAtual
+      }
+      const tefIdempotencyKey = tefIdempotencyKeyRef.current
 
       const res = await api.post('/pagamentos/tef/finalizar', {
         session_id: sessionIdAtual,
         reserva_id: parseInt(reserva.id, 10),
         valor: valorReserva,
         confirm: Boolean(tefResultado?.aprovado),
+        idempotency_key: tefIdempotencyKey,
         numero_pagamento_nfpag: tefResultado?.nfpag?.numero_pagamento || undefined,
         nfpag_raw: nfpagRaw || undefined
-      }, { timeout: TEF_REQUEST_TIMEOUT_MS })
+      }, {
+        timeout: TEF_REQUEST_TIMEOUT_MS,
+        headers: { 'Idempotency-Key': tefIdempotencyKey }
+      })
 
       if (tefIdleTimerRef.current) {
         clearTimeout(tefIdleTimerRef.current)
@@ -912,6 +993,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     }
 
     if (opcao.action === 'tef') {
+      if (!tefPendenciasVerificadas) {
+        const message = 'Antes de iniciar uma venda TEF, processe o tratamento de pendencias da CliSiTef.'
+        setPendenciaStatus(message)
+        toast.warning(message)
+        return
+      }
       await abrirFluxoTef()
       return
     }
@@ -1767,6 +1854,34 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
           <h3 className="text-lg font-semibold text-gray-800 mb-4">
             Selecione como deseja pagar:
           </h3>
+
+          {!tefPendenciasVerificadas && (
+            <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="font-semibold">Tratamento TEF pendente nesta sessao</p>
+                  <p className="mt-1 text-sm">
+                    Processe as pendencias da CliSiTef antes de iniciar uma nova venda TEF.
+                  </p>
+                  {pendenciaStatus && (
+                    <p className="mt-2 text-sm font-medium">{pendenciaStatus}</p>
+                  )}
+                  {tefErro && (
+                    <p className="mt-2 text-sm font-medium text-red-700">{tefErro}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={processarPendenciasAntesDaVenda}
+                  disabled={tefPendenciasProcessando}
+                  className="inline-flex items-center justify-center gap-2 rounded bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-4 w-4 ${tefPendenciasProcessando ? 'animate-spin' : ''}`} aria-hidden="true" />
+                  {tefPendenciasProcessando ? 'Processando...' : 'Processar pendencias'}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-4">
             {opcoesPagamento.map((opcao) => (

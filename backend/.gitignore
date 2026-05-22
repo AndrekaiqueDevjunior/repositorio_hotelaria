@@ -37,10 +37,13 @@ venv.bak/
 *~
 .DS_Store
 
-# Environment variables
+# Environment variables and local secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
+*.env
+*.env.*
 
 # Database
 *.db
@@ -50,6 +53,13 @@ venv.bak/
 # Logs
 *.log
 logs/
+*cookies.txt
+*headers.txt
+
+# Backups
+*.backup
+*.backup.*
+*_backup.py
 
 # Next.js
 .next/

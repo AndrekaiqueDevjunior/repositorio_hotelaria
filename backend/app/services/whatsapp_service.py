@@ -7,8 +7,14 @@ import os
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
-from twilio.base.exceptions import TwilioRestException
-from twilio.rest import Client
+try:
+    from twilio.base.exceptions import TwilioRestException
+    from twilio.rest import Client
+except ImportError:
+    class TwilioRestException(Exception):
+        pass
+
+    Client = None
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,9 @@ class WhatsAppService:
 
         if not self.enabled:
             logger.warning("Twilio WhatsApp desabilitado por configuracao")
+            self.client = None
+        elif Client is None:
+            logger.warning("Twilio nao instalado. WhatsApp desabilitado.")
             self.client = None
         elif not self.account_sid or not self.auth_token:
             logger.warning("Twilio nao configurado. Defina TWILIO_ACCOUNT_SID e TWILIO_AUTH_TOKEN.")

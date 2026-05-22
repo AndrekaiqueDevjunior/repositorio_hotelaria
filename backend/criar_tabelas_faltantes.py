@@ -13,23 +13,23 @@ from psycopg2.extras import RealDictCursor
 
 def criar_tabelas_faltantes():
     """Cria todas as tabelas que estão nos models mas não existem no BD"""
-    
+
     print('🏗️  Criando Tabelas Faltantes no Banco de Dados')
     print('=' * 60)
-    
+
     try:
         # Conectar ao PostgreSQL
         conn = psycopg2.connect(
             host="postgres",
             database="hotel_cabo_frio",
             user="postgres",
-            password="postgres",
+            password=os.environ.get("DB_PASSWORD"),
             cursor_factory=RealDictCursor
         )
         cursor = conn.cursor()
-        
+
         print('✅ Conectado ao PostgreSQL')
-        
+
         # 1. Tabela tipos_suite
         print('\n📁 Criando tabela tipos_suite...')
         cursor.execute("""
@@ -44,7 +44,7 @@ def criar_tabelas_faltantes():
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """)
-        
+
         # 2. Tabela quartos
         print('📁 Criando tabela quartos...')
         cursor.execute("""
@@ -58,7 +58,7 @@ def criar_tabelas_faltantes():
                 FOREIGN KEY (tipo_suite_id) REFERENCES tipos_suite(id)
             )
         """)
-        
+
         # 3. Tabela reservas
         print('📁 Criando tabela reservas...')
         cursor.execute("""
@@ -87,7 +87,7 @@ def criar_tabelas_faltantes():
                 FOREIGN KEY (atualizado_por_usuario_id) REFERENCES usuarios(id)
             )
         """)
-        
+
         # 4. Tabela pagamentos
         print('📁 Criando tabela pagamentos...')
         cursor.execute("""
@@ -109,7 +109,7 @@ def criar_tabelas_faltantes():
                 FOREIGN KEY (cliente_id) REFERENCES clientes(id)
             )
         """)
-        
+
         # 5. Tabela hospedes_adicionais
         print('📁 Criando tabela hospedes_adicionais...')
         cursor.execute("""
@@ -124,7 +124,7 @@ def criar_tabelas_faltantes():
                 FOREIGN KEY (reserva_id) REFERENCES reservas(id) ON DELETE CASCADE
             )
         """)
-        
+
         # 6. Tabela itens_cobranca
         print('📁 Criando tabela itens_cobranca...')
         cursor.execute("""
@@ -142,7 +142,7 @@ def criar_tabelas_faltantes():
                 FOREIGN KEY (reserva_id) REFERENCES reservas(id) ON DELETE CASCADE
             )
         """)
-        
+
         # 7. Tabela auditorias
         print('📁 Criando tabela auditorias...')
         cursor.execute("""
@@ -160,7 +160,7 @@ def criar_tabelas_faltantes():
                 FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
             )
         """)
-        
+
         # 8. Tabela antifraude_operacoes
         print('📁 Criando tabela antifraude_operacoes...')
         cursor.execute("""
@@ -176,10 +176,10 @@ def criar_tabelas_faltantes():
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """)
-        
+
         # Criar índices importantes
         print('\n🔍 Criando índices de performance...')
-        
+
         indices = [
             ("idx_reservas_cliente_id", "reservas", "cliente_id"),
             ("idx_reservas_quarto_id", "reservas", "quarto_id"),
@@ -197,34 +197,34 @@ def criar_tabelas_faltantes():
             ("idx_antifraude_status", "antifraude_operacoes", "status"),
             ("idx_antifraude_created_at", "antifraude_operacoes", "created_at")
         ]
-        
+
         for nome_idx, tabela, coluna in indices:
             cursor.execute(f"""
-                CREATE INDEX IF NOT EXISTS {nome_idx} 
+                CREATE INDEX IF NOT EXISTS {nome_idx}
                 ON {tabela}({coluna})
             """)
-        
+
         conn.commit()
         print('✅ Índices criados com sucesso!')
-        
+
         # 9. Inserir dados iniciais
         print('\n📝 Inserindo dados iniciais...')
-        
+
         # Tipos de suíte
         cursor.execute("""
             INSERT INTO tipos_suite (nome, descricao, capacidade, pontos_por_par)
-            VALUES 
+            VALUES
                 ('Suíte Standard', 'Suíte confortável com vista para o mar', 2, 50),
                 ('Suíte Deluxe', 'Suíte ampla com varanda', 2, 75),
                 ('Suíte Premium', 'Suíte de luxo com sacada privativa', 3, 100),
                 ('Suíte Familiar', 'Suíte espaçosa para famílias', 4, 125)
             ON CONFLICT DO NOTHING
         """)
-        
+
         # Quartos
         cursor.execute("""
             INSERT INTO quartos (numero, tipo_suite_id, status)
-            VALUES 
+            VALUES
                 ('101', 1, 'ATIVO'),
                 ('102', 1, 'ATIVO'),
                 ('201', 2, 'ATIVO'),
@@ -233,39 +233,39 @@ def criar_tabelas_faltantes():
                 ('401', 4, 'ATIVO')
             ON CONFLICT (numero) DO NOTHING
         """)
-        
+
         conn.commit()
         print('✅ Dados iniciais inseridos!')
-        
+
         # 10. Verificação final
         print('\n🔍 Verificação final das tabelas...')
-        
+
         cursor.execute("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public' 
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
             AND table_type = 'BASE TABLE'
             ORDER BY table_name
         """)
-        
+
         tabelas = cursor.fetchall()
         print(f'\n📊 Total de tabelas criadas: {len(tabelas)}')
-        
+
         for tabela in tabelas:
             cursor.execute(f'SELECT COUNT(*) as total FROM {tabela["table_name"]}')
             total = cursor.fetchone()["total"]
             print(f'   📁 {tabela["table_name"]}: {total} registros')
-        
+
         print('\n🎉 Todas as tabelas foram criadas com sucesso!')
         print('✅ Banco de dados 100% estruturado!')
-        
+
     except Exception as e:
         print(f'\n❌ Erro: {str(e)}')
         import traceback
         traceback.print_exc()
         if 'conn' in locals():
             conn.rollback()
-        
+
     finally:
         if 'conn' in locals():
             conn.close()

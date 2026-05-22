@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import requests
 
 # Base URL
@@ -8,7 +9,10 @@ print('=== VERIFICANDO RESERVAS EXISTENTES ===')
 print()
 
 # 1. Fazer Login
-r = requests.post(f'{base_url}/login', json={'email': 'admin@hotelreal.com.br', 'password': 'admin123'})
+admin_password = os.environ.get('ADMIN_PASSWORD')
+if not admin_password:
+    raise RuntimeError('Defina ADMIN_PASSWORD no ambiente antes de executar este script.')
+r = requests.post(f'{base_url}/login', json={'email': 'admin@hotelreal.com.br', 'password': admin_password})
 cookies = r.cookies.get_dict()
 
 if r.status_code == 200:

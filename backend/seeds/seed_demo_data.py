@@ -8,6 +8,7 @@ Uso:
     python seed_demo_data.py
 """
 import asyncio
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from pathlib import Path
@@ -67,7 +68,7 @@ DEMO_FUNCIONARIOS = [
         "email": "admin@hotelreal.com.br",
         "perfil": "ADMIN",
         "status": "ATIVO",
-        "senha": "admin123",
+        "senha": os.environ.get("DEMO_ADMIN_PASSWORD", "demo-admin-local-only"),
     },
     {
         "nome": "Fernanda Recepção",

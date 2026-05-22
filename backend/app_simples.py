@@ -6,7 +6,7 @@
 # =============================================================================
 # This monolithic app has been migrated to modular structure in app/
 # Migration completed: 2025-11-23
-# 
+#
 # NEW LOCATION:
 # - app/main.py (entry point)
 # - app/api/v1/* (all routes)
@@ -14,7 +14,7 @@
 # - app/repositories/* (data access)
 # - app/schemas/* (pydantic models)
 # - app/core/* (configuration)
-# 
+#
 # DO NOT USE THIS FILE - For reference only
 # =============================================================================
 
@@ -23,11 +23,14 @@ import uuid
 import asyncio
 import requests
 import httpx
+import secrets
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+DEV_FALLBACK_JWT_TOKEN = f"dev-{secrets.token_urlsafe(24)}"
 from pydantic import BaseModel, EmailStr, Field, validator
 from prisma import Prisma
 from contextlib import asynccontextmanager
@@ -56,7 +59,7 @@ CIELO_SANDBOX_URL = os.getenv("CIELO_SANDBOX_URL")
 CIELO_MODE = os.getenv("CIELO_MODE", "sandbox")
 
 # Senha de administrador para acesso à aba Cielo Real
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")  # Valor padrão, pode ser alterado no .env
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 # Cliente Cielo API - Integração REAL com API Oficial
 class CieloAPI:
@@ -69,7 +72,7 @@ class CieloAPI:
         self.merchant_id = os.getenv("CIELO_MERCHANT_ID")
         self.merchant_key = os.getenv("CIELO_MERCHANT_KEY")
         self.timeout = int(os.getenv("CIELO_TIMEOUT_MS", "8000")) // 1000
-        
+
         # URLs oficiais da API Cielo
         if self.mode == "sandbox":
             self.api_url = "https://apisandbox.cieloecommerce.cielo.com.br"
@@ -77,20 +80,20 @@ class CieloAPI:
         else:
             self.api_url = "https://api.cieloecommerce.cielo.com.br"
             self.query_url = "https://apiquery.cieloecommerce.cielo.com.br"
-        
+
         self.headers = {
             "MerchantId": self.merchant_id or "",
             "MerchantKey": self.merchant_key or "",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-        
+
         self.credenciais_ok = bool(self.merchant_id and self.merchant_key)
         print(f"[CIELO] Modo: {self.mode.upper()}")
         print(f"[CIELO] MerchantId: {'OK' if self.merchant_id else 'NAO CONFIGURADO'}")
         print(f"[CIELO] MerchantKey: {'OK' if self.merchant_key else 'NAO CONFIGURADO'}")
         print(f"[CIELO] Query URL: {self.query_url}")
-    
+
     async def consultar_transacao_real(self, payment_id: str):
         """
         Consulta uma transação REAL na API Cielo pelo PaymentId
@@ -98,16 +101,16 @@ class CieloAPI:
         """
         if not self.credenciais_ok:
             return {"success": False, "error": "Credenciais Cielo não configuradas no .env"}
-        
+
         try:
             url = f"{self.query_url}/1/sales/{payment_id}"
             print(f"[CIELO API] GET {url}")
-            
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, headers=self.headers)
-                
+
                 print(f"[CIELO API] Status: {response.status_code}")
-                
+
                 if response.status_code == 200:
                     data = response.json()
                     return {
@@ -128,7 +131,7 @@ class CieloAPI:
         except Exception as e:
             print(f"[CIELO API] Erro: {e}")
             return {"success": False, "error": str(e)}
-    
+
     async def consultar_por_order_id(self, merchant_order_id: str):
         """
         Consulta transações por MerchantOrderId
@@ -136,14 +139,14 @@ class CieloAPI:
         """
         if not self.credenciais_ok:
             return {"success": False, "error": "Credenciais Cielo não configuradas"}
-        
+
         try:
             url = f"{self.query_url}/1/sales?merchantOrderId={merchant_order_id}"
             print(f"[CIELO API] GET {url}")
-            
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, headers=self.headers)
-                
+
                 if response.status_code == 200:
                     data = response.json()
                     return {
@@ -155,7 +158,7 @@ class CieloAPI:
                     return {"success": False, "error": f"Erro: {response.status_code}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+
     def consultar_vendas(self, data_inicio=None, data_fim=None, page=1, page_size=20):
         """
         IMPORTANTE: A API Cielo E-commerce NÃO possui endpoint de listagem de vendas.
@@ -170,7 +173,7 @@ class CieloAPI:
             "data": [],
             "pagination": {"page": page, "page_size": page_size, "total": 0}
         }
-    
+
     def consultar_pagamento(self, payment_id):
         """Consulta pagamento específico (método síncrono para compatibilidade)"""
         try:
@@ -182,7 +185,7 @@ class CieloAPI:
                     "data": response.json() if response.status_code == 200 else None,
                     "status_code": response.status_code
                 }
-                
+
         except Exception as e:
             return {
                 "success": False,
@@ -221,13 +224,13 @@ rate_limit_store = defaultdict(list)
 def check_rate_limit(ip: str, max_requests: int = 100, window_seconds: int = 3600):
     now = time.time()
     requests_list = rate_limit_store[ip]
-    
+
     # Remover requisições antigas
     requests_list[:] = [req_time for req_time in requests_list if now - req_time < window_seconds]
-    
+
     if len(requests_list) >= max_requests:
         return False
-    
+
     requests_list.append(now)
     return True
 
@@ -237,22 +240,22 @@ def check_rate_limit_redis(key: str, max_requests: int = 100, window_seconds: in
     try:
         current_time = int(time.time())
         window_start = current_time - window_seconds
-        
+
         # Remove old entries
         redis_client.zremrangebyscore(key, 0, window_start)
-        
+
         # Count current requests
         current_requests = redis_client.zcard(key)
-        
+
         if current_requests >= max_requests:
             return False
-        
+
         # Add current request
         redis_client.zadd(key, {str(current_time): current_time})
         redis_client.expire(key, window_seconds)
-        
+
         return True
-        
+
     except Exception as e:
         print(f"[REDIS] Rate limit fallback due to error: {e}")
         # Fallback to in-memory rate limiting
@@ -267,12 +270,12 @@ def cache_result(key_prefix: str, ttl: int = 300):
             try:
                 # Generate cache key
                 cache_key = f"hotel:{key_prefix}:{hash(str(args) + str(kwargs))}"
-                
+
                 # Try to get from cache
                 cached_result = redis_client.get(cache_key)
                 if cached_result:
                     return pickle.loads(cached_result)
-                
+
                 # Execute function and cache result
                 result = await func(*args, **kwargs)
                 redis_client.setex(
@@ -280,14 +283,14 @@ def cache_result(key_prefix: str, ttl: int = 300):
                     ttl,
                     pickle.dumps(result)
                 )
-                
+
                 return result
-                
+
             except Exception as e:
                 print(f"[REDIS] Cache fallback due to error: {e}")
                 # Fallback to direct function execution
                 return await func(*args, **kwargs)
-        
+
         return wrapper
     return decorator
 
@@ -296,11 +299,11 @@ def invalidate_cache_pattern(pattern: str):
     try:
         search_pattern = f"hotel:{pattern}:*"
         keys = redis_client.keys(search_pattern)
-        
+
         if keys:
             redis_client.delete(*keys)
             print(f"[REDIS] Invalidated {len(keys)} cache keys for pattern: {pattern}")
-        
+
     except Exception as e:
         print(f"[REDIS] Cache invalidation error: {e}")
         # Continue silently - cache will expire naturally
@@ -336,21 +339,21 @@ def enviar_email_confirmacao_reserva(self, reserva_id: int, cliente_email: str, 
     """Envia email de confirmação de reserva"""
     try:
         print(f"[CELERY] Enviando email confirmação reserva {reserva_id} para {cliente_email}")
-        
+
         # Simular envio de email (em produção usar SendGrid, SES, etc.)
         import time
         time.sleep(2)  # Simula tempo de envio
-        
+
         # Em produção, aqui seria a integração real com serviço de email
         mensagem = {
             "para": cliente_email,
             "assunto": f"Confirmação de Reserva - Hotel Real Cabo Frio #{reserva_id}",
             "conteudo": f"Prezado(a) {cliente_nome},\n\nSua reserva foi confirmada com sucesso!\n\nCódigo: {reserva_id}\n\nAguardamos sua visita!"
         }
-        
+
         print(f"[CELERY] Email enviado com sucesso: {mensagem}")
         return {"status": "enviado", "reserva_id": reserva_id}
-        
+
     except Exception as exc:
         print(f"[CELERY] Erro ao enviar email: {exc}")
         # Retry com exponential backoff
@@ -361,19 +364,19 @@ def enviar_email_lembrete_checkin(self, reserva_id: int, cliente_email: str, cli
     """Envia email de lembrete de check-in"""
     try:
         print(f"[CELERY] Enviando lembrete check-in reserva {reserva_id} para {cliente_email}")
-        
+
         import time
         time.sleep(1)
-        
+
         mensagem = {
             "para": cliente_email,
             "assunto": f"Lembrete de Check-in - Hotel Real Cabo Frio",
             "conteudo": f"Prezado(a) {cliente_nome},\n\nLembrete: Seu check-in é amanhã ({data_checkin}).\n\nCheck-in: 14:00\n\nAguardamos você!"
         }
-        
+
         print(f"[CELERY] Lembrete enviado: {mensagem}")
         return {"status": "enviado", "reserva_id": reserva_id}
-        
+
     except Exception as exc:
         print(f"[CELERY] Erro ao enviar lembrete: {exc}")
         raise self.retry(countdown=60 * (2 ** self.request.retries))
@@ -383,24 +386,24 @@ def processar_pontos_checkout(self, reserva_id: int, cliente_id: int, pontos_gan
     """Processa pontos de fidelidade pós-checkout"""
     try:
         print(f"[CELERY] Processando {pontos_ganhos} pontos para cliente {cliente_id} da reserva {reserva_id}")
-        
+
         # Invalidar cache do cliente
         invalidate_cache_pattern(f"pontos:cliente:{cliente_id}")
-        
+
         # Simular processamento
         import time
         time.sleep(1)
-        
+
         # Em produção, aqui seria a lógica real de crédito de pontos
         print(f"[CELERY] {pontos_ganhos} pontos creditados com sucesso")
-        
+
         return {
             "status": "processado",
             "reserva_id": reserva_id,
             "cliente_id": cliente_id,
             "pontos_creditados": pontos_ganhos
         }
-        
+
     except Exception as exc:
         print(f"[CELERY] Erro ao processar pontos: {exc}")
         raise self.retry(countdown=60 * (2 ** self.request.retries))
@@ -410,11 +413,11 @@ def gerar_relatorio_mensal(self, mes: int, ano: int):
     """Gera relatório mensal de ocupação e receita"""
     try:
         print(f"[CELERY] Gerando relatório mensal {mes}/{ano}")
-        
+
         # Simular geração de relatório
         import time
         time.sleep(5)  # Relatório demorado
-        
+
         # Em produção, buscar dados reais e gerar PDF/Excel
         relatorio = {
             "mes": mes,
@@ -425,10 +428,10 @@ def gerar_relatorio_mensal(self, mes: int, ano: int):
             "pontos_distribuidos": 2300,
             "gerado_em": datetime.now().isoformat()
         }
-        
+
         print(f"[CELERY] Relatório gerado: {relatorio}")
         return relatorio
-        
+
     except Exception as exc:
         print(f"[CELERY] Erro ao gerar relatório: {exc}")
         raise self.retry(countdown=60 * (2 ** self.request.retries))
@@ -438,15 +441,15 @@ def limpar_logs_antigos(self):
     """Limpa logs antigos (task agendada)"""
     try:
         print(f"[CELERY] Limpando logs antigos")
-        
+
         # Simular limpeza
         import time
         time.sleep(2)
-        
+
         # Em produção, limpar arquivos de log com mais de 30 dias
         print(f"[CELERY] Logs antigos limpos com sucesso")
         return {"status": "limpo", "timestamp": datetime.now().isoformat()}
-        
+
     except Exception as exc:
         print(f"[CELERY] Erro ao limpar logs: {exc}")
         raise self.retry(countdown=60 * (2 ** self.request.retries))
@@ -456,11 +459,11 @@ def analisar_risco_antifraude_async(self, pagamento_id: int):
     """Análise assíncrona de risco antifraude"""
     try:
         print(f"[CELERY] Analisando risco antifraude para pagamento {pagamento_id}")
-        
+
         # Simular análise complexa
         import time
         time.sleep(3)
-        
+
         # Em produção, executar regras complexas de antifraude
         risco_calculado = {
             "pagamento_id": pagamento_id,
@@ -469,10 +472,10 @@ def analisar_risco_antifraude_async(self, pagamento_id: int):
             "fatores": ["Cliente regular", "Valor dentro do padrão"],
             "analise_em": datetime.now().isoformat()
         }
-        
+
         print(f"[CELERY] Análise concluída: {risco_calculado}")
         return risco_calculado
-        
+
     except Exception as exc:
         print(f"[CELERY] Erro na análise antifraude: {exc}")
         raise self.retry(countdown=60 * (2 ** self.request.retries))
@@ -506,7 +509,7 @@ app.add_middleware(
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
-    
+
     # Headers de segurança
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -515,14 +518,14 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    
+
     return response
 
 # Rate Limiting Middleware (Redis-based) - Temporarily disabled
 # @app.middleware("http")
 # async def rate_limit_middleware(request: Request, call_next):
 #     client_ip = request.client.host
-#     
+#
 #     # Rate limit mais restritivo para endpoints sensíveis
 #     if "/api/v1/auth/login" in request.url.path or "/api/v1/auth/admin/verify" in request.url.path:
 #         if not check_rate_limit_redis(f"login:{client_ip}", max_requests=10, window_seconds=300):
@@ -538,35 +541,35 @@ async def add_security_headers(request: Request, call_next):
 #                 detail="Rate limit exceeded. Please try again later.",
 #                 headers={"Retry-After": "3600"}
 #             )
-#     
+#
 #     return await call_next(request)
 
 # Logging de Segurança
 @app.middleware("http")
 async def security_logging(request: Request, call_next):
     start_time = time.time()
-    
+
     # Log de requisição
     client_ip = request.client.host
     method = request.method
     path = request.url.path
     user_agent = request.headers.get("user-agent", "Unknown")
-    
+
     print(f"[SECURITY] {method} {path} from {client_ip} - {user_agent[:50]}")
-    
+
     response = await call_next(request)
-    
+
     # Log de resposta
     process_time = time.time() - start_time
     status_code = response.status_code
-    
+
     # Log de eventos suspeitos
     if status_code >= 400:
         print(f"[SECURITY ALERT] {method} {path} - Status: {status_code} - IP: {client_ip}")
-    
+
     if process_time > 5.0:
         print(f"[SECURITY] Slow request: {method} {path} - {process_time:.2f}s")
-    
+
     return response
 
 load_dotenv()
@@ -842,23 +845,23 @@ def classificar_perfil_risco(cliente) -> str:
     total_reservas = cliente.totalReservas or 0
     total_gasto = cliente.totalGasto or 0
     nivel_fidelidade = cliente.nivelFidelidade or 0
-    
+
     if total_reservas == 0:
         risco_score += 30
     elif total_reservas < 3:
         risco_score += 15
-    
+
     if total_gasto > 50000:
         risco_score += 20
     elif total_gasto > 20000:
         risco_score += 10
-    
+
     if nivel_fidelidade < 2:
         risco_score += 15
-    
+
     if not cliente.ultimaVisita or (datetime.now() - cliente.ultimaVisita).days > 365:
         risco_score += 20
-    
+
     if risco_score >= 60:
         return "ALTO"
     elif risco_score >= 30:
@@ -938,13 +941,13 @@ async def get_current_user(authorization: str = Header(None)):
     """Valida token fake e retorna usuário atual"""
     if not authorization:
         raise HTTPException(status_code=401, detail="Token não fornecido")
-    
+
     # Aceita tanto "Bearer token" quanto "token" direto
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    
-    if token != "fake-jwt-token":
+
+    if token != DEV_FALLBACK_JWT_TOKEN:
         raise HTTPException(status_code=401, detail="Token inválido")
-    
+
     # Retorna usuário admin padrão para teste
     return User(
         id=1,
@@ -958,7 +961,7 @@ def require_roles(*allowed_roles):
     async def role_checker(current_user: User = Depends(get_current_user)):
         if current_user.perfil not in allowed_roles:
             raise HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail=f"Acesso negado. Perfis permitidos: {', '.join(allowed_roles)}"
             )
         return current_user
@@ -991,7 +994,7 @@ async def notificar_reserva_criada(reserva):
         reserva_id=reserva.id,
         url_acao=f"/reservas/{reserva.id}"
     )
-    
+
     # Notificar admins sobre reservas de alto valor
     if reserva.valorTotal and reserva.valorTotal > 5000:
         await criar_notificacao(
@@ -1027,7 +1030,7 @@ async def notificar_checkout_realizado(reserva):
         reserva_id=reserva.id,
         url_acao=f"/reservas/{reserva.id}"
     )
-    
+
     # Notificar admins sobre checkout com pontos gerados
     if hasattr(reserva, 'pontosGerados') and reserva.pontosGerados > 0:
         await criar_notificacao(
@@ -1063,7 +1066,7 @@ async def notificar_pagamento_recusado(pagamento, reserva):
         pagamento_id=pagamento.id,
         url_acao=f"/pagamentos/{pagamento.id}"
     )
-    
+
     # Notificar recepcionistas sobre problema na reserva
     await criar_notificacao(
         titulo="⚠️ Problema no Pagamento",
@@ -1087,7 +1090,7 @@ async def notificar_checkins_hoje():
             "status": "PENDENTE"
         }
     )
-    
+
     if checkins_hoje:
         await criar_notificacao(
             titulo="📅 Check-ins Hoje",
@@ -1110,7 +1113,7 @@ async def notificar_checkouts_hoje():
             "status": "HOSPEDADO"
         }
     )
-    
+
     if checkouts_hoje:
         await criar_notificacao(
             titulo="🏃 Check-outs Hoje",
@@ -1126,18 +1129,18 @@ async def inicializar_quartos():
     quartos_existentes = await db.quarto.count()
     if quartos_existentes > 0:
         return
-    
+
     _luxo_colunas = [
         ["102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112"],
         ["202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212"],
         ["302", "303", "304", "305", "306", "307", "308", "309", "310", "311", "312"],
         ["402", "403", "404", "405", "406", "407", "408", "409", "410", "411", "412", "502"],
     ]
-    
+
     _dupla_numeros = ["101"]
     _master_numeros = ["503"]
     _real_numeros = ["501"]
-    
+
     # Criar quartos LUXO
     for coluna in _luxo_colunas:
         for numero in coluna:
@@ -1148,7 +1151,7 @@ async def inicializar_quartos():
                     "status": "LIVRE"
                 }
             )
-    
+
     # Criar quartos especiais
     for numero in _dupla_numeros:
         await db.quarto.create(
@@ -1158,7 +1161,7 @@ async def inicializar_quartos():
                 "status": "LIVRE"
             }
         )
-    
+
     for numero in _master_numeros:
         await db.quarto.create(
             data={
@@ -1167,7 +1170,7 @@ async def inicializar_quartos():
                 "status": "LIVRE"
             }
         )
-    
+
     for numero in _real_numeros:
         await db.quarto.create(
             data={
@@ -1182,13 +1185,13 @@ async def inicializar_funcionarios():
     admin_existente = await db.funcionario.find_unique(where={"email": "admin@hotelreal.com.br"})
     if admin_existente:
         await db.funcionario.delete(where={"email": "admin@hotelreal.com.br"})
-    
+
     # Criar admin padrão com senha hash
     await db.funcionario.create(
         data={
             "nome": "Admin",
             "email": "admin@hotelreal.com.br",
-            "senha": hashlib.sha256("admin123".encode()).hexdigest(),
+                    "senha": hashlib.sha256(os.environ["ADMIN_PASSWORD"].encode()).hexdigest(),
             "perfil": "ADMIN",
             "status": "ATIVO"
         }
@@ -1239,15 +1242,15 @@ async def listar_quartos_disponiveis_publico(data_checkin: str, data_checkout: s
     try:
         checkin = datetime.strptime(data_checkin, "%Y-%m-%d")
         checkout = datetime.strptime(data_checkout, "%Y-%m-%d")
-        
+
         if checkout <= checkin:
             raise HTTPException(status_code=400, detail="Data de check-out deve ser posterior ao check-in")
-        
+
         num_diarias = (checkout - checkin).days
-        
+
         # Buscar todos os quartos
         todos_quartos = await db.quarto.find_many(where={"status": {"not": "MANUTENCAO"}})
-        
+
         # Buscar reservas que conflitam com as datas
         reservas_conflito = await db.reserva.find_many(
             where={
@@ -1256,22 +1259,22 @@ async def listar_quartos_disponiveis_publico(data_checkin: str, data_checkout: s
                 "checkoutPrevisto": {"gt": checkin}
             }
         )
-        
+
         quartos_ocupados = {r.quartoNumero for r in reservas_conflito}
-        
+
         # Filtrar quartos disponíveis
         quartos_disponiveis = [
-            q for q in todos_quartos 
+            q for q in todos_quartos
             if q.numero not in quartos_ocupados
         ]
-        
+
         # Preços por tipo de suíte
         precos = {
             "LUXO": 350.00,
             "MASTER": 550.00,
             "REAL": 850.00
         }
-        
+
         # Agrupar por tipo
         tipos_disponiveis = {}
         for quarto in quartos_disponiveis:
@@ -1289,7 +1292,7 @@ async def listar_quartos_disponiveis_publico(data_checkin: str, data_checkout: s
                 "status": quarto.status
             })
             tipos_disponiveis[tipo]["quantidade_disponivel"] += 1
-        
+
         return {
             "success": True,
             "data_checkin": data_checkin,
@@ -1298,7 +1301,7 @@ async def listar_quartos_disponiveis_publico(data_checkin: str, data_checkout: s
             "tipos_disponiveis": list(tipos_disponiveis.values()),
             "total_quartos_disponiveis": len(quartos_disponiveis)
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Formato de data inválido: {str(e)}")
     except Exception as e:
@@ -1315,15 +1318,15 @@ async def criar_reserva_online(dados: BookingReservaRequest):
         # Validar datas
         checkin = datetime.strptime(dados.data_checkin, "%Y-%m-%d")
         checkout = datetime.strptime(dados.data_checkout, "%Y-%m-%d")
-        
+
         if checkout <= checkin:
             raise HTTPException(status_code=400, detail="Data de check-out deve ser posterior ao check-in")
-        
+
         if checkin.date() < date.today():
             raise HTTPException(status_code=400, detail="Data de check-in não pode ser no passado")
-        
+
         num_diarias = (checkout - checkin).days
-        
+
         # Verificar se quarto está disponível
         reservas_conflito = await db.reserva.find_many(
             where={
@@ -1333,13 +1336,13 @@ async def criar_reserva_online(dados: BookingReservaRequest):
                 "checkoutPrevisto": {"gt": checkin}
             }
         )
-        
+
         if reservas_conflito:
             raise HTTPException(status_code=400, detail="Quarto não está disponível para as datas selecionadas")
-        
+
         # Buscar ou criar cliente
         cliente = await db.cliente.find_unique(where={"documento": dados.documento})
-        
+
         if not cliente:
             # Criar novo cliente
             cliente = await db.cliente.create(
@@ -1361,25 +1364,25 @@ async def criar_reserva_online(dados: BookingReservaRequest):
                     "telefone": dados.telefone
                 }
             )
-        
+
         # Preços por tipo de suíte
         precos = {
             "LUXO": 350.00,
             "MASTER": 550.00,
             "REAL": 850.00
         }
-        
+
         valor_diaria = precos.get(dados.tipo_suite, 350.00)
         valor_total = valor_diaria * num_diarias
-        
+
         # Gerar código único da reserva
         total_reservas = await db.reserva.count()
         codigo_reserva = f"WEB-{datetime.now().strftime('%Y%m%d')}-{total_reservas+1:06d}"
-        
+
         # Criar reserva
         checkin_previsto = datetime.combine(checkin.date(), datetime.strptime("15:00", "%H:%M").time())
         checkout_previsto = datetime.combine(checkout.date(), datetime.strptime("12:00", "%H:%M").time())
-        
+
         nova_reserva = await db.reserva.create(
             data={
                 "codigoReserva": codigo_reserva,
@@ -1394,9 +1397,9 @@ async def criar_reserva_online(dados: BookingReservaRequest):
                 "status": "PENDENTE",
             }
         )
-        
+
         print(f"[BOOKING] Nova reserva online criada: {codigo_reserva}")
-        
+
         # Se método de pagamento foi informado e não é "na_chegada", processar pagamento
         pagamento_info = None
         if dados.metodo_pagamento and dados.metodo_pagamento != "na_chegada":
@@ -1416,7 +1419,7 @@ async def criar_reserva_online(dados: BookingReservaRequest):
                 "metodo": pagamento.metodo,
                 "valor": float(pagamento.valor)
             }
-        
+
         return {
             "success": True,
             "message": "Reserva criada com sucesso!",
@@ -1441,7 +1444,7 @@ async def criar_reserva_online(dados: BookingReservaRequest):
                 "contato": "recepcao@hotelreal.com.br | (22) 2222-2222"
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1455,15 +1458,15 @@ async def consultar_reserva_publico(codigo: str):
     """
     try:
         reserva = await db.reserva.find_first(where={"codigoReserva": codigo})
-        
+
         if not reserva:
             raise HTTPException(status_code=404, detail="Reserva não encontrada")
-        
+
         # Buscar pagamentos
         pagamentos = await db.pagamento.find_many(where={"reservaId": reserva.id})
         total_pago = sum(float(p.valor) for p in pagamentos if p.statusPagamento == "APROVADO")
         valor_total = float(reserva.valorDiaria) * reserva.numDiarias
-        
+
         return {
             "success": True,
             "reserva": {
@@ -1481,7 +1484,7 @@ async def consultar_reserva_publico(codigo: str):
                 "saldo_pendente": valor_total - total_pago
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1496,19 +1499,19 @@ async def consultar_pontos_publico(documento: str):
     try:
         # Buscar cliente pelo documento
         cliente = await db.cliente.find_unique(where={"documento": documento})
-        
+
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente não encontrado")
-        
+
         # Buscar saldo de pontos
         historico = await db.historicopontos.find_many(
             where={"clienteId": cliente.id},
             order={"data": "desc"},
             take=10
         )
-        
+
         saldo = sum(h.pontos if h.tipo == "GANHO" else -h.pontos for h in historico)
-        
+
         return {
             "success": True,
             "cliente": {
@@ -1528,7 +1531,7 @@ async def consultar_pontos_publico(documento: str):
                 ]
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1539,14 +1542,14 @@ async def consultar_pontos_publico(documento: str):
 @app.post("/api/v1/auth/login")
 async def login(request: LoginRequest):
     funcionario = await db.funcionario.find_unique(where={"email": request.email})
-    
+
     if not funcionario:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    
+
     senha_hash = hashlib.sha256(request.password.encode()).hexdigest()
     if funcionario.senha != senha_hash:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    
+
     return {
         "user": {
             "id": funcionario.id,
@@ -1554,15 +1557,15 @@ async def login(request: LoginRequest):
             "email": funcionario.email,
             "perfil": funcionario.perfil
         },
-        "token": "fake-jwt-token"
+        "token": DEV_FALLBACK_JWT_TOKEN
     }
 
 @app.post("/api/v1/auth/admin/verify")
 async def verify_admin_password(request: dict):
     """Verifica senha de administrador para acesso a funcionalidades restritas"""
     password = request.get("password", "")
-    admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
-    
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+
     if password == admin_password:
         return {"success": True}
     else:
@@ -1582,7 +1585,7 @@ async def criar_funcionario(func: FuncionarioCreate):
     existente = await db.funcionario.find_unique(where={"email": func.email})
     if existente:
         raise HTTPException(status_code=400, detail="Já existe um funcionário com este email")
-    
+
     senha_hash = hashlib.sha256(func.senha.encode()).hexdigest()
     novo_funcionario = await db.funcionario.create(
         data={
@@ -1593,7 +1596,7 @@ async def criar_funcionario(func: FuncionarioCreate):
             "status": func.status,
         }
     )
-    
+
     return serialize_funcionario(novo_funcionario)
 
 @app.put("/api/v1/funcionarios/{funcionario_id}")
@@ -1601,12 +1604,12 @@ async def atualizar_funcionario(funcionario_id: int, dados: FuncionarioUpdate):
     funcionario = await db.funcionario.find_unique(where={"id": funcionario_id})
     if not funcionario:
         raise HTTPException(status_code=404, detail="Funcionário não encontrado")
-    
+
     if dados.email and dados.email != funcionario.email:
         existente = await db.funcionario.find_unique(where={"email": dados.email})
         if existente:
             raise HTTPException(status_code=400, detail="Já existe um funcionário com este email")
-    
+
     update_data = {}
     if dados.nome is not None:
         update_data["nome"] = dados.nome
@@ -1618,12 +1621,12 @@ async def atualizar_funcionario(funcionario_id: int, dados: FuncionarioUpdate):
         update_data["status"] = dados.status
     if dados.senha:
         update_data["senha"] = hashlib.sha256(dados.senha.encode()).hexdigest()
-    
+
     funcionario_atualizado = await db.funcionario.update(
         where={"id": funcionario_id},
         data=update_data
     )
-    
+
     return serialize_funcionario(funcionario_atualizado)
 
 # ============= ROTAS DE QUARTOS =============
@@ -1640,7 +1643,7 @@ async def criar_quarto(quarto: QuartoCreate):
     existente = await db.quarto.find_unique(where={"numero": quarto.numero})
     if existente:
         raise HTTPException(status_code=400, detail="Já existe um quarto com este número")
-    
+
     novo_quarto = await db.quarto.create(
         data={
             "numero": quarto.numero,
@@ -1648,7 +1651,7 @@ async def criar_quarto(quarto: QuartoCreate):
             "status": quarto.status,
         }
     )
-    
+
     return serialize_quarto(novo_quarto)
 
 @app.put("/api/v1/quartos/{quarto_id}")
@@ -1656,12 +1659,12 @@ async def atualizar_quarto(quarto_id: int, dados: QuartoUpdate):
     quarto = await db.quarto.find_unique(where={"id": quarto_id})
     if not quarto:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")
-    
+
     if dados.numero and dados.numero != quarto.numero:
         existente = await db.quarto.find_unique(where={"numero": dados.numero})
         if existente:
             raise HTTPException(status_code=400, detail="Já existe um quarto com este número")
-    
+
     update_data = {}
     if dados.numero is not None:
         update_data["numero"] = dados.numero
@@ -1669,12 +1672,12 @@ async def atualizar_quarto(quarto_id: int, dados: QuartoUpdate):
         update_data["tipoSuite"] = dados.tipo_suite
     if dados.status is not None:
         update_data["status"] = dados.status
-    
+
     quarto_atualizado = await db.quarto.update(
         where={"id": quarto_id},
         data=update_data
     )
-    
+
     return serialize_quarto(quarto_atualizado)
 
 @app.delete("/api/v1/quartos/{quarto_id}")
@@ -1682,11 +1685,11 @@ async def deletar_quarto(quarto_id: int):
     quarto = await db.quarto.find_unique(where={"id": quarto_id})
     if not quarto:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")
-    
+
     # Verificar se o quarto está ocupado
     if quarto.status == "OCUPADO":
         raise HTTPException(status_code=400, detail="Não é possível excluir um quarto ocupado")
-    
+
     # Verificar se há reservas ativas para este quarto
     reservas_ativas = await db.reserva.count(
         where={
@@ -1694,12 +1697,12 @@ async def deletar_quarto(quarto_id: int):
             "status": {"in": ["PENDENTE", "HOSPEDADO"]}
         }
     )
-    
+
     if reservas_ativas > 0:
         raise HTTPException(status_code=400, detail="Não é possível excluir um quarto com reservas ativas")
-    
+
     await db.quarto.delete(where={"id": quarto_id})
-    
+
     return {"success": True, "message": "Quarto excluído com sucesso"}
 
 # ============= ROTAS DE PAGAMENTO (CIELO) =============
@@ -1749,9 +1752,9 @@ async def listar_pagamentos_reserva(reserva_id: int):
             where={"reservaId": reserva_id},
             order={"id": "desc"}
         )
-        
+
         total_pago = sum(float(p.valor) for p in pagamentos if p.statusPagamento == "APROVADO")
-        
+
         return {
             "success": True,
             "pagamentos": [
@@ -1781,13 +1784,13 @@ async def criar_pagamento(dados: PagamentoCreate):
         reserva = await db.reserva.find_unique(where={"id": dados.reserva_id})
         if not reserva:
             raise HTTPException(status_code=404, detail="Reserva não encontrada")
-        
+
         # Processar com Cielo baseado no método
         cielo_response = None
         status_pagamento = "PENDENTE"
         cielo_payment_id = None
         url_pagamento = None
-        
+
         if dados.metodo in ["credit_card", "debit_card"]:
             # Pagamento com cartão
             cielo_response = {
@@ -1799,14 +1802,14 @@ async def criar_pagamento(dados: PagamentoCreate):
             }
             cielo_payment_id = cielo_response["payment_id"]
             status_pagamento = "APROVADO"
-            
+
             print(f"[CIELO] Pagamento cartão processado: {cielo_payment_id}")
-            
+
         elif dados.metodo == "pix":
             # Gerar PIX
             txid = f"PIX_{datetime.now().strftime('%Y%m%d%H%M%S')}_{dados.reserva_id}"
             qr_code_data = f"00020126580014BR.GOV.BCB.PIX0136{txid}520400005303986540{dados.valor:.2f}5802BR5925HOTEL REAL CABO FRIO6009CABO FRIO62070503***6304ABCD"
-            
+
             cielo_response = {
                 "txid": txid,
                 "qr_code": qr_code_data,
@@ -1815,9 +1818,9 @@ async def criar_pagamento(dados: PagamentoCreate):
             cielo_payment_id = txid
             url_pagamento = qr_code_data
             status_pagamento = "AGUARDANDO"
-            
+
             print(f"[PIX] QR Code gerado: {txid}")
-        
+
         # Criar pagamento no banco
         novo_pagamento = await db.pagamento.create(
             data={
@@ -1829,7 +1832,7 @@ async def criar_pagamento(dados: PagamentoCreate):
                 "parcelas": dados.parcelas or 1,
             }
         )
-        
+
         return {
             "success": True,
             "message": "Pagamento processado com sucesso",
@@ -1844,7 +1847,7 @@ async def criar_pagamento(dados: PagamentoCreate):
             "cielo_response": cielo_response,
             "qr_code": url_pagamento if dados.metodo == "pix" else None
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1858,21 +1861,21 @@ async def confirmar_pix(pagamento_id: int):
         pagamento = await db.pagamento.find_unique(where={"id": pagamento_id})
         if not pagamento:
             raise HTTPException(status_code=404, detail="Pagamento não encontrado")
-        
+
         if pagamento.metodo != "pix":
             raise HTTPException(status_code=400, detail="Pagamento não é PIX")
-        
+
         if pagamento.statusPagamento == "APROVADO":
             raise HTTPException(status_code=400, detail="PIX já foi confirmado")
-        
+
         # Atualizar status
         pagamento_atualizado = await db.pagamento.update(
             where={"id": pagamento_id},
             data={"statusPagamento": "APROVADO"}
         )
-        
+
         print(f"[PIX] Pagamento {pagamento_id} confirmado")
-        
+
         return {
             "success": True,
             "message": "PIX confirmado com sucesso",
@@ -1882,7 +1885,7 @@ async def confirmar_pix(pagamento_id: int):
                 "valor": float(pagamento_atualizado.valor)
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1896,23 +1899,23 @@ async def cancelar_pagamento(pagamento_id: int):
         pagamento = await db.pagamento.find_unique(where={"id": pagamento_id})
         if not pagamento:
             raise HTTPException(status_code=404, detail="Pagamento não encontrado")
-        
+
         if pagamento.statusPagamento == "CANCELADO":
             raise HTTPException(status_code=400, detail="Pagamento já foi cancelado")
-        
+
         # Atualizar status
         pagamento_atualizado = await db.pagamento.update(
             where={"id": pagamento_id},
             data={"statusPagamento": "CANCELADO"}
         )
-        
+
         print(f"[PAGAMENTO] Pagamento {pagamento_id} cancelado")
-        
+
         return {
             "success": True,
             "message": "Pagamento cancelado com sucesso"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1964,14 +1967,14 @@ async def cielo_historico(
     try:
         # Construir filtros
         where_clause = {}
-        
+
         if dataInicio:
             try:
                 data_inicio_dt = datetime.fromisoformat(dataInicio.replace('Z', '+00:00'))
                 where_clause["dataCriacao"] = {"gte": data_inicio_dt}
             except:
                 pass
-        
+
         if dataFim:
             try:
                 data_fim_dt = datetime.fromisoformat(dataFim.replace('Z', '+00:00'))
@@ -1981,10 +1984,10 @@ async def cielo_historico(
                     where_clause["dataCriacao"] = {"lte": data_fim_dt}
             except:
                 pass
-        
+
         # Buscar total para paginação
         total = await db.pagamento.count(where=where_clause if where_clause else None)
-        
+
         # Buscar pagamentos com paginação
         skip = (page - 1) * pageSize
         pagamentos = await db.pagamento.find_many(
@@ -1997,7 +2000,7 @@ async def cielo_historico(
                 "reserva": True
             }
         )
-        
+
         # Formatar transações no estilo Cielo
         transacoes = []
         for pag in pagamentos:
@@ -2028,7 +2031,7 @@ async def cielo_historico(
                 "returnMessage": "Transação autorizada" if pag.statusPagamento == "APROVADO" else pag.statusPagamento,
                 "authorizationCode": pag.paymentId[:6] if pag.paymentId else None
             })
-        
+
         return {
             "success": True,
             "data": transacoes,
@@ -2114,7 +2117,7 @@ async def criar_cliente(cliente: ClienteCreate):
     )
     if existente:
         raise HTTPException(status_code=400, detail="Cliente já cadastrado")
-    
+
     novo_cliente = await db.cliente.create(
         data={
             "nomeCompleto": cliente.nome_completo,
@@ -2123,7 +2126,7 @@ async def criar_cliente(cliente: ClienteCreate):
             "email": cliente.email,
         }
     )
-    
+
     return serialize_cliente(novo_cliente)
 
 @app.get("/api/v1/clientes/{cliente_id}")
@@ -2152,10 +2155,10 @@ async def criar_reserva(reserva: ReservaCreate):
     quarto = await db.quarto.find_unique(where={"numero": reserva.quarto_numero})
     if not quarto:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")
-    
+
     if quarto.status in (StatusQuarto.BLOQUEADO, StatusQuarto.MANUTENCAO):
         raise HTTPException(status_code=400, detail="Quarto indisponível para reserva")
-    
+
     # Verificar conflitos de data no banco
     reservas_existentes = await db.reserva.find_many(
         where={
@@ -2165,14 +2168,14 @@ async def criar_reserva(reserva: ReservaCreate):
             "checkoutPrevisto": {"gt": reserva.checkin_previsto}
         }
     )
-    
+
     if reservas_existentes:
         raise HTTPException(status_code=400, detail="Já existe uma reserva para este quarto neste período")
-    
+
     # Gerar código único
     total_reservas = await db.reserva.count()
     codigo_reserva = f"RCF-{datetime.now().strftime('%Y%m')}-{total_reservas+1:06d}"
-    
+
     nova_reserva = await db.reserva.create(
         data={
             "codigoReserva": codigo_reserva,
@@ -2187,7 +2190,7 @@ async def criar_reserva(reserva: ReservaCreate):
             "numDiarias": reserva.num_diarias,
         }
     )
-    
+
     return serialize_reserva(nova_reserva)
 
 class CheckinRequest(BaseModel):
@@ -2207,7 +2210,7 @@ async def checkin_reserva(reserva_id: int, checkin_data: Optional[CheckinRequest
 
     # Dados do check-in
     checkin_info = checkin_data or CheckinRequest()
-    
+
     reserva_atualizada = await db.reserva.update(
         where={"id": reserva_id},
         data={
@@ -2221,7 +2224,7 @@ async def checkin_reserva(reserva_id: int, checkin_data: Optional[CheckinRequest
         where={"numero": reserva.quartoNumero},
         data={"status": "OCUPADO"}
     )
-    
+
     # Log das informações do check-in
     print(f"[CHECK-IN] Reserva {reserva_id}: {checkin_info.num_hospedes} adultos, {checkin_info.num_criancas} crianças")
     if checkin_info.placa_veiculo:
@@ -2254,14 +2257,14 @@ async def checkout_reserva(reserva_id: int, checkout_data: Optional[CheckoutRequ
 
     if reserva.status != "HOSPEDADO":
         raise HTTPException(status_code=400, detail="Reserva não está hospedada")
-    
+
     # Dados do checkout
     checkout_info = checkout_data or CheckoutRequest()
-    
+
     # Calcular valor total com extras
     valor_hospedagem = float(reserva.valorDiaria) * reserva.numDiarias
     valor_total_final = valor_hospedagem + checkout_info.consumo_frigobar + checkout_info.servicos_extras
-    
+
     # Atualizar status no banco
     reserva_atualizada = await db.reserva.update(
         where={"id": reserva_id},
@@ -2276,26 +2279,26 @@ async def checkout_reserva(reserva_id: int, checkout_data: Optional[CheckoutRequ
         where={"numero": reserva.quartoNumero},
         data={"status": "LIVRE"}
     )
-    
+
     # Log da avaliação
     print(f"[CHECK-OUT] Reserva {reserva_id}: Avaliação {checkout_info.avaliacao}/5")
     if checkout_info.comentario_avaliacao:
         print(f"[CHECK-OUT] Comentário: {checkout_info.comentario_avaliacao}")
     print(f"[CHECK-OUT] Valor total: R$ {valor_total_final:.2f} (hospedagem: R$ {valor_hospedagem:.2f} + frigobar: R$ {checkout_info.consumo_frigobar:.2f} + extras: R$ {checkout_info.servicos_extras:.2f})")
-    
+
     # Calcular pontos (regra: a cada 2 diárias)
     tipo_suite = reserva.tipoSuite
     num_diarias = reserva.numDiarias
     pares = num_diarias // 2
-    
+
     pontos_por_par = {
         TipoSuite.LUXO: 3,
         TipoSuite.MASTER: 4,
         TipoSuite.REAL: 5
     }
-    
+
     pontos_ganhos = pares * pontos_por_par.get(tipo_suite, 3)
-    
+
     # Criar operação antifraude no banco
     operacao_antifraude = await db.operacaoantifraude.create(
         data={
@@ -2306,7 +2309,7 @@ async def checkout_reserva(reserva_id: int, checkout_data: Optional[CheckoutRequ
             "status": "AUTO_APROVADO",
         }
     )
-    
+
     # Adicionar pontos ao cliente no banco
     await db.historicopontos.create(
         data={
@@ -2317,7 +2320,7 @@ async def checkout_reserva(reserva_id: int, checkout_data: Optional[CheckoutRequ
             "data": datetime.now(),
         }
     )
-    
+
     return {
         "id": reserva_atualizada.id,
         "message": "Checkout realizado com sucesso",
@@ -2340,9 +2343,9 @@ async def obter_pontos_cliente(cliente_id: int, current_user = Depends(require_r
         where={"clienteId": cliente_id},
         order={"data": "desc"}
     )
-    
+
     saldo = sum(h.pontos if h.tipo == "GANHO" else -h.pontos for h in historico)
-    
+
     return {
         "saldo": saldo,
         "historico": [serialize_historico_pontos(h) for h in historico]
@@ -2358,7 +2361,7 @@ async def obter_saldo_pontos(cliente_id: int):
         usuario_pontos = await db.UsuarioPontos.find_unique(
             where={"clienteId": cliente_id}
         )
-        
+
         if not usuario_pontos:
             # Criar registro inicial se não existir
             usuario_pontos = await db.UsuarioPontos.create({
@@ -2367,13 +2370,13 @@ async def obter_saldo_pontos(cliente_id: int):
                     "saldo": 0
                 }
             })
-        
+
         return {
             "success": True,
             "saldo": usuario_pontos.saldo,
             "usuario_pontos_id": usuario_pontos.id
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha ao obter saldo: {e}")
         return {
@@ -2394,11 +2397,11 @@ async def cielo_webhook(webhook_data: CieloWebhook):
         pagamento = await db.pagamento.find_unique(
             where={"cieloPaymentId": webhook_data.payment_id}
         )
-        
+
         if not pagamento:
             print(f"[WEBHOOK] Pagamento não encontrado: {webhook_data.payment_id}")
             return {"status": "not_found"}
-        
+
         # Atualizar status do pagamento
         status_antigo = pagamento.status
         pagamento_atualizado = await db.pagamento.update(
@@ -2411,7 +2414,7 @@ async def cielo_webhook(webhook_data: CieloWebhook):
                 "dataCancelamento": datetime.now() if webhook_data.status in ["REJECTED", "CHARGEBACK"] else None
             }
         )
-        
+
         # Recalcular risco baseado no resultado do pagamento
         if webhook_data.status == "APPROVED":
             novo_status = "AUTO_APROVADO"
@@ -2422,7 +2425,7 @@ async def cielo_webhook(webhook_data: CieloWebhook):
         else:
             novo_status = "PENDENTE"
             novo_risco = pagamento_atualizado.riskScore
-        
+
         # Atualizar operação antifraude
         await db.operacaoantifraude.update_many(
             where={"pagamentoId": pagamento.id},
@@ -2432,9 +2435,9 @@ async def cielo_webhook(webhook_data: CieloWebhook):
                 "riskScore": novo_risco
             }
         )
-        
+
         print(f"[WEBHOOK] Pagamento {webhook_data.payment_id}: {status_antigo} -> {webhook_data.status}")
-        
+
         return {
             "status": "updated",
             "payment_id": webhook_data.payment_id,
@@ -2442,7 +2445,7 @@ async def cielo_webhook(webhook_data: CieloWebhook):
             "new_status": webhook_data.status,
             "antifraude_status": novo_status
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha no webhook Cielo: {e}")
         return {"status": "error", "message": str(e)}
@@ -2459,9 +2462,9 @@ async def listar_operacoes_antifraude():
             }
         }
     )
-    
+
     pendentes = await db.operacaoantifraude.count(where={"status": "PENDENTE"})
-    
+
     resultado = []
     for op in operacoes:
         resultado.append({
@@ -2478,7 +2481,7 @@ async def listar_operacoes_antifraude():
             "motivo_risco": op.motivoRisco,
             "created_at": op.createdAt.isoformat() if op.createdAt else None
         })
-    
+
     return {
         "operacoes": resultado,
         "total": len(resultado),
@@ -2492,14 +2495,14 @@ async def dashboard_stats_public():
     """Dashboard stats PÚBLICO - sem autenticação (para troubleshooting)"""
     try:
         hoje = date.today()
-        
+
         total_clientes = await db.cliente.count()
         total_reservas = await db.reserva.count()
         total_quartos = await db.quarto.count()
         quartos_ocupados = await db.quarto.count(where={"status": "OCUPADO"})
         quartos_disponiveis = total_quartos - quartos_ocupados
         taxa_ocupacao = round((quartos_ocupados / total_quartos * 100), 2) if total_quartos > 0 else 0
-        
+
         return {
             "success": True,
             "data": {
@@ -2542,19 +2545,19 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
     """Dashboard completo com métricas detalhadas e analytics"""
     try:
         hoje = date.today()
-        
+
         # ============= MÉTRICAS BÁSICAS =============
         total_clientes = await db.cliente.count()
         total_reservas = await db.reserva.count()
         total_quartos = await db.quarto.count()
-        
+
         # ============= MÉTRICAS DE OCUPAÇÃO =============
         reservas_ativas = await db.reserva.find_many(
             where={"status": {"in": ["PENDENTE", "HOSPEDADO"]}}
         )
         quartos_ocupados = await db.quarto.count(where={"status": "OCUPADO"})
         taxa_ocupacao = (quartos_ocupados / max(total_quartos, 1)) * 100
-        
+
         # ============= MÉTRICAS DE HOJE =============
         checkins_hoje = await db.reserva.find_many(
             where={
@@ -2565,7 +2568,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 }
             }
         )
-        
+
         checkouts_hoje = await db.reserva.find_many(
             where={
                 "status": "CHECKED_OUT",
@@ -2575,55 +2578,55 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 }
             }
         )
-        
+
         # ============= MÉTRICAS FINANCEIRAS =============
         pagamentos = await db.pagamento.find_many()
         receita_total = sum(p.valor for p in pagamentos if p.status == "APROVADO")
         receita_mes = sum(
-            p.valor for p in pagamentos 
-            if p.status == "APROVADO" and 
-            p.dataCriacao and 
-            p.dataCriacao.month == hoje.month and 
+            p.valor for p in pagamentos
+            if p.status == "APROVADO" and
+            p.dataCriacao and
+            p.dataCriacao.month == hoje.month and
             p.dataCriacao.year == hoje.year
         )
-        
+
         # ============= MÉTRICAS DE PONTOS =============
         historico_ganhos = await db.historicopontos.find_many(where={"tipo": "GANHO"})
         pontos_distribuidos = sum(h.pontos for h in historico_ganhos)
-        
+
         historico_usados = await db.historicopontos.find_many(where={"tipo": "USO"})
         pontos_utilizados = sum(h.pontos for h in historico_usados)
-        
+
         # ============= MÉTRICAS DE CLIENTES =============
         clientes_vip = await db.cliente.count(where={"tipoHospede": "VIP"})
         clientes_corporativos = await db.cliente.count(where={"tipoHospede": "CORPORATIVO"})
         clientes_normais = total_clientes - clientes_vip - clientes_corporativos
-        
+
         # Top 5 clientes por gasto
         top_clientes_gasto = await db.cliente.find_many(
             order={"totalGasto": "desc"},
             take=5
         )
-        
+
         # Top 5 clientes por fidelidade
         top_clientes_fidelidade = await db.cliente.find_many(
             order={"nivelFidelidade": "desc"},
             take=5
         )
-        
+
         # ============= MÉTRICAS DE QUARTOS =============
         quartos_luxo = await db.quarto.count(where={"tipoSuite": "LUXO"})
         quartos_master = await db.quarto.count(where={"tipoSuite": "MASTER"})
         quartos_real = await db.quarto.count(where={"tipoSuite": "REAL"})
-        
+
         # ============= MÉTRICAS DE ANTIFRAUDE =============
         operacoes_pendentes = await db.operacaoantifraude.count(where={"status": "PENDENTE"})
         operacoes_aprovadas = await db.operacaoantifraude.count(where={"status": "AUTO_APROVADO"})
         operacoes_recusadas = await db.operacaoantifraude.count(where={"status": "RECUSADO"})
-        
+
         # ============= MÉTRICAS DE SATISFAÇÃO =============
         taxa_conversao = (len([r for r in reservas_ativas if r.status in ["HOSPEDADO", "CHECKED_OUT"]]) / max(total_reservas, 1)) * 100
-        
+
         # ============= TENDÊNCIAS (Últimos 30 dias) =============
         trinta_dias_atras = hoje - timedelta(days=30)
         reservas_ultimos_30_dias = await db.reserva.find_many(
@@ -2633,7 +2636,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 }
             }
         )
-        
+
         clientes_novos_30_dias = await db.cliente.find_many(
             where={
                 "createdAt": {
@@ -2641,11 +2644,11 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 }
             }
         )
-        
+
         return {
             "success": True,
             "timestamp": datetime.now().isoformat(),
-            
+
             # ============= KPIs PRINCIPAIS =============
             "kpis_principais": {
                 "total_clientes": total_clientes,
@@ -2655,7 +2658,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "receita_total": round(receita_total, 2),
                 "receita_mes": round(receita_mes, 2),
             },
-            
+
             # ============= OPERAÇÕES DO DIA =============
             "operacoes_dia": {
                 "checkins_hoje": len(checkins_hoje),
@@ -2663,7 +2666,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "reservas_ativas": len(reservas_ativas),
                 "quartos_ocupados": quartos_ocupados,
             },
-            
+
             # ============= SISTEMA DE PONTOS =============
             "sistema_pontos": {
                 "pontos_distribuidos": pontos_distribuidos,
@@ -2671,7 +2674,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "pontos_saldo": pontos_distribuidos - pontos_utilizados,
                 "taxa_utilizacao": round((pontos_utilizados / max(pontos_distribuidos, 1)) * 100, 1),
             },
-            
+
             # ============= SEGMENTAÇÃO DE CLIENTES =============
             "segmentacao_clientes": {
                 "normais": clientes_normais,
@@ -2680,7 +2683,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "percentual_vip": round((clientes_vip / max(total_clientes, 1)) * 100, 1),
                 "percentual_corporativos": round((clientes_corporativos / max(total_clientes, 1)) * 100, 1),
             },
-            
+
             # ============= TOP CLIENTES =============
             "top_clientes": {
                 "por_gasto": [
@@ -2702,7 +2705,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                     for c in top_clientes_fidelidade
                 ]
             },
-            
+
             # ============= DISTRIBUIÇÃO DE QUARTOS =============
             "distribuicao_quartos": {
                 "luxo": quartos_luxo,
@@ -2711,7 +2714,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "ocupados": quartos_ocupados,
                 "disponiveis": total_quartos - quartos_ocupados,
             },
-            
+
             # ============= ANTIFRAUDE =============
             "antifraude": {
                 "pendentes": operacoes_pendentes,
@@ -2719,7 +2722,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "recusadas": operacoes_recusadas,
                 "taxa_aprovacao": round((operacoes_aprovadas / max(operacoes_aprovadas + operacoes_recusadas, 1)) * 100, 1),
             },
-            
+
             # ============= TENDÊNCIAS =============
             "tendencias": {
                 "reservas_30_dias": len(reservas_ultimos_30_dias),
@@ -2727,7 +2730,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "taxa_conversao": round(taxa_conversao, 1),
                 "media_reservas_dia": round(len(reservas_ultimos_30_dias) / 30, 1),
             },
-            
+
             # ============= ALERTAS =============
             "alertas": {
                 "operacoes_antifraude_pendentes": operacoes_pendentes,
@@ -2736,7 +2739,7 @@ async def dashboard_stats(current_user = Depends(require_roles("RECEPCAO", "GERE
                 "necessidade_manutencao": await db.quarto.count(where={"status": "MANUTENCAO"}),
             }
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha no dashboard completo: {e}")
         raise HTTPException(status_code=500, detail="Erro interno ao carregar dashboard")
@@ -2752,7 +2755,7 @@ async def obter_historico_pontos(cliente_id: int, limit: int = 20, current_user 
             order={"createdAt": "desc"},
             take=limit
         )
-        
+
         return {
             "success": True,
             "transacoes": [
@@ -2769,7 +2772,7 @@ async def obter_historico_pontos(cliente_id: int, limit: int = 20, current_user 
             ],
             "total": len(transacoes)
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha ao obter histórico: {e}")
         return {
@@ -2790,29 +2793,29 @@ async def ajustar_pontos_manuais(request: AjustarPontosRequest, current_user = D
                 "success": False,
                 "error": "Ajuste manual limitado a ±4 pontos"
             }
-        
+
         usuario_pontos = await db.UsuarioPontos.find_unique(
             where={"clienteId": request.cliente_id}
         )
-        
+
         if not usuario_pontos:
             return {
                 "success": False,
                 "error": "Cliente não encontrado no sistema de pontos"
             }
-        
+
         novo_saldo = usuario_pontos.saldo + request.pontos
         if novo_saldo < 0:
             return {
                 "success": False,
                 "error": "Saldo não pode ficar negativo"
             }
-        
+
         await db.UsuarioPontos.update(
             where={"id": usuario_pontos.id},
             data={"saldo": novo_saldo}
         )
-        
+
         transacao = await db.TransacaoPontos.create({
             "data": {
                 "usuarioPontosId": usuario_pontos.id,
@@ -2822,13 +2825,13 @@ async def ajustar_pontos_manuais(request: AjustarPontosRequest, current_user = D
                 "motivo": request.motivo
             }
         })
-        
+
         return {
             "success": True,
             "transacao_id": transacao.id,
             "novo_saldo": novo_saldo
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha no ajuste manual: {e}")
         return {
@@ -2843,13 +2846,13 @@ async def listar_clientes_com_pontos(current_user = Depends(require_roles("GEREN
     """Lista todos os clientes com seus saldos de pontos"""
     try:
         clientes = await db.cliente.find_many()
-        
+
         resultado = []
         for cliente in clientes:
             usuario_pontos = await db.UsuarioPontos.find_unique(
                 where={"clienteId": cliente.id}
             )
-            
+
             resultado.append({
                 "id": cliente.id,
                 "nome": cliente.nomeCompleto,
@@ -2858,12 +2861,12 @@ async def listar_clientes_com_pontos(current_user = Depends(require_roles("GEREN
                 "status": cliente.status,
                 "saldo_pontos": usuario_pontos.saldo if usuario_pontos else 0
             })
-        
+
         return {
             "success": True,
             "clientes": resultado
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha ao listar clientes: {e}")
         return {
@@ -2888,9 +2891,9 @@ async def listar_historico_antifraude(page: int = 1, page_size: int = 20, curren
                 }
             }
         )
-        
+
         total = await db.operacaoantifraude.count()
-        
+
         resultado = []
         for op in operacoes:
             resultado.append({
@@ -2904,7 +2907,7 @@ async def listar_historico_antifraude(page: int = 1, page_size: int = 20, curren
                 "motivo_recusa": op.motivoRecusa,
                 "created_at": op.createdAt.isoformat()
             })
-        
+
         return {
             "success": True,
             "operacoes": resultado,
@@ -2915,7 +2918,7 @@ async def listar_historico_antifraude(page: int = 1, page_size: int = 20, curren
                 "total_pages": (total + page_size - 1) // page_size
             }
         }
-        
+
     except Exception as e:
         print(f"[ERRO] Falha ao listar histórico antifraude: {e}")
         return {

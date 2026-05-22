@@ -7,6 +7,7 @@ Uso:
     python create_admin.py
 """
 import asyncio
+import os
 from prisma import Prisma
 from app.repositories.funcionario_repo import FuncionarioRepository
 from app.schemas.funcionario_schema import FuncionarioCreate
@@ -29,20 +30,24 @@ async def create_admin():
         except ValueError:
             pass  # Admin não existe, continue
         
+        admin_password = os.environ.get("ADMIN_PASSWORD")
+        if not admin_password:
+            raise RuntimeError("Defina ADMIN_PASSWORD no ambiente antes de criar o admin.")
+
         # Criar admin
         admin_data = FuncionarioCreate(
             nome="Administrador",
             email="admin@hotelreal.com.br",
             perfil="ADMIN",
             status="ATIVO",
-            senha="admin123"
+            senha=admin_password
         )
         
         admin = await repo.create(admin_data)
         
         print("✅ Admin criado com sucesso!")
         print(f"   Email: {admin['email']}")
-        print(f"   Senha: admin123")
+        print("   Senha: definida via ADMIN_PASSWORD")
         print(f"   Perfil: {admin['perfil']}")
         print(f"   Status: {admin['status']}")
         

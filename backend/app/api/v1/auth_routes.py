@@ -15,7 +15,8 @@ from app.core.security import (
     get_current_user,
     User,
     ACCESS_TOKEN_EXPIRE_MINUTES,
-    REFRESH_TOKEN_EXPIRE_DAYS
+    REFRESH_TOKEN_EXPIRE_DAYS,
+    DEV_FALLBACK_SECRET_KEY,
 )
 from app.core.enums import PerfilUsuario
 from app.utils.hashing import verify_password
@@ -390,7 +391,7 @@ async def logout(
         
         try:
             # Decodificar para obter jti e expiração
-            secret_key = os.getenv("SECRET_KEY", "hotel-real-cabo-frio-secret-key")
+            secret_key = os.getenv("SECRET_KEY") or DEV_FALLBACK_SECRET_KEY
             payload = jwt.decode(token, secret_key, algorithms=["HS256"], options={"verify_exp": False})
             jti = payload.get("jti")
             exp = datetime.fromtimestamp(payload["exp"])

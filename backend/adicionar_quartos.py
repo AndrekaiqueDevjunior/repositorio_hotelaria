@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import requests
 import json
 from datetime import datetime
@@ -38,7 +39,10 @@ quartos_para_adicionar = [
 
 # 1. Fazer Login
 print('1. FAZENDO LOGIN...')
-login_data = {'email': 'admin@hotelreal.com.br', 'password': 'admin123'}
+admin_password = os.environ.get('ADMIN_PASSWORD')
+if not admin_password:
+    raise RuntimeError('Defina ADMIN_PASSWORD no ambiente antes de executar este script.')
+login_data = {'email': 'admin@hotelreal.com.br', 'password': admin_password}
 r = requests.post(f'{base_url}/login', json=login_data)
 print(f'Status: {r.status_code}')
 

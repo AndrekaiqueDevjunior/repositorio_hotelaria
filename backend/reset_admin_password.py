@@ -3,6 +3,7 @@ Script para resetar senha do admin
 """
 
 import asyncio
+import os
 from app.core.database import get_db
 from app.core.security import hash_password
 
@@ -26,7 +27,9 @@ async def reset_admin():
     print(f"  Email: {admin.email}")
     
     # Nova senha
-    nova_senha = "admin123"
+    nova_senha = os.environ.get("ADMIN_PASSWORD")
+    if not nova_senha:
+        raise RuntimeError("Defina ADMIN_PASSWORD no ambiente antes de resetar a senha.")
     senha_hash = hash_password(nova_senha)
     
     # Atualizar
@@ -36,7 +39,7 @@ async def reset_admin():
     )
     
     print(f"\n✓ Senha resetada com sucesso!")
-    print(f"  Nova senha: {nova_senha}")
+    print("  Nova senha: definida via ADMIN_PASSWORD")
     print(f"  Hash: {senha_hash[:30]}...")
     
     await db.disconnect()

@@ -26,13 +26,23 @@ class PagamentoService:
         reserva_id: int,
         valor: float,
         tef_response: Dict[str, Any],
+        idempotency_key: str | None = None,
     ) -> Dict[str, Any]:
+        if idempotency_key:
+            pagamento_existente = await self.pagamento_repo.get_by_idempotency_key(idempotency_key)
+            if pagamento_existente:
+                return {
+                    **pagamento_existente,
+                    "idempotent_replay": True,
+                }
+
         pagamento = await self.pagamento_repo.create(
             PagamentoCreate(
                 reserva_id=reserva_id,
                 valor=valor,
                 metodo="tef",
-            )
+            ),
+            idempotency_key=idempotency_key,
         )
 
         status = tef_response.get("status", "RECUSADO")
@@ -54,9 +64,17 @@ class PagamentoService:
 
         return pagamento_atualizado
     
-    async def create(self, dados: PagamentoCreate) -> Dict[str, Any]:
+    async def create(self, dados: PagamentoCreate, idempotency_key: str | None = None) -> Dict[str, Any]:
         """Criar novo pagamento e processar com Cielo"""
         try:
+            if idempotency_key:
+                pagamento_existente = await self.pagamento_repo.get_by_idempotency_key(idempotency_key)
+                if pagamento_existente:
+                    return {
+                        **pagamento_existente,
+                        "idempotent_replay": True,
+                    }
+
             # Verificar se jÃ¡ existe pagamento para esta reserva
             pagamentos_existentes = await self.pagamento_repo.list_by_reserva(dados.reserva_id)
             
@@ -72,7 +90,7 @@ class PagamentoService:
                     }
             
             # Criar pagamento no banco
-            pagamento = await self.pagamento_repo.create(dados)
+            pagamento = await self.pagamento_repo.create(dados, idempotency_key=idempotency_key)
             
             # Processar pagamento com Cielo
             if dados.metodo in ["credit_card", "debit_card"]:
@@ -308,6 +326,7 @@ class PagamentoService:
         session_id: str,
         confirm: bool,
         param_adic: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Dict[str, Any]:
         try:
             tef_response = await self.tef_service.finalizar_fluxo_interativo(
@@ -323,10 +342,12 @@ class PagamentoService:
                 }
 
             if reserva_id and valor is not None and tef_response.get("success"):
+                payment_idempotency_key = idempotency_key or f"tef-session:{session_id}"
                 pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
                     reserva_id=reserva_id,
                     valor=valor,
                     tef_response=tef_response,
+                    idempotency_key=payment_idempotency_key,
                 )
                 return {
                     **pagamento_atualizado,
@@ -351,10 +372,12 @@ class PagamentoService:
                 }
 
             if reserva_id and valor is not None:
+                payment_idempotency_key = idempotency_key or f"tef-session:{session_id}"
                 pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
                     reserva_id=reserva_id,
                     valor=valor,
                     tef_response=tef_response,
+                    idempotency_key=payment_idempotency_key,
                 )
                 return {
                     **pagamento_atualizado,

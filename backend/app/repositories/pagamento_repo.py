@@ -209,6 +209,24 @@ class PagamentoRepository:
             raise ValueError("Pagamento não encontrado")
         return self._serialize_pagamento(pagamento)
     
+    async def get_by_idempotency_key(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
+        """Obter pagamento por chave de idempotencia."""
+        if not idempotency_key:
+            return None
+
+        pagamento = await self.db.pagamento.find_first(
+            where={"idempotencyKey": idempotency_key},
+            include={
+                "cliente": True,
+                "reserva": True,
+                "operacoesAntifraude": True,
+                "comprovantes": True
+            }
+        )
+        if not pagamento:
+            return None
+        return self._serialize_pagamento(pagamento)
+
     async def _salvar_comprovante_tef_texto(
         self,
         pagamento_id: int,

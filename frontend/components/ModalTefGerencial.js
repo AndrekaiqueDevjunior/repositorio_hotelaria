@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-toastify'
 import { api } from '../lib/api'
+import { markTefPendenciasChecked } from '../services/tefPendencias'
 import {
   NFPAG_COLLECTION_LABELS,
   NFPAG_FIELD_OPTIONS,
@@ -1991,6 +1992,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
   const resolverPendenciasAutomaticamente = async () => {
     const res = await api.post('/pagamentos/tef/pendencias', {}, { timeout: TEF_REQUEST_TIMEOUT_MS })
     const message = String(res.data?.message || res.data?.detail?.message || 'Tratamento de pendencias executado.')
+    if (res.data?.success !== false) {
+      markTefPendenciasChecked({
+        source: 'tef_management_modal',
+        result: res.data
+      })
+    }
     setPendenciaStatus(message)
     tefSessionRef.current = null
     setTefSessionId(null)
@@ -2376,6 +2383,13 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         numero_pagamento_nfpag: currentResult?.nfpag?.numero_pagamento || undefined,
         nfpag_raw: nfpagRawToSend
       }, { timeout: TEF_REQUEST_TIMEOUT_MS })
+
+      if (Number(functionId) === 130 && res.data?.success !== false) {
+        markTefPendenciasChecked({
+          source: 'tef_management_manual_finish',
+          result: res.data
+        })
+      }
 
       if (tefIdleTimerRef.current) {
         clearTimeout(tefIdleTimerRef.current)

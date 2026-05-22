@@ -165,7 +165,7 @@ async def criar_pagamento(
     
     # P0-003: CAMADA 2 - Criar pagamento
     try:
-        resultado = await service.create(pagamento)
+        resultado = await service.create(pagamento, idempotency_key=idempotency_key)
         
         # P0-003: CAMADA 3 - Cachear resultado da idempotÃªncia
         if idempotency_key:
@@ -192,7 +192,8 @@ async def criar_pagamento(
 async def iniciar_fluxo_tef(
     payload: dict,
     service: PagamentoService = Depends(get_pagamento_service),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
     reserva_id = payload.get("reserva_id")
     valor = payload.get("valor")
@@ -219,7 +220,7 @@ async def iniciar_fluxo_tef(
         trn_init_parameters=payload.get("trn_init_parameters"),
         session_parameters=payload.get("session_parameters"),
         defer_finish=_payload_bool(payload.get("defer_finish")),
-        session_id=str(payload.get("session_id") or "").strip() or None,
+        session_id=str(payload.get("session_id") or idempotency_key or "").strip() or None,
     )
 
 @router.post("/tef/iniciar-funcao", response_model=dict)
@@ -279,7 +280,8 @@ async def continuar_fluxo_tef(
 async def finalizar_fluxo_tef(
     payload: dict,
     service: PagamentoService = Depends(get_pagamento_service),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
     session_id = payload.get("session_id")
     reserva_id = payload.get("reserva_id")
@@ -332,6 +334,7 @@ async def finalizar_fluxo_tef(
         session_id=str(session_id),
         confirm=bool(payload.get("confirm", True)),
         param_adic=str(param_adic) if param_adic else None,
+        idempotency_key=str(payload.get("idempotency_key") or idempotency_key or "").strip() or None,
     )
 
 @router.post("/tef/cancelar", response_model=dict)

@@ -3,8 +3,6 @@ from datetime import datetime, date
 from typing import Optional
 from fastapi import HTTPException
 from app.schemas.reserva_schema import ReservaCreate, ReservaResponse
-from app.repositories.cliente_repo import ClienteRepository
-from app.repositories.quarto_repo import QuartoRepository
 from app.repositories.tarifa_suite_repo import TarifaSuiteRepository
 from app.core.validators import ReservaValidator
 from prisma import Client
@@ -13,6 +11,12 @@ from app.services.notification_service import NotificationService
 from app.services.whatsapp_service import get_whatsapp_service
 import secrets
 import re
+
+STATUS_RESERVA_PENDENTES = {"PENDENTE", "PENDENTE_PAGAMENTO", "AGUARDANDO_PAGAMENTO"}
+STATUS_RESERVA_HOSPEDADO = {"HOSPEDADO", "CHECKIN_REALIZADO", "CHECKED_IN"}
+STATUS_RESERVA_FINALIZADO = {"CHECKED_OUT", "CHECKOUT_REALIZADO", "FINALIZADA"}
+STATUS_RESERVA_CANCELADO = {"CANCELADO", "CANCELADA", "NO_SHOW"}
+STATUS_PAGAMENTO_APROVADO = {"PAGO", "APROVADO", "CONFIRMADO", "CAPTURED", "AUTHORIZED"}
 
 class ReservaRepository:
     def __init__(self, db: Client):
@@ -353,7 +357,7 @@ class ReservaRepository:
         # P1-001: VALIDAÃ‡ÃƒO 2 - Deve ter pagamento aprovado
         pagamentos_aprovados = [
             p for p in reserva.pagamentos
-            if p.status in ("APROVADO", "PAGO", "CONFIRMADO", "CAPTURED", "AUTHORIZED")
+            if p.statusPagamento in STATUS_PAGAMENTO_APROVADO
         ]
         
         if not pagamentos_aprovados:
@@ -374,9 +378,7 @@ class ReservaRepository:
         )
         
         # Atualizar status do quarto
-        quarto_numero_raw = (reserva.quartoNumero or "").strip()
-        match = re.search(r"\d+", quarto_numero_raw)
-        quarto_numero = match.group(0) if match else quarto_numero_raw
+        quarto_numero = (reserva.quartoNumero or "").strip()
         await self.db.quarto.update(
             where={"numero": quarto_numero},
             data={"status": "OCUPADO"}
@@ -414,7 +416,7 @@ class ReservaRepository:
         # Calcular total pago (apenas pagamentos aprovados)
         total_pago = sum(
             float(p.valor) for p in pagamentos 
-            if p.status in ("APROVADO", "CONFIRMADO")
+            if p.statusPagamento in STATUS_PAGAMENTO_APROVADO
         )
         
         # Calcular saldo pendente
@@ -438,9 +440,7 @@ class ReservaRepository:
         )
         
         # Atualizar status do quarto
-        quarto_numero_raw = (reserva.quartoNumero or "").strip()
-        match = re.search(r"\d+", quarto_numero_raw)
-        quarto_numero = match.group(0) if match else quarto_numero_raw
+        quarto_numero = (reserva.quartoNumero or "").strip()
         await self.db.quarto.update(
             where={"numero": quarto_numero},
             data={"status": "LIVRE"}
@@ -499,7 +499,7 @@ class ReservaRepository:
         if not reserva:
             raise ValueError("Reserva nÃ£o encontrada")
         
-        if reserva.statusReserva not in ("PENDENTE", "CONFIRMADA", "HOSPEDADO"):
+        if reserva.statusReserva not in STATUS_RESERVA_PENDENTES | {"CONFIRMADA"} | STATUS_RESERVA_HOSPEDADO:
             raise ValueError("Apenas reservas pendentes, confirmadas ou hospedadas podem ser canceladas")
         
         # RES-003 FIX: Processar estornos ANTES do cancelamento
@@ -573,11 +573,9 @@ class ReservaRepository:
         
         # CORREÃ‡ÃƒO CRÃTICA: Liberar quarto independente do status da reserva
         # Se estava HOSPEDADO, CONFIRMADA ou qualquer outro status ativo, liberar o quarto
-        if reserva.statusReserva in ["HOSPEDADO", "CONFIRMADA", "PENDENTE", "AGUARDANDO_PAGAMENTO"]:
+        if reserva.statusReserva in STATUS_RESERVA_HOSPEDADO | {"CONFIRMADA"} | STATUS_RESERVA_PENDENTES:
             # Verificar se o quarto realmente precisa ser liberado (nÃ£o estÃ¡ LIVRE)
-            quarto_numero_raw = (reserva.quartoNumero or "").strip()
-            match = re.search(r"\d+", quarto_numero_raw)
-            quarto_numero = match.group(0) if match else quarto_numero_raw
+            quarto_numero = (reserva.quartoNumero or "").strip()
             quarto = await self.db.quarto.find_unique(where={"numero": quarto_numero})
             if quarto and quarto.status != "LIVRE":
                 await self.db.quarto.update(
@@ -766,7 +764,7 @@ class ReservaRepository:
         if not reserva:
             raise ValueError("Reserva nÃ£o encontrada")
         
-        if reserva.statusReserva != "PENDENTE":
+        if reserva.statusReserva not in STATUS_RESERVA_PENDENTES:
             raise ValueError("Apenas reservas pendentes podem ser confirmadas")
         
         # âš ï¸ VALIDAÃ‡ÃƒO CRÃTICA: Verificar se hÃ¡ pagamento autorizado
@@ -778,7 +776,7 @@ class ReservaRepository:
         # Verificar se existe pelo menos um pagamento aprovado/confirmado
         pagamentos_aprovados = [
             p for p in pagamentos 
-            if p.statusPagamento in ("PAGO", "APROVADO")
+            if p.statusPagamento in STATUS_PAGAMENTO_APROVADO
         ]
         
         if not pagamentos_aprovados:
@@ -854,7 +852,7 @@ class ReservaRepository:
             raise ValueError("Reserva nÃ£o encontrada")
         
         # NÃ£o permite editar reservas jÃ¡ finalizadas
-        if reserva.statusReserva in ("CHECKED_OUT", "CHECKOUT_REALIZADO", "CANCELADO", "CANCELADA"):
+        if reserva.statusReserva in STATUS_RESERVA_FINALIZADO | STATUS_RESERVA_CANCELADO:
             raise ValueError("NÃ£o Ã© possÃ­vel editar reservas finalizadas ou canceladas")
 
         data = dict(data or {})
@@ -871,6 +869,7 @@ class ReservaRepository:
             if not quarto:
                 raise ValueError("Quarto nÃ£o encontrado")
             update_data["quartoNumero"] = data["quarto_numero"]
+            update_data["quartoId"] = quarto.id
         
         if "tipo_suite" in data:
             update_data["tipoSuite"] = data["tipo_suite"]

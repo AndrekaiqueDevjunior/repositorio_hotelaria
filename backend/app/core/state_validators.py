@@ -11,21 +11,40 @@ from datetime import datetime
 
 from app.schemas.status_enums import StatusReserva, StatusPagamento
 
-# Estados de reserva baseados em enums.py
+# Estados de reserva aceitos. O banco ainda possui valores legados e novos.
 ESTADOS_RESERVA = {
-    StatusReserva.PENDENTE.value,      # "PENDENTE" 
-    StatusReserva.CONFIRMADA.value,    # "CONFIRMADA"
-    StatusReserva.HOSPEDADO.value,     # "HOSPEDADO" 
-    StatusReserva.CHECKED_OUT.value,   # "CHECKED_OUT"
-    StatusReserva.CANCELADO.value      # "CANCELADO"
+    "PENDENTE",
+    "PENDENTE_PAGAMENTO",
+    "AGUARDANDO_PAGAMENTO",
+    "AGUARDANDO_COMPROVANTE",
+    "EM_ANALISE",
+    "PAGA_REJEITADA",
+    "CONFIRMADA",
+    "PAGA_APROVADA",
+    "CHECKIN_LIBERADO",
+    "HOSPEDADO",
+    "CHECKIN_REALIZADO",
+    "CHECKED_IN",
+    "CHECKED_OUT",
+    "CHECKOUT_REALIZADO",
+    "FINALIZADA",
+    "CANCELADO",
+    "CANCELADA",
+    "NO_SHOW",
 }
 
-# Estados de pagamento baseados em enums.py  
+# Estados de pagamento aceitos.
 ESTADOS_PAGAMENTO = {
-    StatusPagamento.PENDENTE.value,    # "PENDENTE"
-    StatusPagamento.CONFIRMADO.value,  # "CONFIRMADO" 
-    StatusPagamento.NEGADO.value,      # "NEGADO"
-    StatusPagamento.ESTORNADO.value    # "ESTORNADO"
+    StatusPagamento.PENDENTE.value,
+    StatusPagamento.CONFIRMADO.value,
+    StatusPagamento.APROVADO.value,
+    StatusPagamento.NEGADO.value,
+    StatusPagamento.ESTORNADO.value,
+    StatusPagamento.CANCELADO.value,
+    "PAGO",
+    "CAPTURED",
+    "AUTHORIZED",
+    "APPROVED",
 }
 
 # Estados de hospedagem (mantidos como estão - sem conflito)
@@ -39,6 +58,32 @@ ESTADOS_HOSPEDAGEM = {
 
 # ============= VALIDADORES DE TRANSIÇÃO =============
 
+def _normalizar_reserva_status(status: str) -> str:
+    status = (status or "").upper().strip()
+    if status in {"PENDENTE", "PENDENTE_PAGAMENTO", "AGUARDANDO_PAGAMENTO"}:
+        return "PENDENTE"
+    if status in {"CONFIRMADA", "PAGA_APROVADA", "CHECKIN_LIBERADO", "CONFIRMADO"}:
+        return "CONFIRMADA"
+    if status in {"HOSPEDADO", "CHECKIN_REALIZADO", "CHECKED_IN"}:
+        return "HOSPEDADO"
+    if status in {"CHECKED_OUT", "CHECKOUT_REALIZADO", "FINALIZADA"}:
+        return "CHECKED_OUT"
+    if status in {"CANCELADO", "CANCELADA", "NO_SHOW"}:
+        return "CANCELADO"
+    return status
+
+
+def _normalizar_pagamento_status(status: str) -> str:
+    status = (status or "").upper().strip()
+    if status in {"CONFIRMADO", "PAGO", "APROVADO", "APPROVED", "CAPTURED", "AUTHORIZED"}:
+        return "CONFIRMADO"
+    if status in {"NEGADO", "RECUSADO", "FAILED", "FALHOU"}:
+        return "NEGADO"
+    if status in {"CANCELADO", "ESTORNADO"}:
+        return "ESTORNADO"
+    return status or "PENDENTE"
+
+
 class ReservaStateValidator:
     """
     SYS-001 FIX: Valida transições de estado da Reserva usando enums consistentes
@@ -51,10 +96,10 @@ class ReservaStateValidator:
         
         SYS-001 FIX: Regra atualizada para estados consistentes
         """
-        if status_reserva != StatusReserva.PENDENTE.value:
+        if _normalizar_reserva_status(status_reserva) != "PENDENTE":
             return False, f"Reserva deve estar PENDENTE (atual: {status_reserva})"
         
-        if status_pagamento != StatusPagamento.CONFIRMADO.value:
+        if _normalizar_pagamento_status(status_pagamento) != "CONFIRMADO":
             return False, f"Pagamento deve estar CONFIRMADO antes de confirmar (atual: {status_pagamento})"
         
         return True, ""
@@ -66,10 +111,11 @@ class ReservaStateValidator:
         
         SYS-001 FIX: Regra atualizada para estados consistentes
         """
-        if status_reserva == StatusReserva.CANCELADO.value:
+        status_reserva_norm = _normalizar_reserva_status(status_reserva)
+        if status_reserva_norm == "CANCELADO":
             return False, "Reserva já está cancelada"
         
-        if status_reserva == StatusReserva.CHECKED_OUT.value:
+        if status_reserva_norm == "CHECKED_OUT":
             return False, "Não pode cancelar reserva que já fez check-out"
         
         if status_hospedagem in ["CHECKOUT_REALIZADO", "ENCERRADA"]:
@@ -82,19 +128,22 @@ class ReservaStateValidator:
         """
         SYS-001 FIX: Valida transições usando estados consistentes com enums.py
         """
+        status_atual_norm = _normalizar_reserva_status(status_atual)
+        status_novo_norm = _normalizar_reserva_status(status_novo)
+
         if status_novo not in ESTADOS_RESERVA:
             return False, f"Status inválido: {status_novo}"
         
         # SYS-001 FIX: Transições válidas baseadas no fluxo real
         transicoes_validas = {
-            StatusReserva.PENDENTE.value: [StatusReserva.CONFIRMADA.value, StatusReserva.CANCELADO.value],
-            StatusReserva.CONFIRMADA.value: [StatusReserva.HOSPEDADO.value, StatusReserva.CANCELADO.value],
-            StatusReserva.HOSPEDADO.value: [StatusReserva.CHECKED_OUT.value, StatusReserva.CANCELADO.value],
-            StatusReserva.CHECKED_OUT.value: [],  # Estado final
-            StatusReserva.CANCELADO.value: []     # Estado final
+            "PENDENTE": ["CONFIRMADA", "CANCELADO"],
+            "CONFIRMADA": ["HOSPEDADO", "CANCELADO"],
+            "HOSPEDADO": ["CHECKED_OUT", "CANCELADO"],
+            "CHECKED_OUT": [],  # Estado final
+            "CANCELADO": []     # Estado final
         }
         
-        if status_novo not in transicoes_validas.get(status_atual, []):
+        if status_novo_norm not in transicoes_validas.get(status_atual_norm, []):
             return False, f"Transição inválida: {status_atual} → {status_novo}"
         
         return True, ""
@@ -108,7 +157,7 @@ class PagamentoStateValidator:
     @staticmethod
     def pode_processar(status_pagamento: str) -> Tuple[bool, str]:
         """Valida se pode processar pagamento"""
-        if status_pagamento != StatusPagamento.PENDENTE.value:
+        if _normalizar_pagamento_status(status_pagamento) != "PENDENTE":
             return False, f"Pagamento deve estar PENDENTE (atual: {status_pagamento})"
         
         return True, ""
@@ -116,7 +165,7 @@ class PagamentoStateValidator:
     @staticmethod
     def pode_estornar(status_pagamento: str) -> Tuple[bool, str]:
         """Valida se pode estornar pagamento"""
-        if status_pagamento != StatusPagamento.CONFIRMADO.value:
+        if _normalizar_pagamento_status(status_pagamento) != "CONFIRMADO":
             return False, f"Só pode estornar pagamento CONFIRMADO (atual: {status_pagamento})"
         
         return True, ""
@@ -126,18 +175,21 @@ class PagamentoStateValidator:
         """
         SYS-001 FIX: Valida transições usando estados consistentes com enums.py
         """
+        status_atual_norm = _normalizar_pagamento_status(status_atual)
+        status_novo_norm = _normalizar_pagamento_status(status_novo)
+
         if status_novo not in ESTADOS_PAGAMENTO:
             return False, f"Status inválido: {status_novo}"
         
         # SYS-001 FIX: Transições válidas baseadas nos estados reais
         transicoes_validas = {
-            StatusPagamento.PENDENTE.value: [StatusPagamento.CONFIRMADO.value, StatusPagamento.NEGADO.value],
-            StatusPagamento.CONFIRMADO.value: [StatusPagamento.ESTORNADO.value],
-            StatusPagamento.ESTORNADO.value: [],  # Estado final
-            StatusPagamento.NEGADO.value: [StatusPagamento.PENDENTE.value]  # Pode tentar novamente
+            "PENDENTE": ["CONFIRMADO", "NEGADO"],
+            "CONFIRMADO": ["ESTORNADO"],
+            "ESTORNADO": [],  # Estado final
+            "NEGADO": ["PENDENTE"]  # Pode tentar novamente
         }
         
-        if status_novo not in transicoes_validas.get(status_atual, []):
+        if status_novo_norm not in transicoes_validas.get(status_atual_norm, []):
             return False, f"Transição inválida: {status_atual} → {status_novo}"
         
         return True, ""
@@ -158,11 +210,11 @@ class HospedagemStateValidator:
         REGRA CRÍTICA: Check-in depende de 3 estados independentes
         """
         # 1. Reserva deve estar confirmada (SYS-001 FIX)
-        if status_reserva != StatusReserva.CONFIRMADA.value:
+        if _normalizar_reserva_status(status_reserva) != "CONFIRMADA":
             return False, f"❌ Reserva deve estar CONFIRMADA (atual: {status_reserva})"
         
         # 2. Pagamento deve estar confirmado (SYS-001 FIX)
-        if status_pagamento != StatusPagamento.CONFIRMADO.value:
+        if _normalizar_pagamento_status(status_pagamento) != "CONFIRMADO":
             return False, f"❌ Pagamento deve estar CONFIRMADO (atual: {status_pagamento})"
         
         # 3. Hospedagem não pode ter sido iniciada

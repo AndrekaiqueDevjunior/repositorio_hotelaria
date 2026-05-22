@@ -6,6 +6,7 @@ import Header from '../../components/layout/Header'
 import { useAuth } from '../../contexts/AuthContext'
 import { ThemeProvider } from '../../contexts/ThemeContext'
 import ReservaNotificationManager from '../../components/ReservaNotificationManager'
+import TefPendenciasGuard from '../../components/TefPendenciasGuard'
 
 export default function DashboardLayout({ children }) {
   const router = useRouter()
@@ -102,6 +103,7 @@ export default function DashboardLayout({ children }) {
             {/* Content Container */}
             <div className="p-4 lg:p-6 xl:p-8 animate-fade-in">
               <ReservaNotificationManager />
+              <TefPendenciasGuard user={user} />
               {children}
             </div>
           </main>

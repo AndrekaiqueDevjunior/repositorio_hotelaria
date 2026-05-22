@@ -4,10 +4,11 @@ Gerencia check-in, checkout e estado da hospedagem
 """
 from typing import Dict, Any, Optional
 from datetime import datetime
-import re
 from prisma import Client
 from app.core.state_validators import StateValidator
 from app.utils.datetime_utils import now_utc
+
+STATUS_PAGAMENTO_APROVADO = {"CONFIRMADO", "PAGO", "APROVADO", "APPROVED", "CAPTURED", "AUTHORIZED"}
 
 
 class HospedagemRepository:
@@ -121,9 +122,7 @@ class HospedagemRepository:
         )
         
         # Atualizar quarto para OCUPADO
-        quarto_numero_raw = (reserva.quartoNumero or "").strip()
-        match = re.search(r"\d+", quarto_numero_raw)
-        quarto_numero = match.group(0) if match else quarto_numero_raw
+        quarto_numero = (reserva.quartoNumero or "").strip()
         await self.db.quarto.update(
             where={"numero": quarto_numero},
             data={"status": "OCUPADO"}
@@ -185,7 +184,7 @@ class HospedagemRepository:
         # Buscar dados completos
         reserva = await self.db.reserva.find_unique(
             where={"id": reserva_id},
-            include={"hospedagem": True}
+            include={"hospedagem": True, "pagamentos": True}
         )
         
         if not reserva:
@@ -202,11 +201,24 @@ class HospedagemRepository:
         if not pode:
             raise ValueError(motivo)
         
-        # Validar saldo devedor (se houver consumo extra)
-        if consumo_frigobar > 0 or servicos_extras > 0:
-            # Verificar se extras foram pagos
-            # TODO: Implementar lógica de pagamento de extras
-            pass
+        total_extras = float(consumo_frigobar or 0) + float(servicos_extras or 0)
+        if total_extras > 0:
+            valor_hospedagem = (
+                float(reserva.valorTotal)
+                if getattr(reserva, "valorTotal", None) is not None
+                else float(reserva.valorDiaria or 0) * int(reserva.numDiarias or 0)
+            )
+            total_pago = sum(
+                float(p.valor or 0)
+                for p in (reserva.pagamentos or [])
+                if p.statusPagamento in STATUS_PAGAMENTO_APROVADO
+            )
+            saldo_pendente = (valor_hospedagem + total_extras) - total_pago
+            if saldo_pendente > 0.01:
+                raise ValueError(
+                    f"Check-out bloqueado: saldo pendente de R$ {saldo_pendente:.2f} "
+                    f"incluindo R$ {total_extras:.2f} de extras."
+                )
 
         checkout_timestamp = now_utc()
         
@@ -223,9 +235,7 @@ class HospedagemRepository:
         )
         
         # Atualizar quarto para LIVRE
-        quarto_numero_raw = (reserva.quartoNumero or "").strip()
-        match = re.search(r"\d+", quarto_numero_raw)
-        quarto_numero = match.group(0) if match else quarto_numero_raw
+        quarto_numero = (reserva.quartoNumero or "").strip()
         await self.db.quarto.update(
             where={"numero": quarto_numero},
             data={"status": "LIVRE"}

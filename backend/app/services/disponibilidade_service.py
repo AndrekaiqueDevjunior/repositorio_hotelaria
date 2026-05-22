@@ -1,120 +1,106 @@
 """
-Serviço de Disponibilidade de Quartos
-Verifica conflitos de reservas e disponibilidade
+Servico de disponibilidade de quartos.
+
+Regra canonica: uma reserva bloqueia um quarto quando ha intersecao real
+entre periodos: existente.checkin < novo.checkout e existente.checkout > novo.checkin.
+Assim, checkout e novo check-in no mesmo instante sao permitidos.
 """
-from typing import List, Dict, Any
-from datetime import datetime, date
+from typing import Any, Dict, List
+from datetime import datetime
 from prisma import Client
 
 
+STATUS_RESERVA_BLOQUEIA_DISPONIBILIDADE = [
+    "PENDENTE",
+    "PENDENTE_PAGAMENTO",
+    "AGUARDANDO_PAGAMENTO",
+    "AGUARDANDO_COMPROVANTE",
+    "EM_ANALISE",
+    "CONFIRMADA",
+    "PAGA_APROVADA",
+    "CHECKIN_LIBERADO",
+    "CHECKIN_REALIZADO",
+    "HOSPEDADO",
+    "CHECKED_IN",
+]
+
+STATUS_QUARTO_BLOQUEIA_DISPONIBILIDADE = ["BLOQUEADO", "MANUTENCAO", "INATIVO"]
+
+
 class DisponibilidadeService:
-    """Serviço para verificar disponibilidade de quartos"""
-    
+    """Servico para verificar disponibilidade de quartos."""
+
     def __init__(self, db: Client):
         self.db = db
-    
+
+    def _where_conflito(
+        self,
+        checkin: datetime,
+        checkout: datetime,
+        quarto_numero: str = None,
+        quartos_numeros: List[str] = None,
+        reserva_id_excluir: int = None,
+    ) -> Dict[str, Any]:
+        where_clause: Dict[str, Any] = {
+            "statusReserva": {"in": STATUS_RESERVA_BLOQUEIA_DISPONIBILIDADE},
+            "checkinPrevisto": {"lt": checkout},
+            "checkoutPrevisto": {"gt": checkin},
+        }
+
+        if quarto_numero is not None:
+            where_clause["quartoNumero"] = quarto_numero
+        elif quartos_numeros is not None:
+            where_clause["quartoNumero"] = {"in": quartos_numeros}
+
+        if reserva_id_excluir:
+            where_clause["id"] = {"not": reserva_id_excluir}
+
+        return where_clause
+
     async def verificar_disponibilidade(
         self,
         quarto_numero: str,
         checkin: datetime,
         checkout: datetime,
-        reserva_id_excluir: int = None
+        reserva_id_excluir: int = None,
     ) -> Dict[str, Any]:
-        """
-        Verificar se quarto está disponível no período
-        
-        Args:
-            quarto_numero: Número do quarto
-            checkin: Data/hora de check-in
-            checkout: Data/hora de check-out
-            reserva_id_excluir: ID da reserva a excluir da verificação (para edição)
-        
-        Returns:
-            {
-                "disponivel": bool,
-                "motivo": str,
-                "conflitos": List[Dict]
+        if checkout <= checkin:
+            return {
+                "disponivel": False,
+                "motivo": "Data de check-out deve ser posterior ao check-in",
+                "conflitos": [],
             }
-        """
-        # Buscar quarto
+
         quarto = await self.db.quarto.find_unique(where={"numero": quarto_numero})
         if not quarto:
             return {
                 "disponivel": False,
-                "motivo": "Quarto não encontrado",
-                "conflitos": []
+                "motivo": "Quarto nao encontrado",
+                "conflitos": [],
             }
-        
-        # Bloqueios operacionais impedem a reserva. Status como OCUPADO/RESERVADO
-        # sao resolvidos pelas reservas conflitantes abaixo para nao esconder datas futuras.
-        if quarto.status in ("BLOQUEADO", "MANUTENCAO", "INATIVO"):
+
+        if quarto.status in STATUS_QUARTO_BLOQUEIA_DISPONIBILIDADE:
             status_map = {
-                "OCUPADO": "ocupado",
-                "RESERVADO": "reservado",
-                "MANUTENCAO": "em manutenção",
+                "MANUTENCAO": "em manutencao",
                 "BLOQUEADO": "bloqueado",
-                "INATIVO": "inativo"
+                "INATIVO": "inativo",
             }
-            motivo = status_map.get(quarto.status, quarto.status.lower())
             return {
                 "disponivel": False,
-                "motivo": f"Quarto está {motivo}",
-                "conflitos": []
+                "motivo": f"Quarto esta {status_map.get(quarto.status, quarto.status.lower())}",
+                "conflitos": [],
             }
-        
-        # Buscar reservas que conflitam com o período
-        # Conflito ocorre quando:
-        # 1. Nova reserva começa durante uma reserva existente
-        # 2. Nova reserva termina durante uma reserva existente
-        # 3. Nova reserva engloba completamente uma reserva existente
-        
-        status_ativos = [
-            "PENDENTE_PAGAMENTO",
-            "AGUARDANDO_COMPROVANTE",
-            "EM_ANALISE",
-            "CONFIRMADA",
-            "PAGA_REJEITADA",
-            "CHECKIN_REALIZADO",
-            "HOSPEDADO",
-            "PENDENTE",
-            "PAGA_APROVADA",
-            "CHECKIN_LIBERADO",
-            "AGUARDANDO_PAGAMENTO",
-        ]
 
-        where_clause = {
-            "quartoNumero": quarto_numero,
-            "statusReserva": {
-                "in": status_ativos
-            },
-            "OR": [
-                # Caso 1: Check-in da nova reserva está dentro de uma reserva existente
-                {
-                    "checkinPrevisto": {"lte": checkin},
-                    "checkoutPrevisto": {"gt": checkin}
-                },
-                # Caso 2: Check-out da nova reserva está dentro de uma reserva existente
-                {
-                    "checkinPrevisto": {"lt": checkout},
-                    "checkoutPrevisto": {"gte": checkout}
-                },
-                # Caso 3: Nova reserva engloba completamente uma reserva existente
-                {
-                    "checkinPrevisto": {"gte": checkin},
-                    "checkoutPrevisto": {"lte": checkout}
-                }
-            ]
-        }
-        
-        # Excluir a própria reserva se estiver editando
-        if reserva_id_excluir:
-            where_clause["id"] = {"not": reserva_id_excluir}
-        
         reservas_conflitantes = await self.db.reserva.find_many(
-            where=where_clause,
-            include={"cliente": True}
+            where=self._where_conflito(
+                checkin=checkin,
+                checkout=checkout,
+                quarto_numero=quarto_numero,
+                reserva_id_excluir=reserva_id_excluir,
+            ),
+            include={"cliente": True},
         )
-        
+
         if reservas_conflitantes:
             conflitos = [
                 {
@@ -123,140 +109,107 @@ class DisponibilidadeService:
                     "cliente": r.clienteNome,
                     "checkin": r.checkinPrevisto.isoformat(),
                     "checkout": r.checkoutPrevisto.isoformat(),
-                    "status": r.statusReserva
+                    "status": r.statusReserva,
                 }
                 for r in reservas_conflitantes
             ]
-            
             return {
                 "disponivel": False,
-                "motivo": f"Quarto já possui {len(conflitos)} reserva(s) no período",
-                "conflitos": conflitos
+                "motivo": f"Quarto ja possui {len(conflitos)} reserva(s) no periodo",
+                "conflitos": conflitos,
             }
-        
+
         return {
             "disponivel": True,
-            "motivo": "Quarto disponível",
-            "conflitos": []
+            "motivo": "Quarto disponivel",
+            "conflitos": [],
         }
-    
+
     async def listar_quartos_disponiveis(
         self,
         checkin: datetime,
         checkout: datetime,
-        tipo_suite: str = None
+        tipo_suite: str = None,
     ) -> List[Dict[str, Any]]:
-        """
-        Listar quartos disponíveis no período
-        
-        Args:
-            checkin: Data/hora de check-in
-            checkout: Data/hora de check-out
-            tipo_suite: Filtrar por tipo de suíte (opcional)
-        
-        Returns:
-            Lista de quartos disponíveis
-        """
-        # Status operacionais bloqueados nao entram; ocupacao por data vem das reservas.
-        where_clause = {
-            "status": {"notIn": ["BLOQUEADO", "MANUTENCAO", "INATIVO"]}
+        if checkout <= checkin:
+            return []
+
+        where_clause: Dict[str, Any] = {
+            "status": {"notIn": STATUS_QUARTO_BLOQUEIA_DISPONIBILIDADE}
         }
-        
+
         if tipo_suite:
             where_clause["tipoSuite"] = tipo_suite
-        
+
         quartos = await self.db.quarto.find_many(where=where_clause)
-        
-        quartos_disponiveis = []
-        
-        for quarto in quartos:
-            resultado = await self.verificar_disponibilidade(
-                quarto.numero,
-                checkin,
-                checkout
+        if not quartos:
+            return []
+
+        numeros_quartos = [q.numero for q in quartos]
+        reservas_conflitantes = await self.db.reserva.find_many(
+            where=self._where_conflito(
+                checkin=checkin,
+                checkout=checkout,
+                quartos_numeros=numeros_quartos,
             )
-            
-            if resultado["disponivel"]:
-                quartos_disponiveis.append({
-                    "numero": quarto.numero,
-                    "tipo_suite": quarto.tipoSuite,
-                    "status": quarto.status,
-                    "disponivel": True
-                })
-        
-        return quartos_disponiveis
-    
+        )
+        quartos_ocupados = {r.quartoNumero for r in reservas_conflitantes}
+
+        return [
+            {
+                "numero": quarto.numero,
+                "tipo_suite": quarto.tipoSuite,
+                "status": quarto.status,
+                "disponivel": True,
+            }
+            for quarto in quartos
+            if quarto.numero not in quartos_ocupados
+        ]
+
     async def verificar_multiplos_quartos(
         self,
         checkin: datetime,
-        checkout: datetime
+        checkout: datetime,
     ) -> Dict[str, Any]:
-        """
-        Verificar disponibilidade de todos os quartos no período
-        
-        Returns:
-            {
-                "total_quartos": int,
-                "disponiveis": int,
-                "ocupados": int,
-                "quartos": List[Dict]
-            }
-        """
         quartos = await self.db.quarto.find_many()
-        
+        quartos_disponiveis = await self.listar_quartos_disponiveis(checkin, checkout)
+        numeros_disponiveis = {q["numero"] for q in quartos_disponiveis}
+
         resultado = {
             "total_quartos": len(quartos),
-            "disponiveis": 0,
-            "ocupados": 0,
-            "quartos": []
+            "disponiveis": len(numeros_disponiveis),
+            "ocupados": len(quartos) - len(numeros_disponiveis),
+            "quartos": [],
         }
-        
+
         for quarto in quartos:
-            disponibilidade = await self.verificar_disponibilidade(
-                quarto.numero,
-                checkin,
-                checkout
+            disponivel = quarto.numero in numeros_disponiveis
+            detalhes = (
+                {"disponivel": True, "motivo": "Quarto disponivel", "conflitos": []}
+                if disponivel
+                else await self.verificar_disponibilidade(quarto.numero, checkin, checkout)
             )
-            
-            if disponibilidade["disponivel"]:
-                resultado["disponiveis"] += 1
-            else:
-                resultado["ocupados"] += 1
-            
             resultado["quartos"].append({
                 "numero": quarto.numero,
                 "tipo_suite": quarto.tipoSuite,
                 "status_quarto": quarto.status,
-                "disponivel": disponibilidade["disponivel"],
-                "motivo": disponibilidade["motivo"],
-                "conflitos": disponibilidade["conflitos"]
+                "disponivel": detalhes["disponivel"],
+                "motivo": detalhes["motivo"],
+                "conflitos": detalhes["conflitos"],
             })
-        
+
         return resultado
-    
+
     async def sugerir_quartos_alternativos(
         self,
         tipo_suite: str,
         checkin: datetime,
         checkout: datetime,
-        limite: int = 5
+        limite: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Sugerir quartos alternativos do mesmo tipo que estão disponíveis
-        
-        Args:
-            tipo_suite: Tipo de suíte desejado
-            checkin: Data/hora de check-in
-            checkout: Data/hora de check-out
-            limite: Número máximo de sugestões
-        
-        Returns:
-            Lista de quartos alternativos disponíveis
-        """
         quartos_disponiveis = await self.listar_quartos_disponiveis(
             checkin,
             checkout,
-            tipo_suite
+            tipo_suite,
         )
-        
         return quartos_disponiveis[:limite]

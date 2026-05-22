@@ -191,7 +191,7 @@ async def criar_reserva(
             )
     
     # CAMADA 3: Lock para evitar race condition
-    lock_key = f"quarto:{reserva.quarto_numero}:{reserva.checkin_previsto}"
+    lock_key = f"quarto:{reserva.quarto_numero}"
     
     try:
         async with redis_lock(lock_key, timeout=10):

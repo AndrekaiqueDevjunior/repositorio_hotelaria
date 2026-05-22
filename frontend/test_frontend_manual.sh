@@ -10,7 +10,7 @@ echo "============================================================"
 # Configuração
 BASE_URL="http://localhost:8080"
 AUTH_EMAIL="admin@hotelreal.com.br"
-AUTH_PASSWORD="admin123"
+AUTH_PASSWORD="${AUTH_PASSWORD:?Defina AUTH_PASSWORD antes de executar o teste manual}"
 
 # Cores para output
 RED='\033[0;31m'
