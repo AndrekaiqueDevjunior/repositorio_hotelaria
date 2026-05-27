@@ -33,6 +33,34 @@ const formatCurrency = (value) => {
   }).format(value || 0)
 }
 
+const normalizePaymentMode = (value) => String(value || '').trim().toLowerCase()
+
+const isTefPaymentMode = (reserva) => normalizePaymentMode(reserva?.forma_pagamento || reserva?.formaPagamento) === 'tef'
+
+const TEF_SALE_OPTIONS = [
+  {
+    id: 'menu',
+    functionId: 0,
+    title: 'Venda TEF',
+    subtitle: 'Menu geral da CliSiTef',
+    description: 'Deixa a CliSiTef conduzir a escolha da modalidade no PinPad ou na tela.'
+  },
+  {
+    id: 'debito',
+    functionId: 2,
+    title: 'Debito',
+    subtitle: 'Funcao 2',
+    description: 'Inicia uma venda TEF direto na modalidade debito.'
+  },
+  {
+    id: 'credito',
+    functionId: 3,
+    title: 'Credito',
+    subtitle: 'Funcao 3',
+    description: 'Inicia uma venda TEF direto na modalidade credito.'
+  }
+]
+
 const escapeTipoCampo = (value) => String(value || '').replace(/\n/g, '\\n')
 
 const resolveTimeoutMs = (value, fallback) => {
@@ -255,6 +283,8 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
   const tefIdempotencyKeyRef = useRef(null)
 
   const [showTefFlow, setShowTefFlow] = useState(false)
+  const [showTefLaunch, setShowTefLaunch] = useState(() => isTefPaymentMode(reserva))
+  const [tefFunctionId, setTefFunctionId] = useState(0)
   const [tefSessionId, setTefSessionId] = useState(null)
   const [tefPrompt, setTefPrompt] = useState(null)
   const [tefInput, setTefInput] = useState('')
@@ -319,6 +349,8 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
 
   const nfpagTypeOptions = useMemo(() => getNfpagTypeOptions(tefResultado?.nfpag), [tefResultado])
   const nfpagSelectedType = useMemo(() => getNfpagTypeDetail(tefResultado?.nfpag, nfpagTipo), [tefResultado, nfpagTipo])
+  const reservaEmModoTef = isTefPaymentMode(reserva)
+  const selectedTefSaleOption = TEF_SALE_OPTIONS.find((option) => option.functionId === Number(tefFunctionId)) || TEF_SALE_OPTIONS[0]
 
   const formatarDataHostNfpag = (value) => {
     const digits = String(value || '').replace(/\D/g, '')
@@ -376,12 +408,14 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
     setPendenciaStatus('')
   }
 
-  const abrirFluxoTef = async () => {
+  const abrirFluxoTef = async (functionId = tefFunctionId) => {
     resetTefFlow()
+    setTefFunctionId(functionId)
     tefIdempotencyKeyRef.current = gerarTefIdempotencyKey(reserva?.id)
     setShowTefFlow(true)
+    setShowTefLaunch(false)
     tefStartRequestedRef.current = true
-    await iniciarFluxoTef()
+    await iniciarFluxoTef(functionId)
   }
 
   const iniciarTimeoutInatividade = () => {
@@ -660,6 +694,12 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
   }, [])
 
   useEffect(() => {
+    if (reservaEmModoTef && !showTefFlow) {
+      setShowTefLaunch(true)
+    }
+  }, [reservaEmModoTef, showTefFlow])
+
+  useEffect(() => {
     const buscarPendencias = async () => {
       if (!showTefFlow) return
       try {
@@ -812,7 +852,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     return () => clearTimeout(timer)
   }, [showTefFlow, tefResultado, tefProcessando, tefPrompt])
 
-  const iniciarFluxoTef = async () => {
+  const iniciarFluxoTef = async (functionIdOverride = tefFunctionId) => {
     try {
       if (!reserva?.id) {
         setTefErro('Reserva invalida. Recarregue a pagina e tente novamente.')
@@ -830,10 +870,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         tefIdempotencyKeyRef.current = gerarTefIdempotencyKey(reserva.id)
       }
       const tefIdempotencyKey = tefIdempotencyKeyRef.current
+      const functionIdValue = Number(functionIdOverride)
 
       const res = await api.post('/pagamentos/tef/iniciar', {
         reserva_id: parseInt(reserva.id, 10),
         valor: valorReserva,
+        function_id: Number.isFinite(functionIdValue) ? functionIdValue : 0,
         session_id: tefIdempotencyKey,
         idempotency_key: tefIdempotencyKey
       }, {
@@ -842,9 +884,15 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       })
 
       aplicarRespostaInterativa(res.data)
+      if (res.data?.success === false) {
+        setShowTefFlow(false)
+        setShowTefLaunch(true)
+      }
     } catch (err) {
       console.error('Erro ao iniciar fluxo TEF:', err)
       setTefErro(err.response?.data?.detail || 'Erro ao iniciar fluxo TEF')
+      setShowTefFlow(false)
+      setShowTefLaunch(true)
     } finally {
       setTefProcessando(false)
     }
@@ -953,6 +1001,16 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     }
   }
 
+  const iniciarVendaTefSelecionada = async (functionId = tefFunctionId) => {
+    if (!tefPendenciasVerificadas) {
+      const message = 'Antes de iniciar uma venda TEF, processe o tratamento de pendencias da CliSiTef.'
+      setPendenciaStatus(message)
+      toast.warning(message)
+      return
+    }
+    await abrirFluxoTef(functionId)
+  }
+
   const handleEscolha = async (opcao) => {
     if (opcao.action === 'comprovante') {
       try {
@@ -993,13 +1051,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
     }
 
     if (opcao.action === 'tef') {
-      if (!tefPendenciasVerificadas) {
-        const message = 'Antes de iniciar uma venda TEF, processe o tratamento de pendencias da CliSiTef.'
-        setPendenciaStatus(message)
-        toast.warning(message)
-        return
-      }
-      await abrirFluxoTef()
+      setShowTefLaunch(true)
       return
     }
   }
@@ -1020,6 +1072,140 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
           if (onSuccess) onSuccess()
         }}
       />
+    )
+  }
+
+  if (showTefLaunch && !showTefFlow) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-sky-700 text-white p-6 rounded-t-lg">
+            <div className="flex justify-between items-start gap-4">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Pagamento TEF da Reserva</h2>
+                <p className="text-sky-100">
+                  Reserva: {reserva?.codigo_reserva || `#${reserva?.id}`} | Valor: {formatCurrency(valorReserva)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-white hover:text-sky-100 text-2xl"
+                aria-label="Fechar"
+              >
+                x
+              </button>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-5">
+            <div className="rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sky-900">
+              <p className="font-semibold">Modo TEF ativo</p>
+              <p className="mt-1 text-sm">
+                A venda sera conduzida pelos comandos da CliSiTef. Depois de iniciar, responda aos menus, mensagens e coletas exatamente como o TEF solicitar.
+              </p>
+            </div>
+
+            {!tefPendenciasVerificadas && (
+              <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="font-semibold">Tratamento TEF pendente nesta sessao</p>
+                    <p className="mt-1 text-sm">
+                      Processe as pendencias da CliSiTef antes de iniciar uma nova venda TEF.
+                    </p>
+                    {pendenciaStatus && (
+                      <p className="mt-2 text-sm font-medium">{pendenciaStatus}</p>
+                    )}
+                    {tefErro && (
+                      <p className="mt-2 text-sm font-medium text-red-700">{tefErro}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={processarPendenciasAntesDaVenda}
+                    disabled={tefPendenciasProcessando}
+                    className="inline-flex items-center justify-center gap-2 rounded bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${tefPendenciasProcessando ? 'animate-spin' : ''}`} aria-hidden="true" />
+                    {tefPendenciasProcessando ? 'Processando...' : 'Processar pendencias'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <h3 className="text-lg font-semibold text-gray-800 mb-3">Selecione a venda TEF</h3>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {TEF_SALE_OPTIONS.map((option) => {
+                  const selected = Number(tefFunctionId) === Number(option.functionId)
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setTefFunctionId(option.functionId)}
+                      className={`rounded-lg border-2 p-4 text-left transition-all ${
+                        selected
+                          ? 'border-sky-600 bg-sky-50 shadow-sm'
+                          : 'border-gray-200 hover:border-sky-300 hover:bg-sky-50/50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-lg font-bold text-gray-900">{option.title}</p>
+                          <p className="text-sm font-semibold text-sky-700">{option.subtitle}</p>
+                        </div>
+                        {selected && <span className="rounded bg-sky-100 px-2 py-1 text-xs font-bold text-sky-700">Selecionado</span>}
+                      </div>
+                      <p className="mt-2 text-sm text-gray-600">{option.description}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="rounded border border-gray-200 bg-gray-50 px-4 py-3">
+              <p className="text-sm text-gray-700">
+                Funcao selecionada: <span className="font-semibold">{selectedTefSaleOption.subtitle}</span>. O backend usara
+                <span className="font-mono"> startTransaction</span>, <span className="font-mono">continueTransaction</span> e
+                <span className="font-mono"> finishTransaction</span> para finalizar a reserva somente apos retorno aprovado.
+              </p>
+              {pendenciaStatus && tefPendenciasVerificadas && (
+                <p className="mt-2 text-sm text-green-700">{pendenciaStatus}</p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => iniciarVendaTefSelecionada(tefFunctionId)}
+                disabled={tefProcessando || tefPendenciasProcessando || !tefPendenciasVerificadas}
+                className="flex-1 rounded bg-sky-700 px-6 py-3 font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {tefProcessando ? 'Iniciando...' : tefPendenciasVerificadas ? 'Iniciar TEF' : 'Processe as pendencias para iniciar'}
+              </button>
+              {!reservaEmModoTef && (
+                <button
+                  type="button"
+                  onClick={() => setShowTefLaunch(false)}
+                  disabled={tefProcessando}
+                  className="rounded bg-gray-200 px-6 py-3 font-semibold text-gray-700 hover:bg-gray-300 disabled:opacity-60"
+                >
+                  Voltar
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={tefProcessando}
+                className="rounded bg-gray-300 px-6 py-3 font-semibold text-gray-700 hover:bg-gray-400 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -1057,13 +1243,15 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
       >
         <div className="w-full max-w-5xl rounded-lg overflow-hidden shadow-xl">
           <div className="bg-sky-600 text-white px-6 py-5">
-            <h2 className="text-3xl font-semibold">Exemplo AgenteCliSiTef</h2>
+            <h2 className="text-3xl font-semibold">TEF - Pagamento da Reserva</h2>
+            <p className="mt-1 text-sky-100">
+              {selectedTefSaleOption.title} ({selectedTefSaleOption.subtitle}) | Reserva {reserva?.codigo_reserva || `#${reserva?.id}`}
+            </p>
           </div>
 
           <div className="bg-zinc-300 min-h-[420px] p-6">
                 <div className="mb-4 rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-                  Este fluxo cobre as sequencias de venda e multiplos pagamentos do roteiro (4 a 10 e 21 a 23). Para menu 110, reimpressao,
-                  cancelamento, QR Code, pendencias e TLS, use o modal `TEF Gerencial` em `Pagamentos`.
+                  Siga a mensagem exibida pela CliSiTef. A reserva so sera confirmada apos a finalizacao TEF aprovada e a entrega do comprovante quando houver cupom.
                 </div>
                 {tefResultado ? (
                   <div className="space-y-4">
@@ -1854,34 +2042,6 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
           <h3 className="text-lg font-semibold text-gray-800 mb-4">
             Selecione como deseja pagar:
           </h3>
-
-          {!tefPendenciasVerificadas && (
-            <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="font-semibold">Tratamento TEF pendente nesta sessao</p>
-                  <p className="mt-1 text-sm">
-                    Processe as pendencias da CliSiTef antes de iniciar uma nova venda TEF.
-                  </p>
-                  {pendenciaStatus && (
-                    <p className="mt-2 text-sm font-medium">{pendenciaStatus}</p>
-                  )}
-                  {tefErro && (
-                    <p className="mt-2 text-sm font-medium text-red-700">{tefErro}</p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={processarPendenciasAntesDaVenda}
-                  disabled={tefPendenciasProcessando}
-                  className="inline-flex items-center justify-center gap-2 rounded bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
-                >
-                  <RefreshCw className={`h-4 w-4 ${tefPendenciasProcessando ? 'animate-spin' : ''}`} aria-hidden="true" />
-                  {tefPendenciasProcessando ? 'Processando...' : 'Processar pendencias'}
-                </button>
-              </div>
-            </div>
-          )}
 
           <div className="space-y-4">
             {opcoesPagamento.map((opcao) => (
