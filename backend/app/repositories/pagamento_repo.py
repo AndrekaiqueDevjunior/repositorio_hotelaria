@@ -7,6 +7,7 @@ from app.services.whatsapp_service import get_whatsapp_service
 from app.utils.datetime_utils import to_utc, now_utc
 import uuid
 from pathlib import Path
+from prisma.errors import UniqueViolationError
 
 class PagamentoRepository:
     def __init__(self, db: Client):
@@ -149,8 +150,17 @@ class PagamentoRepository:
             "statusPagamento": status_inicial
         }
         
-        # Criar o pagamento
-        novo_pagamento = await self.db.pagamento.create(data=pagamento_data)
+        # Criar o pagamento. Se outra requisição ganhou a corrida com a mesma
+        # idempotency_key, retornar o registro existente como replay seguro.
+        try:
+            novo_pagamento = await self.db.pagamento.create(data=pagamento_data)
+        except UniqueViolationError:
+            if idempotency_key:
+                pagamento_existente = await self.get_by_idempotency_key(idempotency_key)
+                if pagamento_existente:
+                    print(f"[IDEMPOTÊNCIA] Colisao de create tratada como replay: {idempotency_key}")
+                    return pagamento_existente
+            raise
 
         pago_com_relacoes = await self.db.pagamento.find_unique(
             where={"id": novo_pagamento.id},

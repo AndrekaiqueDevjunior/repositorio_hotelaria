@@ -1,6 +1,7 @@
 import pytest
 import sys
 import types
+import asyncio
 
 sys.modules.setdefault(
     "requests",
@@ -107,6 +108,30 @@ class FakeTefService:
         }
 
 
+class SlowCountingTefService:
+    def __init__(self):
+        self.calls = 0
+
+    async def finalizar_fluxo_interativo(self, session_id, confirm, param_adic=None):
+        self.calls += 1
+        await asyncio.sleep(0.02)
+        return {
+            "success": True,
+            "finalizado": True,
+            "aprovado": True,
+            "status": "APROVADO",
+            "nsu": "123456",
+            "autorizacao": "999999",
+            "message": "Transacao aprovada",
+        }
+
+
+class SlowPagamentoRepo(FakePagamentoRepo):
+    async def create(self, pagamento, idempotency_key=None):
+        await asyncio.sleep(0.02)
+        return await super().create(pagamento, idempotency_key=idempotency_key)
+
+
 @pytest.mark.asyncio
 async def test_pagamento_tef_finalizado_reusa_idempotency_key():
     repo = FakePagamentoRepo()
@@ -132,6 +157,38 @@ async def test_pagamento_tef_finalizado_reusa_idempotency_key():
     assert segundo["idempotent_replay"] is True
     assert repo.created == 1
     assert repo.updated == 1
+
+
+@pytest.mark.asyncio
+async def test_pagamento_tef_finalizado_concorrente_usa_um_registro():
+    repo = SlowPagamentoRepo()
+    tef_service = SlowCountingTefService()
+    service = PagamentoService(repo)
+    service.tef_service = tef_service
+
+    primeiro, segundo = await asyncio.gather(
+        service.finalizar_fluxo_tef(
+            reserva_id=10,
+            valor=100.0,
+            session_id="sess-race",
+            confirm=True,
+            idempotency_key="tef-chave-race",
+        ),
+        service.finalizar_fluxo_tef(
+            reserva_id=10,
+            valor=100.0,
+            session_id="sess-race",
+            confirm=True,
+            idempotency_key="tef-chave-race",
+        ),
+    )
+
+    assert primeiro["success"] is True
+    assert segundo["success"] is True
+    assert segundo["idempotent_replay"] is True
+    assert repo.created == 1
+    assert repo.updated == 1
+    assert tef_service.calls == 1
 
 
 @pytest.mark.asyncio
@@ -176,3 +233,90 @@ async def test_finalizar_fluxo_interativo_replay_de_sessao_finalizada(monkeypatc
     assert segundo["idempotent_replay"] is True
     assert segundo["nsu"] == "123456"
     assert calls["finish"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fluxo_real_cria_sessao_remota_e_preserva_idempotency_key(monkeypatch):
+    TEF_INTERACTIVE_SESSIONS.clear()
+    TEF_FINALIZED_SESSIONS.clear()
+    service = TefService()
+    service.agente_mode = "real"
+    calls = []
+
+    def fake_request(method, path, payload=None):
+        payload = payload or {}
+        calls.append((method, path, dict(payload)))
+        if path == "/session":
+            return {"serviceStatus": 0, "sessionId": "remote-1"}
+        if path == "/startTransaction":
+            assert payload["sessionId"] == "remote-1"
+            return {"serviceStatus": 0, "clisitefStatus": 10000, "sessionId": "remote-1"}
+        if path == "/continueTransaction":
+            assert payload["sessionId"] == "remote-1"
+            return {
+                "serviceStatus": 0,
+                "clisitefStatus": 10000,
+                "commandId": 21,
+                "fieldId": 0,
+                "fieldMinLength": 1,
+                "fieldMaxLength": 1,
+                "data": "1:Credito",
+            }
+        raise AssertionError(f"chamada inesperada: {method} {path}")
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    result = await service.iniciar_fluxo_interativo(
+        valor=10.0,
+        reserva_id=123,
+        function_id=3,
+        session_id="idem-1",
+    )
+
+    assert result["success"] is True
+    assert result["session_id"] == "idem-1"
+    assert TEF_INTERACTIVE_SESSIONS["idem-1"]["remote_session_id"] == "remote-1"
+    assert [call[1] for call in calls] == ["/session", "/startTransaction", "/continueTransaction"]
+
+
+@pytest.mark.asyncio
+async def test_finalizar_fluxo_real_usa_sessao_remota(monkeypatch):
+    TEF_INTERACTIVE_SESSIONS.clear()
+    TEF_FINALIZED_SESSIONS.clear()
+    service = TefService()
+    service.agente_mode = "real"
+
+    TEF_INTERACTIVE_SESSIONS["idem-2"] = {
+        "session_id": "idem-2",
+        "remote_session_id": "remote-2",
+        "tax_invoice_number": "123",
+        "tax_invoice_date": "20260522",
+        "tax_invoice_time": "120000",
+        "function_id": 3,
+        "aprovado_pre_finish": True,
+        "cupom_cliente": "",
+        "cupom_estabelecimento": "",
+        "nsu": "123456",
+        "autorizacao": "999999",
+        "tipo_campos": [],
+        "nfpag": {},
+        "eventos": [],
+        "created_at": __import__("datetime").datetime.now(),
+        "last_activity_at": __import__("datetime").datetime.now(),
+    }
+
+    def fake_request(method, path, payload):
+        assert path == "/finishTransaction"
+        assert payload["sessionId"] == "remote-2"
+        return {"serviceStatus": 0, "serviceMessage": "Transacao aprovada"}
+
+    async def fake_store_reference(session):
+        return None
+
+    monkeypatch.setattr(service, "_request", fake_request)
+    monkeypatch.setattr(service, "_store_approved_transaction_reference", fake_store_reference)
+
+    result = await service.finalizar_fluxo_interativo("idem-2", confirm=True)
+
+    assert result["success"] is True
+    assert result["finalizado"] is True

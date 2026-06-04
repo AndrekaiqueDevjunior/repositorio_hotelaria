@@ -1,4 +1,7 @@
 from typing import Dict, Any, List
+from contextlib import asynccontextmanager
+import asyncio
+import uuid
 from datetime import datetime
 from app.utils.datetime_utils import now_utc, to_utc
 from fastapi import HTTPException
@@ -12,6 +15,52 @@ from app.services.integrate_notificacoes import (
     notificar_em_pagamento_recusado,
     notificar_em_pagamento_pendente
 )
+from app.core.cache import cache
+
+
+_TEF_FINALIZATION_LOCKS: dict[str, asyncio.Lock] = {}
+_PAYMENT_SUCCESS_STATUSES = {"PAGO", "APROVADO", "CONFIRMADO", "CAPTURED", "AUTHORIZED"}
+
+
+@asynccontextmanager
+async def _tef_finalization_lock(key: str, timeout: int = 30):
+    lock_name = f"tef-finalizar:{key}"
+    lock_value = str(uuid.uuid4())
+
+    if getattr(cache, "redis", None):
+        acquired = False
+        for _ in range(timeout * 10):
+            acquired = await cache.redis.set(f"lock:{lock_name}", lock_value, ex=timeout + 15, nx=True)
+            if acquired:
+                break
+            await asyncio.sleep(0.1)
+
+        if not acquired:
+            raise TimeoutError(f"Nao foi possivel adquirir lock: {lock_name}")
+
+        try:
+            yield
+        finally:
+            try:
+                current = await cache.redis.get(f"lock:{lock_name}")
+                if current == lock_value:
+                    await cache.redis.delete(f"lock:{lock_name}")
+            except Exception as exc:
+                print(f"[TEF][lock] Erro ao liberar {lock_name}: {exc}")
+        return
+
+    local_lock = _TEF_FINALIZATION_LOCKS.setdefault(lock_name, asyncio.Lock())
+    async with local_lock:
+        yield
+
+
+def _pagamento_replay_response(pagamento: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(pagamento.get("status") or pagamento.get("status_pagamento") or "").upper()
+    return {
+        **pagamento,
+        "success": status in _PAYMENT_SUCCESS_STATUSES,
+        "idempotent_replay": True,
+    }
 
 
 class PagamentoService:
@@ -320,6 +369,37 @@ class PagamentoService:
             raise HTTPException(status_code=500, detail=f"Erro ao continuar fluxo TEF: {str(e)}")
 
     async def finalizar_fluxo_tef(
+        self,
+        reserva_id: int | None,
+        valor: float | None,
+        session_id: str,
+        confirm: bool,
+        param_adic: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Dict[str, Any]:
+        lock_key = str(session_id or idempotency_key or "").strip()
+        if not lock_key:
+            lock_key = f"reserva:{reserva_id or 'sem-reserva'}"
+
+        try:
+            async with _tef_finalization_lock(lock_key):
+                if reserva_id and valor is not None and idempotency_key:
+                    pagamento_existente = await self.pagamento_repo.get_by_idempotency_key(idempotency_key)
+                    if pagamento_existente:
+                        return _pagamento_replay_response(pagamento_existente)
+
+                return await self._finalizar_fluxo_tef_locked(
+                    reserva_id=reserva_id,
+                    valor=valor,
+                    session_id=session_id,
+                    confirm=confirm,
+                    param_adic=param_adic,
+                    idempotency_key=idempotency_key,
+                )
+        except TimeoutError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+
+    async def _finalizar_fluxo_tef_locked(
         self,
         reserva_id: int | None,
         valor: float | None,

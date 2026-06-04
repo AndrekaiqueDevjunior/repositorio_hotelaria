@@ -26,7 +26,7 @@ class ReservaRepository:
         if not valor:
             return "-"
         try:
-            return valor.strftime("%d/%m/%Y")
+            return valor.strftime("%d/%m/%Y, %H:%M:%S")
         except Exception:
             return str(valor)[:10]
 
@@ -34,6 +34,7 @@ class ReservaRepository:
         try:
             whatsapp_service = get_whatsapp_service()
             valor_total = self._calcular_valor_total_model(reserva)
+            cliente = getattr(reserva, "cliente", None)
             await whatsapp_service.enviar_notificacao_evento_reserva(
                 evento=evento,
                 codigo_reserva=getattr(reserva, "codigoReserva", None) or f"RES-{getattr(reserva, 'id', '')}",
@@ -45,9 +46,37 @@ class ReservaRepository:
                 status=getattr(reserva, "statusReserva", None) or "-",
                 detalhe=detalhe,
                 reserva_id=getattr(reserva, "id", None),
+                cliente_telefone=(
+                    getattr(reserva, "telefoneContato", None)
+                    or getattr(cliente, "telefone", None)
+                ),
+                cliente_email=(
+                    getattr(reserva, "emailContato", None)
+                    or getattr(cliente, "email", None)
+                ),
+                cliente_documento=getattr(cliente, "documento", None),
+                responsavel_nome=getattr(reserva, "responsavelNome", None),
+                tipo_suite=getattr(reserva, "tipoSuite", None),
+                num_diarias=getattr(reserva, "numDiarias", None),
+                valor_diaria=float(getattr(reserva, "valorDiaria", 0) or 0),
+                origem=getattr(reserva, "origem", None),
+                forma_pagamento=getattr(reserva, "formaPagamento", None),
+                observacoes=getattr(reserva, "observacoes", None),
+                cliente_id=getattr(reserva, "clienteId", None),
+                created_at=self._formatar_data_curta(getattr(reserva, "createdAt", None)),
+                updated_at=self._formatar_data_curta(getattr(reserva, "updatedAt", None)),
+                criado_por="-",
             )
         except Exception as whatsapp_error:
             print(f"[WHATSAPP] Erro ao notificar reserva ({evento}): {whatsapp_error}")
+
+    async def notificar_whatsapp_por_id(self, reserva_id: int, evento: str = "criada", detalhe: str = None) -> None:
+        reserva = await self.db.reserva.find_unique(
+            where={"id": reserva_id},
+            include=self._default_include(),
+        )
+        if reserva:
+            await self._notificar_whatsapp_reserva(reserva, evento, detalhe=detalhe)
 
     def _default_include(self) -> Dict[str, Any]:
         return {
@@ -300,8 +329,12 @@ class ReservaRepository:
         
         # Criar notificaÃ§Ã£o de nova reserva
         if notificar:
-            await NotificationService.notificar_nova_reserva(self.db, nova_reserva)
-            await self._notificar_whatsapp_reserva(nova_reserva, "criada")
+            reserva_notificacao = await self.db.reserva.find_unique(
+                where={"id": nova_reserva.id},
+                include=self._default_include(),
+            )
+            await NotificationService.notificar_nova_reserva(self.db, reserva_notificacao or nova_reserva)
+            await self._notificar_whatsapp_reserva(reserva_notificacao or nova_reserva, "criada")
 
         try:
             from app.services.indicacao_service import IndicacaoService

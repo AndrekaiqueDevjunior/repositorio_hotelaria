@@ -684,6 +684,7 @@ async def criar_reserva_publica(
             reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
             if reserva_model:
                 await NotificationService.notificar_nova_reserva(db, reserva_model)
+                await reserva_repo.notificar_whatsapp_por_id(reserva_criada["id"], "criada")
 
         return {
             "success": True,

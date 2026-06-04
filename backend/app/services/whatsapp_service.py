@@ -299,18 +299,65 @@ class WhatsAppService:
         status: str,
         detalhe: Optional[str] = None,
         reserva_id: Optional[int] = None,
+        cliente_telefone: Optional[str] = None,
+        cliente_email: Optional[str] = None,
+        cliente_documento: Optional[str] = None,
+        responsavel_nome: Optional[str] = None,
+        tipo_suite: Optional[str] = None,
+        num_diarias: Optional[int] = None,
+        valor_diaria: Optional[float] = None,
+        origem: Optional[str] = None,
+        forma_pagamento: Optional[str] = None,
+        observacoes: Optional[str] = None,
+        cliente_id: Optional[int] = None,
+        created_at: Optional[str] = None,
+        updated_at: Optional[str] = None,
+        criado_por: Optional[str] = None,
     ) -> Dict[str, Any]:
         linhas = [
             f"Reserva {evento}",
             "",
-            f"Codigo: {codigo_reserva}",
+            f"Código: {codigo_reserva}",
             f"Cliente: {cliente_nome}",
-            f"Quarto: {quarto_numero}",
+            f"Tipo Suíte: {tipo_suite or '-'}",
             f"Check-in: {checkin_previsto}",
             f"Check-out: {checkout_previsto}",
             f"Valor: R$ {float(valor_total or 0):.2f}",
             f"Status: {status}",
+            "",
+            "👤 Informações do Cliente",
+            f"Nome: {cliente_nome}",
         ]
+        if cliente_id is not None:
+            linhas.append(f"ID Cliente: {cliente_id}")
+
+        linhas.extend([
+            "",
+            "🏠 Informações do Quarto",
+            f"Quarto: {quarto_numero}",
+            f"Tipo Suíte: {tipo_suite or '-'}",
+            f"Diárias: {num_diarias if num_diarias is not None else '-'}",
+            "",
+            "📅 Datas da Reserva",
+            "Check-in Previsto:",
+            checkin_previsto,
+            "Check-out Previsto:",
+            checkout_previsto,
+            "",
+            "💰 Detalhes Financeiros",
+        ])
+        if valor_diaria is not None:
+            linhas.append(f"Valor Diária: R$ {float(valor_diaria or 0):.2f}")
+        linhas.extend([
+            f"Nº Diárias: {num_diarias if num_diarias is not None else '-'}",
+            f"Valor Total: R$ {float(valor_total or 0):.2f}",
+            "",
+            "⚙️ Informações de Sistema",
+            f"ID Reserva: {reserva_id if reserva_id is not None else '-'}",
+            f"Criado em: {created_at or '-'}",
+            f"Atualizado em: {updated_at or '-'}",
+            f"Criado por: {criado_por or '-'}",
+        ])
         if detalhe:
             linhas.extend(["", f"Detalhe: {detalhe}"])
         link_reservas = (

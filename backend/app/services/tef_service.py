@@ -1162,6 +1162,41 @@ class TefService:
         response.raise_for_status()
         return response.json()
 
+    def _open_remote_session(
+        self,
+        *,
+        sitef_ip: str | None = None,
+        store_id: str | None = None,
+        terminal_id: str | None = None,
+        session_parameters: str | None = None,
+    ) -> str | None:
+        if self.agente_mode != "real":
+            return None
+
+        payload: Dict[str, Any] = {}
+        if sitef_ip:
+            payload["sitefIp"] = sitef_ip
+        if store_id:
+            payload["storeId"] = store_id
+        if terminal_id:
+            payload["terminalId"] = terminal_id
+        if session_parameters:
+            payload["sessionParameters"] = session_parameters
+
+        session = self._request("POST", "/session", payload)
+        if int(session.get("serviceStatus") or 0) != 0:
+            raise requests.RequestException(
+                f"Agente retornou serviceStatus={session.get('serviceStatus')} ao criar sessao: {session}"
+            )
+        return str(session.get("sessionId") or "").strip() or None
+
+    def _remote_session_id(self, session_id: str, session: Dict[str, Any] | None) -> str:
+        if isinstance(session, dict):
+            remote_session_id = str(session.get("remote_session_id") or "").strip()
+            if remote_session_id:
+                return remote_session_id
+        return session_id
+
     def _cleanup_remote_session(self) -> None:
         try:
             self._request("DELETE", "/session")
@@ -1574,8 +1609,16 @@ class TefService:
         store_id_resolved = store_id or settings.TEF_STORE_ID or None
         terminal_id_resolved = terminal_id or settings.TEF_TERMINAL_ID or None
         cashier_operator_resolved = cashier_operator or settings.TEF_CASHIER_OPERATOR or None
+        local_session_id = session_id
+        remote_session_id: str | None = None
 
         try:
+            remote_session_id = self._open_remote_session(
+                sitef_ip=sitef_ip_resolved,
+                store_id=store_id_resolved,
+                terminal_id=terminal_id_resolved,
+                session_parameters=session_parameters_resolved,
+            )
             start = self._start_transaction(
                 function_id=function_id,
                 valor_centavos=valor_centavos,
@@ -1589,7 +1632,7 @@ class TefService:
                 trn_additional_parameters=trn_additional_resolved,
                 trn_init_parameters=trn_init_resolved,
                 session_parameters=session_parameters_resolved,
-                session_id=session_id,
+                session_id=remote_session_id or local_session_id,
             )
         except requests.RequestException as exc:
             return {
@@ -1609,6 +1652,12 @@ class TefService:
             self._reset_local_interactive_sessions()
             await self._clear_cached_sessions()
             try:
+                remote_session_id = self._open_remote_session(
+                    sitef_ip=sitef_ip_resolved,
+                    store_id=store_id_resolved,
+                    terminal_id=terminal_id_resolved,
+                    session_parameters=session_parameters_resolved,
+                )
                 start = self._start_transaction(
                     function_id=function_id,
                     valor_centavos=valor_centavos,
@@ -1622,7 +1671,7 @@ class TefService:
                     trn_additional_parameters=trn_additional_resolved,
                     trn_init_parameters=trn_init_resolved,
                     session_parameters=session_parameters_resolved,
-                    session_id=session_id,
+                    session_id=remote_session_id or local_session_id,
                 )
             except requests.RequestException as exc:
                 return {
@@ -1645,7 +1694,8 @@ class TefService:
                 "detail": start,
             }
 
-        session_id = start.get("sessionId")
+        remote_session_id = str(start.get("sessionId") or remote_session_id or "").strip() or None
+        session_id = local_session_id or remote_session_id
         if not session_id:
             return {
                 "success": False,
@@ -1655,6 +1705,7 @@ class TefService:
 
         TEF_INTERACTIVE_SESSIONS[session_id] = {
             "session_id": session_id,
+            "remote_session_id": remote_session_id,
             "reserva_id": reserva_id,
             "valor": valor,
             "valor_centavos": valor_centavos,
@@ -1758,6 +1809,7 @@ class TefService:
                 }
 
         last_response: Dict[str, Any] | None = None
+        remote_session_id = self._remote_session_id(session_id, session)
 
         for _ in range(INTERACTIVE_CONTINUE_MAX_ITERATIONS):
             try:
@@ -1765,7 +1817,7 @@ class TefService:
                     "POST",
                     "/continueTransaction",
                     {
-                        "sessionId": session_id,
+                        "sessionId": remote_session_id,
                         "continue": next_continue,
                         "data": next_data,
                     },
@@ -1864,6 +1916,7 @@ class TefService:
                 "error": "Sessao TEF expirada por inatividade",
             }
 
+        remote_session_id = self._remote_session_id(session_id, session)
         finish_tax_invoice_number = session["tax_invoice_number"]
         finish_tax_invoice_date = session["tax_invoice_date"]
         finish_tax_invoice_time = session["tax_invoice_time"]
@@ -1877,7 +1930,7 @@ class TefService:
             )
 
         finish_payload: Dict[str, Any] = {
-            "sessionId": session_id,
+            "sessionId": remote_session_id,
             "confirm": 1 if confirm else 0,
             "taxInvoiceNumber": finish_tax_invoice_number,
             "taxInvoiceDate": finish_tax_invoice_date,
@@ -1975,12 +2028,13 @@ class TefService:
                 "message": "Sessao TEF expirada e encerrada",
             }
 
+        remote_session_id = self._remote_session_id(session_id, session)
         try:
             self._request(
                 "POST",
                 "/continueTransaction",
                 {
-                    "sessionId": session_id,
+                    "sessionId": remote_session_id,
                     "continue": -1,
                     "data": "",
                 },
@@ -2048,8 +2102,15 @@ class TefService:
         tax_invoice_date = _now_fiscal_date()
         tax_invoice_time = _now_fiscal_time()
         session_parameters = self._resolve_session_parameters(None)
+        remote_session_id: str | None = None
 
         try:
+            remote_session_id = self._open_remote_session(
+                sitef_ip=settings.TEF_SITEF_IP or None,
+                store_id=settings.TEF_STORE_ID or None,
+                terminal_id=settings.TEF_TERMINAL_ID or None,
+                session_parameters=session_parameters,
+            )
             start = self._start_transaction(
                 function_id=130,
                 valor_centavos=None,
@@ -2063,6 +2124,7 @@ class TefService:
                 trn_additional_parameters=settings.TEF_TRN_PARAMETERS or None,
                 trn_init_parameters=self._resolve_trn_init_parameters(130, None),
                 session_parameters=session_parameters,
+                session_id=remote_session_id,
             )
         except requests.RequestException as exc:
             _set_pending_status("Falha ao iniciar pendencias TEF", {"error": str(exc)})
@@ -2088,7 +2150,7 @@ class TefService:
                 "detail": start,
             }
 
-        session_id = start.get("sessionId")
+        session_id = str(start.get("sessionId") or remote_session_id or "").strip()
         if not session_id:
             _set_pending_status("Agente nao retornou sessionId", start)
             return {
