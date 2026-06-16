@@ -14,7 +14,7 @@ BEGIN
         ADD CONSTRAINT reservas_quarto_periodo_no_overlap
         EXCLUDE USING gist (
             quarto_numero WITH =,
-            tstzrange(checkin_previsto, checkout_previsto, '[)') WITH &&
+            tsrange(checkin_previsto, checkout_previsto, '[)') WITH &&
         )
         WHERE (
             status_reserva IN (
