@@ -70,6 +70,10 @@ class CupomRepository:
                 "trackingSlug": data.get("tracking_slug"),
                 "criadoPor": criado_por,
                 "tipoCampanha": data.get("tipo_campanha"),
+                "influencerNome": data.get("influencer_nome"),
+                "commissionPercentual": self._to_decimal(data["commission_percentual"])
+                if data.get("commission_percentual") is not None
+                else None,
                 "clienteIndicadorId": data.get("cliente_indicador_id"),
             }
         )
@@ -110,6 +114,14 @@ class CupomRepository:
             update_data["trackingSlug"] = data.get("tracking_slug")
         if "tipo_campanha" in data:
             update_data["tipoCampanha"] = data.get("tipo_campanha")
+        if "influencer_nome" in data:
+            update_data["influencerNome"] = data.get("influencer_nome")
+        if "commission_percentual" in data:
+            update_data["commissionPercentual"] = (
+                self._to_decimal(data["commission_percentual"])
+                if data.get("commission_percentual") is not None
+                else None
+            )
         if "cliente_indicador_id" in data:
             update_data["clienteIndicadorId"] = data.get("cliente_indicador_id")
 
@@ -128,6 +140,114 @@ class CupomRepository:
             data={"ativo": ativo, "status": CUPOM_STATUS_ACTIVE if ativo else CUPOM_STATUS_CANCELLED},
         )
         return self._serialize_cupom(cupom)
+
+    async def list_admin(
+        self,
+        status: Optional[str] = None,
+        tipo_campanha: Optional[str] = None,
+        apenas_influencer: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        conditions: List[str] = []
+        params: List[Any] = []
+
+        if status:
+            params.append(status.strip().lower())
+            conditions.append(f"LOWER(c.status) = ${len(params)}")
+        if tipo_campanha:
+            params.append(tipo_campanha.strip().upper())
+            conditions.append(f"UPPER(COALESCE(c.tipo_campanha, '')) = ${len(params)}")
+        if apenas_influencer:
+            conditions.append(
+                "(UPPER(COALESCE(c.tipo_campanha, '')) = 'INFLUENCER' "
+                "OR c.influencer_nome IS NOT NULL "
+                "OR c.commission_percentual IS NOT NULL)"
+            )
+
+        limit = max(1, min(int(limit or 50), 200))
+        offset = max(0, int(offset or 0))
+        params.extend([limit, offset])
+        limit_param = len(params) - 1
+        offset_param = len(params)
+        where_sql = " AND ".join(conditions) if conditions else "TRUE"
+
+        rows = await self.db.query_raw(
+            f"""
+            SELECT
+                c.*,
+                COUNT(cu.id)::int AS usos_registrados,
+                COUNT(DISTINCT cu.cliente_id)::int AS clientes_unicos,
+                COALESCE(SUM(cu.valor_original), 0)::numeric AS valor_original_total,
+                COALESCE(SUM(cu.valor_desconto), 0)::numeric AS valor_desconto_total,
+                COALESCE(SUM(cu.valor_final), 0)::numeric AS valor_final_total
+            FROM cupons c
+            LEFT JOIN cupons_usos cu ON cu.cupom_id = c.id
+            WHERE {where_sql}
+            GROUP BY c.id
+            ORDER BY c.created_at DESC
+            LIMIT ${limit_param} OFFSET ${offset_param}
+            """,
+            *params,
+        )
+        return [self._serialize_cupom_admin_row(row) for row in rows]
+
+    async def get_admin_by_codigo(
+        self,
+        codigo: str,
+        include_usages: bool = True,
+        usage_limit: int = 25,
+    ) -> Optional[Dict[str, Any]]:
+        rows = await self.db.query_raw(
+            """
+            SELECT
+                c.*,
+                COUNT(cu.id)::int AS usos_registrados,
+                COUNT(DISTINCT cu.cliente_id)::int AS clientes_unicos,
+                COALESCE(SUM(cu.valor_original), 0)::numeric AS valor_original_total,
+                COALESCE(SUM(cu.valor_desconto), 0)::numeric AS valor_desconto_total,
+                COALESCE(SUM(cu.valor_final), 0)::numeric AS valor_final_total
+            FROM cupons c
+            LEFT JOIN cupons_usos cu ON cu.cupom_id = c.id
+            WHERE c.codigo = $1
+            GROUP BY c.id
+            LIMIT 1
+            """,
+            self._normalizar_codigo(codigo),
+        )
+        if not rows:
+            return None
+
+        cupom = self._serialize_cupom_admin_row(rows[0])
+        if not include_usages:
+            return cupom
+
+        limite = max(1, min(int(usage_limit or 25), 100))
+        usos = await self.db.query_raw(
+            """
+            SELECT
+                cu.id,
+                cu.reserva_id,
+                cu.cliente_id,
+                cu.valor_original,
+                cu.valor_desconto,
+                cu.valor_final,
+                cu.created_at,
+                r.codigo_reserva,
+                c.nome_completo AS cliente_nome,
+                c.documento AS cliente_documento
+            FROM cupons_usos cu
+            LEFT JOIN reservas r ON r.id = cu.reserva_id
+            LEFT JOIN clientes c ON c.id = cu.cliente_id
+            WHERE cu.cupom_id = $1
+            ORDER BY cu.created_at DESC
+            LIMIT $2
+            """,
+            int(cupom["id"]),
+            limite,
+        )
+        cupom["usages"] = [self._serialize_cupom_uso_admin_row(row) for row in usos]
+        return cupom
 
     async def delete(self, cupom_id: int) -> bool:
         existente = await self.db.cupom.find_unique(where={"id": cupom_id})
@@ -317,6 +437,46 @@ class CupomRepository:
             cupom_codigo=getattr(getattr(uso, "cupom", None), "codigo", None),
             pontos_bonus=int(getattr(getattr(uso, "cupom", None), "pontosBonus", 0) or 0),
         )
+
+    async def processar_invalidacoes_automaticas(self) -> Dict[str, Any]:
+        agora = now_utc()
+        expirados = await self.db.query_raw(
+            """
+            UPDATE cupons
+            SET ativo = FALSE,
+                status = $1,
+                updated_at = NOW()
+            WHERE status = $2
+              AND ativo = TRUE
+              AND data_fim < $3::timestamptz
+            RETURNING id, codigo
+            """,
+            CUPOM_STATUS_EXPIRED,
+            CUPOM_STATUS_ACTIVE,
+            agora,
+        )
+        esgotados = await self.db.query_raw(
+            """
+            UPDATE cupons
+            SET ativo = FALSE,
+                status = $1,
+                updated_at = NOW()
+            WHERE status = $2
+              AND ativo = TRUE
+              AND limite_total_usos IS NOT NULL
+              AND total_usos >= limite_total_usos
+            RETURNING id, codigo
+            """,
+            CUPOM_STATUS_MAX_USAGE,
+            CUPOM_STATUS_ACTIVE,
+        )
+        return {
+            "success": True,
+            "cupons_expirados": len(expirados),
+            "cupons_esgotados": len(esgotados),
+            "expirados": [{"id": int(row["id"]), "codigo": row["codigo"]} for row in expirados],
+            "esgotados": [{"id": int(row["id"]), "codigo": row["codigo"]} for row in esgotados],
+        }
 
     async def _obter_contexto_reserva(
         self,
@@ -619,9 +779,83 @@ class CupomRepository:
             "tracking_slug": getattr(cupom, "trackingSlug", None),
             "criado_por": cupom.criadoPor,
             "tipo_campanha": getattr(cupom, "tipoCampanha", None),
+            "influencer_nome": getattr(cupom, "influencerNome", None),
+            "commission_percentual": (
+                float(getattr(cupom, "commissionPercentual"))
+                if getattr(cupom, "commissionPercentual", None) is not None
+                else None
+            ),
             "cliente_indicador_id": getattr(cupom, "clienteIndicadorId", None),
             "created_at": cupom.createdAt.isoformat() if cupom.createdAt else None,
             "updated_at": cupom.updatedAt.isoformat() if cupom.updatedAt else None,
+        }
+
+    def _serialize_cupom_admin_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        stats = {
+            "usage_count": int(row.get("usos_registrados") or 0),
+            "unique_customers": int(row.get("clientes_unicos") or 0),
+            "gross_amount": float(self._to_decimal(row.get("valor_original_total") or 0)),
+            "discount_amount": float(self._to_decimal(row.get("valor_desconto_total") or 0)),
+            "net_amount": float(self._to_decimal(row.get("valor_final_total") or 0)),
+        }
+        commission_percentual = row.get("commission_percentual")
+        commission_rate = self._to_decimal(commission_percentual) if commission_percentual is not None else Decimal("0.00")
+        commission_base = self._to_decimal(row.get("valor_final_total") or 0)
+        estimated_commission = (commission_base * commission_rate / Decimal("100")).quantize(
+            CASAS_MONETARIAS,
+            rounding=ROUND_HALF_UP,
+        )
+        stats["commission_base"] = float(commission_base)
+        stats["estimated_commission"] = float(estimated_commission)
+
+        data_inicio = row.get("data_inicio")
+        data_fim = row.get("data_fim")
+        created_at = row.get("created_at")
+        updated_at = row.get("updated_at")
+        return {
+            "id": int(row["id"]),
+            "codigo": row["codigo"],
+            "descricao": row.get("descricao"),
+            "tipo_desconto": row.get("tipo_desconto"),
+            "valor_desconto": float(self._to_decimal(row.get("valor_desconto") or 0)),
+            "pontos_bonus": int(row.get("pontos_bonus") or 0),
+            "min_diarias": row.get("min_diarias"),
+            "suites_permitidas": self._parse_suites_permitidas(row.get("suites_permitidas")) or None,
+            "data_inicio": data_inicio.isoformat() if hasattr(data_inicio, "isoformat") else data_inicio,
+            "data_fim": data_fim.isoformat() if hasattr(data_fim, "isoformat") else data_fim,
+            "limite_total_usos": row.get("limite_total_usos"),
+            "limite_por_cliente": row.get("limite_por_cliente"),
+            "total_usos": int(row.get("total_usos") or 0),
+            "ativo": bool(row.get("ativo")),
+            "status": row.get("status") or CUPOM_STATUS_ACTIVE,
+            "tracking_slug": row.get("tracking_slug"),
+            "criado_por": row.get("criado_por"),
+            "tipo_campanha": row.get("tipo_campanha"),
+            "influencer_nome": row.get("influencer_nome"),
+            "commission_percentual": (
+                float(self._to_decimal(row.get("commission_percentual")))
+                if row.get("commission_percentual") is not None
+                else None
+            ),
+            "cliente_indicador_id": row.get("cliente_indicador_id"),
+            "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+            "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+            "stats": stats,
+        }
+
+    def _serialize_cupom_uso_admin_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        created_at = row.get("created_at")
+        return {
+            "id": int(row["id"]),
+            "reservation_id": row.get("reserva_id"),
+            "reservation_code": row.get("codigo_reserva"),
+            "customer_id": row.get("cliente_id"),
+            "customer_name": row.get("cliente_nome"),
+            "customer_document": row.get("cliente_documento"),
+            "gross_amount": float(self._to_decimal(row.get("valor_original") or 0)),
+            "discount_amount": float(self._to_decimal(row.get("valor_desconto") or 0)),
+            "net_amount": float(self._to_decimal(row.get("valor_final") or 0)),
+            "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
         }
 
     def _serialize_cupom_uso(

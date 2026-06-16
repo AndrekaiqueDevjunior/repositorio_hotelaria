@@ -112,8 +112,8 @@ INSERT INTO niveis_fidelidade (
 )
 VALUES
     (0, 'ESSENCIA', 0, 0, '{"descricao": "Entrada na Jornada Real"}', 0, TRUE),
-    (1, 'EXPERIENCIA', 50, 0, '{"descricao": "Beneficios de evolucao da Jornada Real"}', 1, TRUE),
-    (2, 'REAL', 90, 0, '{"descricao": "Nivel maximo da Jornada Real"}', 2, TRUE)
+    (1, 'EXPERIENCIA', 50, 20, '{"descricao": "Beneficios de evolucao da Jornada Real", "pontos_por_reserva": "+20%"}', 1, TRUE),
+    (2, 'REAL', 90, 40, '{"descricao": "Nivel maximo da Jornada Real", "pontos_por_reserva": "+40%"}', 2, TRUE)
 ON CONFLICT (codigo) DO UPDATE
 SET nome = EXCLUDED.nome,
     pontos_minimos = EXCLUDED.pontos_minimos,

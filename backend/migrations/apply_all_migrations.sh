@@ -20,6 +20,15 @@ MIGRATIONS=(
     "009_cupom_amigo_programa_pontos.sql"
     "010_jornada_real_complementos.sql"
     "011_jornada_real_consistencia.sql"
+    "012_reserva_voucher_operacional.sql"
+    "013_jornada_real_telas.sql"
+    "014_jornada_real_bonus_niveis.sql"
+    "015_transacoes_pontos_metadata.sql"
+    "016_reservas_exclusion_disponibilidade.sql"
+    "017_codigos_resgate_historico.sql"
+    "018_otp_autenticacao_cliente.sql"
+    "019_checkin_cash_approvals.sql"
+    "020_admin_coupons_influencer.sql"
 )
 
 # Verificar se estamos no diretório correto

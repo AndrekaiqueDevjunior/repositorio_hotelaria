@@ -30,6 +30,14 @@ class FakeDbPrograma:
 
     async def query_raw(self, *args):
         self.query_calls += 1
+        sql = args[0]
+        if "COUNT(*)::int AS rewards_total" in sql:
+            saldo = int(args[1] or 0)
+            premios = [25, 35, 90, 120]
+            return [{
+                "rewards_total": len(premios),
+                "rewards_unlocked": len([p for p in premios if p <= saldo]),
+            }]
         return [{"total": 2}]
 
 
@@ -38,8 +46,8 @@ def test_aplica_bonus_nivel_experiencia():
     calculo = ProgramaPontosService.aplicar_bonus_nivel(5, nivel)
 
     assert calculo["pontos_base"] == 5
-    assert calculo["pontos_bonus_nivel"] == 0
-    assert calculo["pontos_total"] == 5
+    assert calculo["pontos_bonus_nivel"] == 1
+    assert calculo["pontos_total"] == 6
 
 
 def test_aplica_bonus_nivel_real():
@@ -47,8 +55,8 @@ def test_aplica_bonus_nivel_real():
     calculo = ProgramaPontosService.aplicar_bonus_nivel(5, nivel)
 
     assert calculo["pontos_base"] == 5
-    assert calculo["pontos_bonus_nivel"] == 0
-    assert calculo["pontos_total"] == 5
+    assert calculo["pontos_bonus_nivel"] == 2
+    assert calculo["pontos_total"] == 7
 
 
 @pytest.mark.asyncio
@@ -63,6 +71,10 @@ async def test_programa_calcula_barras_nivel_e_premio():
     assert programa["barra_nivel"]["faltam_pontos"] == 18
     assert programa["barra_nivel"]["percentual"] == 55
     assert programa["barra_premios"]["faltam_pontos"] == 18
+    assert programa["rewards_unlocked"] == 2
+    assert programa["rewards_total"] == 4
+    assert programa["barra_premios"]["rewards_unlocked"] == 2
+    assert programa["barra_premios"]["rewards_total"] == 4
 
 
 def test_calculo_pontos_por_suite_e_diarias():
@@ -154,7 +166,7 @@ class FakeModelValue:
 
 
 class FakeDbCheckout(FakeDbPontos):
-    def __init__(self, reserva_status="CHECKOUT_REALIZADO"):
+    def __init__(self, reserva_status="CHECKOUT_REALIZADO", saldo_nivel=0):
         super().__init__()
         self.reserva = FakeModelValue(SimpleNamespace(
             id=10,
@@ -164,6 +176,8 @@ class FakeDbCheckout(FakeDbPontos):
             statusReserva=reserva_status,
             codigoReserva="R10",
         ))
+        self.cliente = FakeModelValue(SimpleNamespace(id=1, nivelFidelidade=0))
+        self.usuariopontos = FakeModelValue(SimpleNamespace(saldo=saldo_nivel))
         self.pontosregra = FakeModelValue(SimpleNamespace(diariasBase=1, rpPorBase=2, temporada=None))
         self.transacaopontos = FakeTransacaoModel()
 
@@ -180,8 +194,40 @@ async def test_checkout_cria_pontos_pendentes_com_liberar_em():
     assert resultado["success"] is True
     assert resultado["status"] == "pendente"
     assert resultado["pontos"] == 4
+    assert resultado["pontos_base"] == 4
+    assert resultado["pontos_bonus_nivel"] == 0
     assert resultado["liberar_em"].startswith("2026-05-03T10:00:00")
     assert db._tx.transacaopontos.created_data["status"] == "pendente"
+    assert db._tx.transacaopontos.created_data["metadata"]["pontos_base"] == 4
+    assert db._tx.transacaopontos.created_data["metadata"]["bonus_percentual"] == 0
+    assert db._tx.transacaopontos.created_data["metadata"]["pontos_bonus_nivel"] == 0
+    assert db._tx.transacaopontos.created_data["metadata"]["pontos_total"] == 4
+
+
+@pytest.mark.asyncio
+async def test_checkout_aplica_bonus_nivel_experiencia():
+    from datetime import datetime, timezone
+
+    db = FakeDbCheckout(saldo_nivel=72)
+    checkout_em = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+    resultado = await creditar_rp_no_checkout(db, reserva_id=10, checkout_datetime=checkout_em)
+
+    assert resultado["success"] is True
+    assert resultado["pontos_base"] == 4
+    assert resultado["pontos_bonus_nivel"] == 1
+    assert resultado["pontos"] == 5
+    assert resultado["nivel"]["nome"] == "EXPERIENCIA"
+    assert db._tx.transacaopontos.created_data["pontos"] == 5
+    metadata = db._tx.transacaopontos.created_data["metadata"]
+    assert metadata["programa"] == "JORNADA_REAL"
+    assert metadata["origem"] == "CHECKOUT"
+    assert metadata["pontos_base"] == 4
+    assert metadata["bonus_percentual"] == 20
+    assert metadata["pontos_bonus_nivel"] == 1
+    assert metadata["pontos_total"] == 5
+    assert metadata["nivel"]["nome"] == "EXPERIENCIA"
+    assert metadata["calculo"]["suite_tipo"] == "MASTER"
 
 
 @pytest.mark.asyncio

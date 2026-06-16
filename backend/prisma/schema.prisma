@@ -55,6 +55,7 @@ model Cliente {
   cupomUsos           CupomUso[]
   cuponsIndicador     Cupom[]              @relation("ClienteCuponsIndicador")
   logsJornada         LogJornada[]
+  otpVerificacoes     OtpVerificacao[]
 
   @@unique([nomeCompleto, documento])
   @@index([tipoHospede])
@@ -162,6 +163,26 @@ model Pagamento {
   @@map("pagamentos")
 }
 
+model CheckinCashApproval {
+  id            Int       @id @default(autoincrement())
+  reservaId     Int       @map("reserva_id")
+  codigo        String    @unique
+  valor         Decimal   @db.Decimal(10, 2)
+  status        String    @default("pending")
+  expiraEm      DateTime  @map("expira_em")
+  aprovadoEm    DateTime? @map("aprovado_em")
+  aprovadoPor   Int?      @map("aprovado_por")
+  pagamentoId   Int?      @map("pagamento_id")
+  payload       Json?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([reservaId])
+  @@index([status])
+  @@index([expiraEm])
+  @@map("checkin_cash_approvals")
+}
+
 model ComprovantePagamento {
   id                  Int       @id @default(autoincrement())
   pagamentoId         Int       @map("pagamento_id")
@@ -253,6 +274,7 @@ model TransacaoPontos {
   saldoPosterior  Int            @default(0) @map("saldo_posterior")
   status          String         @default("liberado")
   liberarEm       DateTime?      @map("liberar_em")
+  metadata        Json?
   motivo          String?
   reservaId       Int?           @map("reserva_id")
   createdAt       DateTime       @default(now()) @map("created_at")
@@ -512,7 +534,7 @@ model ResgatePremio {
   updatedAt            DateTime     @updatedAt @map("updated_at")
   cliente              Cliente      @relation(fields: [clienteId], references: [id])
   premio               Premio       @relation(fields: [premioId], references: [id])
-  codigo               CodigoResgate?
+  codigos              CodigoResgate[]
   funcionario          Funcionario? @relation("ResgatesFuncionario", fields: [funcionarioId], references: [id])
   funcionarioEntrega   Funcionario? @relation("ResgatesEntrega", fields: [funcionarioEntregaId], references: [id])
 
@@ -525,7 +547,7 @@ model ResgatePremio {
 
 model CodigoResgate {
   id            Int            @id @default(autoincrement())
-  resgateId     Int            @unique @map("resgate_id")
+  resgateId     Int            @map("resgate_id")
   codigo        String         @unique
   status        String         @default("ativo")
   validoAte     DateTime       @map("valido_ate")
@@ -536,6 +558,7 @@ model CodigoResgate {
   resgate       ResgatePremio  @relation(fields: [resgateId], references: [id])
   funcionario   Funcionario?   @relation(fields: [funcionarioId], references: [id])
 
+  @@index([resgateId])
   @@index([status])
   @@index([validoAte])
   @@map("codigos_resgate")
@@ -555,6 +578,33 @@ model LogJornada {
   @@index([acao])
   @@index([createdAt])
   @@map("logs_jornada")
+}
+
+model OtpVerificacao {
+  id            String    @id
+  clienteId     Int?      @map("cliente_id")
+  documento     String
+  telefone      String
+  codigoHash    String    @map("codigo_hash")
+  status        String    @default("pending")
+  tentativas    Int       @default(0)
+  maxTentativas Int       @default(3) @map("max_tentativas")
+  expiraEm      DateTime  @map("expira_em")
+  validadoEm    DateTime? @map("validado_em")
+  ultimoEnvioEm DateTime  @default(now()) @map("ultimo_envio_em")
+  ip            String?
+  userAgent     String?   @map("user_agent")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  cliente       Cliente?  @relation(fields: [clienteId], references: [id])
+
+  @@index([clienteId])
+  @@index([documento])
+  @@index([telefone])
+  @@index([status])
+  @@index([expiraEm])
+  @@index([ultimoEnvioEm])
+  @@map("otp_verificacoes")
 }
 
 model ConfiguracaoJornada {
@@ -610,6 +660,8 @@ model Cupom {
   trackingSlug    String?    @unique @map("tracking_slug")
   criadoPor       Int?       @map("criado_por")
   tipoCampanha    String?    @map("tipo_campanha")
+  influencerNome  String?    @map("influencer_nome")
+  commissionPercentual Decimal? @map("commission_percentual") @db.Decimal(5, 2)
   clienteIndicadorId Int?    @map("cliente_indicador_id")
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")

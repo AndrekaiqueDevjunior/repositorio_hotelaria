@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from fastapi import HTTPException
 
 from app.repositories.cupom_repo import CupomRepository
-from app.utils.datetime_utils import now_utc
+from app.utils.datetime_utils import now_utc, to_utc
 
 
 class CupomService:
@@ -24,6 +24,12 @@ class CupomService:
         if not cupom:
             raise HTTPException(status_code=404, detail="Cupom não encontrado")
         return cupom
+
+    async def get_by_codigo(self, codigo: str) -> Optional[Dict[str, Any]]:
+        cupom = await self.cupom_repo.get_by_codigo(codigo)
+        if not cupom:
+            return None
+        return self._enriquecer_cupom_com_links(cupom)
 
     async def create(self, data: Dict[str, Any], criado_por: Optional[int] = None) -> Dict[str, Any]:
         try:
@@ -132,10 +138,64 @@ class CupomService:
                 "status": "active",
                 "tipo_campanha": (data.get("tipo_campanha") or "DESCONTO").upper(),
                 "tracking_slug": tracking_slug,
+                "influencer_nome": data.get("influencer_nome"),
+                "commission_percentual": data.get("commission_percentage") or data.get("commission_percentual"),
             },
             criado_por=criado_por,
         )
         return self._enriquecer_cupom_com_links(cupom)
+
+    async def admin_generate_coupon(
+        self,
+        data: Dict[str, Any],
+        criado_por: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        payload = await self._build_admin_coupon_payload(data, creating=True)
+        cupom = await self.create(payload, criado_por=criado_por)
+        admin_cupom = await self.cupom_repo.get_admin_by_codigo(cupom["codigo"], include_usages=False)
+        return self._to_admin_coupon_response(admin_cupom or cupom)
+
+    async def admin_list_coupons(
+        self,
+        status: Optional[str] = None,
+        campaign_type: Optional[str] = None,
+        influencer_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        repo_status = self._admin_status_to_repo(status) if status else None
+        rows = await self.cupom_repo.list_admin(
+            status=repo_status,
+            tipo_campanha=(campaign_type or "").strip().upper() or None,
+            apenas_influencer=bool(influencer_only),
+            limit=limit,
+            offset=offset,
+        )
+        coupons = [self._to_admin_coupon_response(row) for row in rows]
+        return {"success": True, "coupons": coupons, "total": len(coupons), "limit": limit, "offset": offset}
+
+    async def admin_get_coupon(self, code: str) -> Dict[str, Any]:
+        cupom = await self.cupom_repo.get_admin_by_codigo(code, include_usages=True)
+        if not cupom:
+            raise HTTPException(status_code=404, detail="Cupom nao encontrado")
+        return self._to_admin_coupon_response(cupom)
+
+    async def admin_update_coupon(self, code: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        existente = await self.cupom_repo.get_by_codigo(code)
+        if not existente:
+            raise HTTPException(status_code=404, detail="Cupom nao encontrado")
+
+        payload = await self._build_admin_coupon_payload(data, creating=False, current=existente)
+        cupom = await self.update(int(existente["id"]), payload)
+        admin_cupom = await self.cupom_repo.get_admin_by_codigo(cupom["codigo"], include_usages=False)
+        return self._to_admin_coupon_response(admin_cupom or cupom)
+
+    async def admin_delete_coupon(self, code: str) -> Dict[str, Any]:
+        existente = await self.cupom_repo.get_by_codigo(code)
+        if not existente:
+            raise HTTPException(status_code=404, detail="Cupom nao encontrado")
+        await self.delete(int(existente["id"]))
+        return {"success": True, "code": existente["codigo"], "status": "INACTIVE"}
 
     async def update(self, cupom_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -241,3 +301,164 @@ class CupomService:
             except Exception:
                 pass
         return cupom
+
+    async def _build_admin_coupon_payload(
+        self,
+        data: Dict[str, Any],
+        creating: bool,
+        current: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        now = now_utc()
+
+        campaign_type = (data.get("campaign_type") or data.get("tipo_campanha") or "").strip().upper()
+        influencer_name = data.get("influencer_name") or data.get("influencer_nome")
+        commission_percentage = data.get("commission_percentage")
+        if commission_percentage is None:
+            commission_percentage = data.get("commission_percentual")
+        if not campaign_type:
+            campaign_type = "INFLUENCER" if influencer_name or commission_percentage is not None else "DESCONTO"
+
+        if creating:
+            codigo = (data.get("code") or data.get("codigo") or "").strip().upper()
+            if not codigo:
+                prefix = "INF" if campaign_type == "INFLUENCER" else "DESC"
+                codigo = await self._gerar_codigo_unico(prefix)
+            payload["codigo"] = codigo
+            payload["data_inicio"] = data.get("valid_from") or data.get("data_inicio") or now
+            payload["data_fim"] = data["valid_until"] if "valid_until" in data else data["data_fim"]
+            payload["tipo_desconto"] = data["discount_type"] if "discount_type" in data else data["tipo_desconto"]
+            payload["valor_desconto"] = data["discount_value"] if "discount_value" in data else data["valor_desconto"]
+        else:
+            if "valid_from" in data or "data_inicio" in data:
+                payload["data_inicio"] = data.get("valid_from") or data.get("data_inicio")
+            if "valid_until" in data or "data_fim" in data:
+                payload["data_fim"] = data.get("valid_until") or data.get("data_fim")
+            if "discount_type" in data or "tipo_desconto" in data:
+                payload["tipo_desconto"] = data.get("discount_type") or data.get("tipo_desconto")
+            if "discount_value" in data or "valor_desconto" in data:
+                payload["valor_desconto"] = data.get("discount_value") or data.get("valor_desconto")
+
+        data_inicio = to_utc(payload.get("data_inicio") or (current or {}).get("data_inicio"))
+        data_fim = to_utc(payload.get("data_fim") or (current or {}).get("data_fim"))
+        if data_inicio and data_fim and data_fim <= data_inicio:
+            raise HTTPException(status_code=400, detail="validUntil deve ser posterior a validFrom")
+
+        description = data.get("description") if "description" in data else data.get("descricao")
+        if creating or description is not None:
+            payload["descricao"] = description or f"Cupom {payload.get('codigo') or (current or {}).get('codigo')}"
+
+        field_map = {
+            "bonus_points": "pontos_bonus",
+            "pontos_bonus": "pontos_bonus",
+            "min_nights": "min_diarias",
+            "min_diarias": "min_diarias",
+            "suite_types": "suites_permitidas",
+            "suites_permitidas": "suites_permitidas",
+            "max_uses": "limite_total_usos",
+            "limite_total_usos": "limite_total_usos",
+            "per_customer_limit": "limite_por_cliente",
+            "limite_por_cliente": "limite_por_cliente",
+        }
+        for source, target in field_map.items():
+            if source in data:
+                payload[target] = data.get(source)
+
+        if creating or "campaign_type" in data or "tipo_campanha" in data:
+            payload["tipo_campanha"] = campaign_type
+        if creating or "influencer_name" in data or "influencer_nome" in data:
+            payload["influencer_nome"] = influencer_name
+        if creating or "commission_percentage" in data or "commission_percentual" in data:
+            payload["commission_percentual"] = commission_percentage
+
+        if creating:
+            payload["tracking_slug"] = self._gerar_tracking_slug(
+                payload.get("influencer_nome") or payload["codigo"]
+            )
+        if creating or "status" in data:
+            status_admin = data.get("status") or "ACTIVE"
+            payload["status"] = self._admin_status_to_repo(status_admin)
+            payload["ativo"] = payload["status"] == "active"
+
+        return payload
+
+    async def _gerar_codigo_unico(self, prefix: str) -> str:
+        prefix = (prefix or "CUP").strip().upper()[:8]
+        for _tentativa in range(20):
+            codigo = f"{prefix}{secrets.token_hex(3).upper()}"
+            existente = await self.cupom_repo.get_by_codigo(codigo)
+            if not existente:
+                return codigo
+        raise HTTPException(status_code=409, detail="Nao foi possivel gerar codigo unico de cupom")
+
+    def _gerar_tracking_slug(self, value: str) -> str:
+        slug_base = (value or "cupom").strip().lower()
+        slug_limpo = "".join(ch if ch.isalnum() else "-" for ch in slug_base).strip("-")
+        return f"{slug_limpo or 'cupom'}-{secrets.token_hex(2)}"
+
+    def _admin_status_to_repo(self, status: Optional[str]) -> str:
+        normalized = (status or "ACTIVE").strip().upper()
+        return {
+            "ACTIVE": "active",
+            "INACTIVE": "cancelled",
+            "EXPIRED": "expired",
+            "MAXED": "max_usage_reached",
+        }.get(normalized, normalized.lower())
+
+    def _repo_status_to_admin(self, status: Optional[str]) -> str:
+        normalized = (status or "active").strip().lower()
+        return {
+            "active": "ACTIVE",
+            "cancelled": "INACTIVE",
+            "expired": "EXPIRED",
+            "max_usage_reached": "MAXED",
+        }.get(normalized, normalized.upper())
+
+    def _discount_type_to_admin(self, tipo: Optional[str]) -> str:
+        normalized = (tipo or "").strip().upper()
+        if normalized == "PERCENTUAL":
+            return "PERCENTAGE"
+        if normalized == "FIXO":
+            return "FIXED_AMOUNT"
+        return normalized or "PERCENTAGE"
+
+    def _to_admin_coupon_response(self, cupom: Dict[str, Any]) -> Dict[str, Any]:
+        cupom = self._enriquecer_cupom_com_links(dict(cupom))
+        stats = cupom.get("stats") or {}
+        return {
+            "success": True,
+            "id": cupom.get("id"),
+            "code": cupom.get("codigo"),
+            "codigo": cupom.get("codigo"),
+            "description": cupom.get("descricao"),
+            "discountType": self._discount_type_to_admin(cupom.get("tipo_desconto")),
+            "discountValue": cupom.get("valor_desconto"),
+            "bonusPoints": cupom.get("pontos_bonus") or 0,
+            "minNights": cupom.get("min_diarias"),
+            "suiteTypes": cupom.get("suites_permitidas"),
+            "maxUses": cupom.get("limite_total_usos"),
+            "perCustomerLimit": cupom.get("limite_por_cliente"),
+            "currentUses": cupom.get("total_usos") or stats.get("usage_count") or 0,
+            "validFrom": cupom.get("data_inicio"),
+            "validUntil": cupom.get("data_fim"),
+            "generatedBy": cupom.get("criado_por"),
+            "status": self._repo_status_to_admin(cupom.get("status")),
+            "active": bool(cupom.get("ativo")),
+            "campaignType": cupom.get("tipo_campanha"),
+            "trackingSlug": cupom.get("tracking_slug"),
+            "trackingLink": cupom.get("link_rastreado"),
+            "influencerName": cupom.get("influencer_nome"),
+            "commissionPercentage": cupom.get("commission_percentual"),
+            "stats": {
+                "usageCount": stats.get("usage_count", cupom.get("total_usos", 0)),
+                "uniqueCustomers": stats.get("unique_customers", 0),
+                "grossAmount": stats.get("gross_amount", 0.0),
+                "discountAmount": stats.get("discount_amount", 0.0),
+                "netAmount": stats.get("net_amount", 0.0),
+                "commissionBase": stats.get("commission_base", stats.get("net_amount", 0.0)),
+                "estimatedCommission": stats.get("estimated_commission", 0.0),
+            },
+            "usages": cupom.get("usages", []),
+            "createdAt": cupom.get("created_at"),
+            "updatedAt": cupom.get("updated_at"),
+        }

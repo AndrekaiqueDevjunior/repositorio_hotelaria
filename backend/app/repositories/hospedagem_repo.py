@@ -287,22 +287,6 @@ class HospedagemRepository:
                     reserva_id=reserva_id,
                 )
 
-                from app.services.programa_pontos_service import ProgramaPontosService
-                from app.services.whatsapp_service import get_whatsapp_service
-
-                programa = await ProgramaPontosService(self.db).obter_programa_cliente(cliente_id)
-                proximo_premio = programa.get("proximo_premio") or {}
-                cliente = getattr(reserva_cliente, "cliente", None)
-                await get_whatsapp_service().enviar_pontos_pos_checkout(
-                    cliente_nome=getattr(cliente, "nomeCompleto", None) or getattr(reserva_cliente, "clienteNome", "Cliente"),
-                    cliente_telefone=getattr(cliente, "telefone", None),
-                    documento=getattr(cliente, "documento", None),
-                    codigo_reserva=getattr(reserva_cliente, "codigoReserva", None) or str(reserva_id),
-                    saldo_atual=int(programa.get("saldo_atual") or 0),
-                    pontos_ganhos_checkout=int((resultado_pontos_checkout or {}).get("pontos_checkout", 0) or 0),
-                    faltam_pontos_para_proximo_premio=programa.get("faltam_pontos_para_proximo_premio"),
-                    proximo_premio_nome=proximo_premio.get("nome"),
-                )
         except Exception as e:
             print(f"[POS CHECKOUT] Erro ao enviar avisos de pontos: {e}")
 

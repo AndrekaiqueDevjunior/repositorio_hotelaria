@@ -8,6 +8,7 @@ import { StatusReserva, StatusPagamento, MetodoPagamento, isPagamentoAprovado, i
 import UploadComprovanteModal from '../../../components/UploadComprovanteModal'
 import StatusBadge from '../../../components/StatusBadge'
 import ModalEscolhaPagamento from '../../../components/ModalEscolhaPagamento'
+import CheckinCashApprovalPanel from '../../../components/CheckinCashApprovalPanel'
 
 // Mapeamento de cores para estados (mantido para compatibilidade)
 const STATUS_RESERVA_COLORS = {
@@ -999,6 +1000,8 @@ export default function Reservas() {
           </div>
         </div>
       </div>
+
+      <CheckinCashApprovalPanel reservas={reservas} onRefreshReservas={loadReservas} />
 
       {/* Filtros e Busca */}
       <div className="bg-white rounded-lg shadow p-4 mb-6">

@@ -18,6 +18,7 @@ import httpx
 from app.services.consulta_publica_service import ConsultaPublicaService
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
+from app.services.otp_service import OtpService
 from app.middleware.rate_limit import rate_limit_strict
 from app.core.cache import redis_lock
 
@@ -42,6 +43,7 @@ class ReservaPublicaCreate(BaseModel):
     observacoes: Optional[str] = None
     metodo_pagamento: str = "na_chegada"
     cupom_codigo: Optional[str] = None
+    customer_auth_token: Optional[str] = None
 
 
 class ClienteRecorrenteLookupRequest(BaseModel):
@@ -83,6 +85,15 @@ def _validar_identidade_reserva_publica(documento: str, telefone: str) -> tuple[
         raise HTTPException(status_code=400, detail="Telefone inválido. Informe DDD e número.")
 
     return documento_limpo, telefone_limpo
+
+
+async def _validar_autenticacao_customer_reserva(db, token: Optional[str], documento: str) -> dict:
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Autenticacao por WhatsApp obrigatoria antes de criar a reserva.",
+        )
+    return await OtpService(db).validar_token_reserva(token, documento)
 
 
 async def _buscar_reserva_aberta_cliente(db, cliente_id: int):
@@ -543,8 +554,8 @@ async def criar_reserva_publica(
 ):
     """
     Criar reserva (API Pública)
-    
-    Não requer autenticação - criação simplificada de reservas
+
+    Requer autenticacao por OTP/WhatsApp vinculada ao CPF informado.
     """
     try:
         await _validar_antibot_publico(request, "criar_reserva_publica")
@@ -557,49 +568,47 @@ async def criar_reserva_publica(
             reserva_data.documento,
             reserva_data.telefone,
         )
+        await _validar_autenticacao_customer_reserva(
+            db,
+            reserva_data.customer_auth_token,
+            documento_limpo,
+        )
 
         try:
             cliente = await cliente_repo.get_by_documento(documento_limpo)
-            reserva_ativa = await _buscar_reserva_aberta_cliente(db, cliente["id"])
-            if reserva_ativa:
-                raise HTTPException(
-                    status_code=409,
-                    detail=_montar_mensagem_reserva_aberta(cliente.get("nome_completo"), reserva_ativa)
-                )
-
-            update_data = {}
-
-            nome_atual = (cliente.get("nome_completo") or "").strip()
-            nome_novo = (reserva_data.nome_completo or "").strip()
-            if nome_novo and nome_novo != nome_atual:
-                update_data["nome_completo"] = nome_novo
-
-            email_atual = (cliente.get("email") or "").strip().lower()
-            email_novo = (reserva_data.email or "").strip().lower()
-            if email_atual and email_novo and email_novo != email_atual:
-                raise HTTPException(
-                    status_code=403,
-                    detail="CPF já cadastrado com outro e-mail. Use o e-mail do cadastro para autenticar a reserva.",
-                )
-            if email_novo and not email_atual:
-                update_data["email"] = email_novo
-
-            telefone_atual = ''.join(filter(str.isdigit, cliente.get("telefone") or ""))
-            if telefone_limpo and telefone_limpo != telefone_atual:
-                update_data["telefone"] = telefone_limpo
-
-            if update_data:
-                cliente = await cliente_repo.update(cliente["id"], update_data)
         except ValueError:
-            from app.schemas.cliente_schema import ClienteCreate
-            cliente = await cliente_repo.create(
-                ClienteCreate(
-                    nome_completo=reserva_data.nome_completo,
-                    documento=documento_limpo,
-                    telefone=telefone_limpo,
-                    email=reserva_data.email
-                )
+            raise HTTPException(status_code=404, detail="Cadastro autenticado nao encontrado")
+
+        reserva_ativa = await _buscar_reserva_aberta_cliente(db, cliente["id"])
+        if reserva_ativa:
+            raise HTTPException(
+                status_code=409,
+                detail=_montar_mensagem_reserva_aberta(cliente.get("nome_completo"), reserva_ativa)
             )
+
+        update_data = {}
+
+        nome_atual = (cliente.get("nome_completo") or "").strip()
+        nome_novo = (reserva_data.nome_completo or "").strip()
+        if nome_novo and nome_novo != nome_atual:
+            update_data["nome_completo"] = nome_novo
+
+        email_atual = (cliente.get("email") or "").strip().lower()
+        email_novo = (reserva_data.email or "").strip().lower()
+        if email_atual and email_novo and email_novo != email_atual:
+            raise HTTPException(
+                status_code=403,
+                detail="CPF já cadastrado com outro e-mail. Use o e-mail do cadastro para autenticar a reserva.",
+            )
+        if email_novo and not email_atual:
+            update_data["email"] = email_novo
+
+        telefone_atual = ''.join(filter(str.isdigit, cliente.get("telefone") or ""))
+        if telefone_limpo and telefone_limpo != telefone_atual:
+            update_data["telefone"] = telefone_limpo
+
+        if update_data:
+            cliente = await cliente_repo.update(cliente["id"], update_data)
 
         checkin_date = datetime.strptime(reserva_data.data_checkin, "%Y-%m-%d")
         checkout_date = datetime.strptime(reserva_data.data_checkout, "%Y-%m-%d")

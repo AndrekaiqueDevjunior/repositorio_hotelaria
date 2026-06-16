@@ -34,9 +34,14 @@ from app.api.v1 import (
     overbooking_routes,
     comprovante_routes,
     cupom_routes,
+    admin_coupon_routes,
     indicacao_routes,
+    referral_routes,
     jornada_routes,
     codigos_resgate_routes,
+    customer_auth_routes,
+    checkout_alerts_routes,
+    checkin_cash_approval_routes,
     twilio_routes,
 )
 
@@ -128,9 +133,14 @@ app.include_router(premios_routes.router, prefix="/api/v1")
 app.include_router(validacao_resgate_routes.router, prefix="/api/v1")
 app.include_router(comprovante_routes.router, prefix="/api/v1")
 app.include_router(cupom_routes.router, prefix="/api/v1")
+app.include_router(admin_coupon_routes.router, prefix="/api/v1")
 app.include_router(indicacao_routes.router, prefix="/api/v1")
+app.include_router(referral_routes.router, prefix="/api/v1")
 app.include_router(jornada_routes.router, prefix="/api/v1")
 app.include_router(codigos_resgate_routes.router, prefix="/api/v1")
+app.include_router(customer_auth_routes.router, prefix="/api/v1")
+app.include_router(checkout_alerts_routes.router, prefix="/api/v1")
+app.include_router(checkin_cash_approval_routes.router, prefix="/api/v1")
 app.include_router(tarifas_routes.router, prefix="/api/v1")
 app.include_router(auditoria_routes.router, prefix="/api/v1")
 app.include_router(twilio_routes.router, prefix="/api/v1")

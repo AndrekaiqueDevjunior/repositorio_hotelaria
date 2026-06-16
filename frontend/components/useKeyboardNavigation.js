@@ -152,9 +152,13 @@ export const useSkipLinks = () => {
 
     const skipLinksContainer = document.createElement('div')
     skipLinksContainer.className = 'sr-only'
-    skipLinksContainer.innerHTML = skipLinks
-      .map(link => `<a href="${link.href}" class="skip-link">${link.text}</a>`)
-      .join('')
+    skipLinks.forEach((link) => {
+      const anchor = document.createElement('a')
+      anchor.href = link.href
+      anchor.className = 'skip-link'
+      anchor.textContent = link.text
+      skipLinksContainer.appendChild(anchor)
+    })
 
     document.body.insertBefore(skipLinksContainer, document.body.firstChild)
 

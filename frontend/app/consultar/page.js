@@ -1,365 +1,536 @@
 'use client'
-import { useState } from 'react'
-import { toast, ToastContainer } from 'react-toastify'
-import 'react-toastify/dist/ReactToastify.css'
-import Link from 'next/link'
-import { api } from '../../lib/api'
 
-export default function Consultar() {
-  const [tab, setTab] = useState('reserva') // reserva ou pontos
-  const [loading, setLoading] = useState(false)
-  
-  // Consulta de reserva
-  const [codigoReserva, setCodigoReserva] = useState('')
-  const [reservaEncontrada, setReservaEncontrada] = useState(null)
-  
-  // Consulta de pontos
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Crown,
+  LockKeyhole,
+  Search,
+  ShieldCheck,
+  User,
+} from 'lucide-react'
+import GoldParticles from '@/components/GoldParticles'
+
+export default function ConsultarJornadaReal() {
+  const router = useRouter()
   const [cpf, setCpf] = useState('')
-  const [pontosEncontrados, setPontosEncontrados] = useState(null)
-  
-  // Buscar reserva
-  const buscarReserva = async () => {
-    if (!codigoReserva.trim()) {
-      toast.warning('Digite o código da reserva')
-      return
-    }
-    
-    setLoading(true)
-    setReservaEncontrada(null)
-    
-    try {
-      // Tentar diferentes formatos de código
-      const codigosParaTestar = [
-        codigoReserva.trim(),
-        codigoReserva.trim().replace('WEB-', 'RCF-'),
-        codigoReserva.trim().replace('RCF-', 'WEB-')
-      ]
-      
-      let reservaEncontrada = null
-      let ultimoErro = null
-      
-      for (const codigo of codigosParaTestar) {
-        try {
-          const res = await api.get(`/public/reservas/${codigo}`)
-          const data = res.data
-          
-          if (data.success) {
-            reservaEncontrada = data.reserva
-            setReservaEncontrada(data.reserva)
-            toast.success('Reserva encontrada!')
-            break
-          } else {
-            ultimoErro = data.detail || 'Reserva não encontrada'
-          }
-        } catch (error) {
-          ultimoErro = 'Erro ao buscar reserva'
-        }
-      }
-      
-      if (!reservaEncontrada) {
-        toast.error(ultimoErro || 'Reserva não encontrada')
-      }
-    } catch (error) {
-      console.error('Erro:', error)
-      toast.error('Erro ao buscar reserva')
-    } finally {
-      setLoading(false)
-    }
-  }
-  
-  // Buscar pontos
-  const buscarPontos = async () => {
-    const cpfLimpo = cpf.replace(/\D/g, '')
-    if (cpfLimpo.length !== 11) {
-      toast.warning('Digite um CPF válido')
-      return
-    }
-    
-    setLoading(true)
-    setPontosEncontrados(null)
-    
-    try {
-      const res = await api.get(`/public/pontos/${cpfLimpo}`)
-      const data = res.data
-      
-      if (data.success) {
-        setPontosEncontrados(data)
-        toast.success('Pontos encontrados!')
-      } else {
-        toast.error(data.detail || 'Cliente não encontrado')
-      }
-    } catch (error) {
-      console.error('Erro:', error)
-      toast.error('Erro ao buscar pontos')
-    } finally {
-      setLoading(false)
-    }
-  }
-  
-  // Formatar CPF
+  const [error, setError] = useState('')
+
   const formatCPF = (value) => {
-    const numbers = value.replace(/\D/g, '').substring(0, 11)
+    const numbers = value.replace(/\D/g, '').slice(0, 11)
+
     if (numbers.length <= 3) return numbers
     if (numbers.length <= 6) return `${numbers.slice(0, 3)}.${numbers.slice(3)}`
-    if (numbers.length <= 9) return `${numbers.slice(0, 3)}.${numbers.slice(3, 6)}.${numbers.slice(6)}`
+    if (numbers.length <= 9) {
+      return `${numbers.slice(0, 3)}.${numbers.slice(3, 6)}.${numbers.slice(6)}`
+    }
+
     return `${numbers.slice(0, 3)}.${numbers.slice(3, 6)}.${numbers.slice(6, 9)}-${numbers.slice(9)}`
   }
-  
-  // Status badge
-  const getStatusBadge = (status) => {
-    const configs = {
-      'PENDENTE': { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pendente' },
-      'HOSPEDADO': { bg: 'bg-green-100', text: 'text-green-800', label: 'Hospedado' },
-      'CHECKED_OUT': { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Finalizado' },
-      'CANCELADO': { bg: 'bg-red-100', text: 'text-red-800', label: 'Cancelado' }
+
+  const handleSubmit = (event) => {
+    event.preventDefault()
+
+    const cpfLimpo = cpf.replace(/\D/g, '')
+    if (cpfLimpo.length !== 11) {
+      setError('Digite um CPF válido.')
+      return
     }
-    const config = configs[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
-    return (
-      <span className={`px-3 py-1 rounded-full text-sm font-medium ${config.bg} ${config.text}`}>
-        {config.label}
-      </span>
-    )
+
+    setError('')
+    router.push(`/consultar-pontos?cpf=${cpfLimpo}`)
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-900 via-blue-800 to-blue-900">
-      {/* Header */}
-      <header className="bg-white/10 backdrop-blur-md border-b border-white/20">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/reservar" className="flex items-center gap-3">
-            <span className="text-4xl">🏨</span>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Hotel Real</h1>
-              <p className="text-yellow-400 text-sm">Cabo Frio</p>
-            </div>
-          </Link>
-          <Link
-            href="/reservar"
-            className="px-4 py-2 bg-yellow-400 text-blue-900 rounded-lg font-medium hover:bg-yellow-300 transition-all"
+    <main className="cpf-page">
+      <GoldParticles />
+
+      <section className="cpf-shell">
+        <header className="cpf-header">
+          <button
+            type="button"
+            className="back-button"
+            aria-label="Voltar"
+            onClick={() => router.push('/')}
           >
-            🏨 Fazer Reserva
-          </Link>
-        </div>
-      </header>
-      
-      <main className="max-w-2xl mx-auto px-4 py-12">
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b">
-            <button
-              onClick={() => { setTab('reserva'); setReservaEncontrada(null) }}
-              className={`flex-1 py-4 font-medium transition-all ${
-                tab === 'reserva' 
-                  ? 'bg-blue-600 text-white' 
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              📋 Consultar Reserva
-            </button>
-            <button
-              onClick={() => { setTab('pontos'); setPontosEncontrados(null) }}
-              className={`flex-1 py-4 font-medium transition-all ${
-                tab === 'pontos' 
-                  ? 'bg-blue-600 text-white' 
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              🎯 Consultar Pontos
-            </button>
+            <ArrowLeft size={22} strokeWidth={1.9} />
+          </button>
+
+          <img
+            src="/images/logo-jornada-real.png"
+            alt="Hotel Real Cabo Frio"
+            className="cpf-logo"
+          />
+        </header>
+
+        <section className="cpf-intro" aria-labelledby="cpf-title">
+          <h1 id="cpf-title">
+            Consulte sua
+            <br />
+            Jornada Real
+          </h1>
+
+          <div className="title-divider">
+            <span />
+            <Crown size={22} strokeWidth={1.7} />
+            <span />
           </div>
-          
-          {/* Consulta de Reserva */}
-          {tab === 'reserva' && (
-            <div className="p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">Consultar sua Reserva</h2>
-              <p className="text-gray-600 mb-6">Digite o código da reserva que você recebeu por email.</p>
-              
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  placeholder="Ex: WEB-20241217-000001 ou RCF-202512-000001"
-                  value={codigoReserva}
-                  onChange={(e) => setCodigoReserva(e.target.value.toUpperCase())}
-                  className="flex-1 p-4 border-2 border-gray-200 rounded-xl focus:border-blue-400 focus:outline-none text-lg font-mono"
-                />
-                <button
-                  onClick={buscarReserva}
-                  disabled={loading}
-                  className="px-6 py-4 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-all disabled:opacity-50"
-                >
-                  {loading ? '⏳' : '🔍'} Buscar
-                </button>
-              </div>
-              
-              {/* Resultado da reserva */}
-              {reservaEncontrada && (
-                <div className="mt-8 border-t pt-6">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-gray-800">Detalhes da Reserva</h3>
-                    {getStatusBadge(reservaEncontrada.status)}
-                  </div>
-                  
-                  <div className="bg-blue-50 p-4 rounded-xl mb-4">
-                    <p className="text-sm text-gray-600">Código</p>
-                    <p className="text-xl font-bold text-blue-600 font-mono">{reservaEncontrada.codigo}</p>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-sm text-gray-500">Hóspede</p>
-                      <p className="font-medium">{reservaEncontrada.cliente_nome}</p>
-                    </div>
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-sm text-gray-500">Acomodação</p>
-                      <p className="font-medium">{reservaEncontrada.tipo_suite} - Quarto {reservaEncontrada.quarto_numero}</p>
-                    </div>
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-sm text-gray-500">Check-in Previsto</p>
-                      <p className="font-medium">{new Date(reservaEncontrada.checkin_previsto).toLocaleDateString('pt-BR')}</p>
-                      <p className="text-xs text-gray-400">às 12:00</p>
-                    </div>
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-sm text-gray-500">Check-out Previsto</p>
-                      <p className="font-medium">{new Date(reservaEncontrada.checkout_previsto).toLocaleDateString('pt-BR')}</p>
-                      <p className="text-xs text-gray-400">até 11:00</p>
-                    </div>
-                  </div>
-                  
-                  {/* Financeiro */}
-                  <div className="mt-4 bg-green-50 p-4 rounded-xl">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-gray-600">Diárias</span>
-                      <span className="font-medium">{reservaEncontrada.num_diarias} x R$ {reservaEncontrada.valor_diaria.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between items-center pt-2 border-t">
-                      <span className="text-gray-700 font-medium">Valor Total</span>
-                      <span className="font-bold text-lg text-green-600">R$ {reservaEncontrada.valor_total.toFixed(2)}</span>
-                    </div>
-                  </div>
-                  
-                  
-                  {/* Instruções */}
-                  <div className="mt-4 bg-blue-50 p-4 rounded-lg text-sm">
-                    <p className="font-medium text-blue-900 mb-2">📋 Informações Importantes:</p>
-                    <ul className="space-y-1 text-blue-800">
-                      <li>• Check-in: 12:00 | Check-out: 11:00</li>
-                      <li>• Apresente documento de identidade e CPF</li>
-                      <li>• Contato: (22) 2648-5900</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Consulta de Pontos */}
-          {tab === 'pontos' && (
-            <div className="p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">Consultar seus Pontos</h2>
-              <p className="text-gray-600 mb-6">Digite seu CPF para verificar seu saldo de pontos.</p>
-              
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  placeholder="000.000.000-00"
-                  value={cpf}
-                  onChange={(e) => setCpf(formatCPF(e.target.value))}
-                  className="flex-1 p-4 border-2 border-gray-200 rounded-xl focus:border-blue-400 focus:outline-none text-lg"
-                  maxLength={14}
-                />
-                <button
-                  onClick={buscarPontos}
-                  disabled={loading}
-                  className="px-6 py-4 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-all disabled:opacity-50"
-                >
-                  {loading ? '⏳' : '🔍'} Buscar
-                </button>
-              </div>
-              
-              {/* Resultado dos pontos */}
-              {pontosEncontrados && (
-                <div className="mt-8 border-t pt-6">
-                  <div className="text-center mb-6">
-                    <p className="text-gray-600">Olá,</p>
-                    <p className="text-xl font-bold text-gray-800">{pontosEncontrados.cliente.nome}</p>
-                    <p className="text-sm text-gray-500">CPF: {pontosEncontrados.cliente.documento}</p>
-                  </div>
-                  
-                  {/* Saldo de pontos */}
-                  <div className="bg-gradient-to-r from-yellow-400 to-yellow-500 p-6 rounded-xl text-center">
-                    <p className="text-yellow-900">Seu saldo de pontos</p>
-                    <p className="text-5xl font-bold text-yellow-900">{pontosEncontrados.pontos.saldo}</p>
-                    <p className="text-yellow-800 text-sm mt-1">pontos</p>
-                  </div>
-                  
-                  {/* Histórico recente */}
-                  {pontosEncontrados.pontos.historico_recente.length > 0 && (
-                    <div className="mt-6">
-                      <h4 className="font-medium text-gray-700 mb-3">Últimas movimentações</h4>
-                      <div className="space-y-2">
-                        {pontosEncontrados.pontos.historico_recente.map((item, i) => (
-                          <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                            <div>
-                              <p className="font-medium text-gray-800">{item.origem}</p>
-                              <p className="text-sm text-gray-500">{item.data}</p>
-                            </div>
-                            <span className={`font-bold ${item.tipo === 'GANHO' ? 'text-green-600' : 'text-red-600'}`}>
-                              {item.tipo === 'GANHO' ? '+' : '-'}{item.pontos}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Info sobre pontos */}
-                  <div className="mt-6 bg-blue-50 p-4 rounded-lg text-sm text-blue-800">
-                    <p className="font-medium mb-2">💡 Como ganhar mais pontos?</p>
-                    <ul className="space-y-1">
-                      <li>• Hospede-se conosco e ganhe 10 pontos por diária</li>
-                      <li>• Suítes Master: 15 pontos por diária</li>
-                      <li>• Suítes Real: 20 pontos por diária</li>
-                      <li>• Troque seus pontos por descontos e upgrades!</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        
-        {/* Links rápidos */}
-        <div className="mt-8 text-center">
-          <Link
-            href="/reservar"
-            className="inline-block px-8 py-3 bg-yellow-400 text-blue-900 rounded-lg font-bold hover:bg-yellow-300 transition-all"
-          >
-            🏨 Fazer Nova Reserva
-          </Link>
-        </div>
-      </main>
-      
-      {/* Footer */}
-      <footer className="bg-blue-950 text-white/80 py-8 mt-12">
-        <div className="max-w-4xl mx-auto px-4 text-center">
-          <p className="text-sm">Hotel Real Cabo Frio</p>
-          <p className="text-sm mt-1">📞 (22) 2648-5900 | 📧 contato@hotelrealcabofrio.com.br</p>
-        </div>
-      </footer>
-      
-      <ToastContainer
-        position="top-right"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="colored"
-      />
-    </div>
+
+          <p>
+            Descubra o quanto você já avançou
+            <br />
+            na sua Jornada Real.
+          </p>
+        </section>
+
+        <form className="cpf-card" onSubmit={handleSubmit}>
+          <div className="search-orb" aria-hidden="true">
+            <Search size={48} strokeWidth={1.8} />
+          </div>
+
+          <label htmlFor="cpf">Digite seu CPF para continuar</label>
+
+          <div className="cpf-input-wrap">
+            <User size={22} strokeWidth={1.7} aria-hidden="true" />
+            <input
+              id="cpf"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={cpf}
+              onChange={(event) => {
+                setCpf(formatCPF(event.target.value))
+                setError('')
+              }}
+              placeholder="000.000.000-00"
+              maxLength={14}
+              aria-invalid={Boolean(error)}
+            />
+          </div>
+
+          {error && <p className="cpf-error">{error}</p>}
+
+          <button type="submit" className="submit-button">
+            <span>Ver minha jornada</span>
+            <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
+            <ArrowRight size={24} strokeWidth={1.9} />
+          </button>
+
+          <p className="privacy-note">
+            <LockKeyhole size={13} strokeWidth={2} />
+            Seus dados estão protegidos conosco.
+          </p>
+        </form>
+
+        <div className="hotel-showcase" aria-hidden="true" />
+
+        <article className="privacy-card">
+          <div className="privacy-icon">
+            <ShieldCheck size={34} strokeWidth={1.8} />
+          </div>
+          <div>
+            <h2>Segurança e Privacidade</h2>
+            <p>
+              Suas informações são utilizadas apenas para consulta da sua Jornada
+              Real.
+            </p>
+          </div>
+        </article>
+      </section>
+
+      <style jsx global>{`
+        .cpf-page {
+          --gold: #f6c637;
+          --gold-soft: #ffe38a;
+          --page-x: clamp(18px, 5vw, 28px);
+          min-height: 100svh;
+          overflow-x: hidden;
+          color: #fff4dd;
+          background:
+            radial-gradient(circle at 50% 33%, rgba(180, 104, 17, 0.18), transparent 14rem),
+            radial-gradient(circle at 50% 78%, rgba(247, 198, 55, 0.16), transparent 18rem),
+            #020302;
+          font-family: 'Playfair Display', serif;
+          isolation: isolate;
+        }
+
+        .cpf-page::before {
+          content: '';
+          position: fixed;
+          inset: 0;
+          z-index: -3;
+          background:
+            radial-gradient(circle at 0% 64%, rgba(246, 198, 55, 0.2) 0 1px, transparent 2px),
+            radial-gradient(circle at 100% 74%, rgba(246, 198, 55, 0.18) 0 1px, transparent 2px),
+            linear-gradient(180deg, #020302 0%, #030303 42%, #050402 100%);
+          background-size: 16px 16px, 18px 18px, auto;
+          opacity: 0.75;
+        }
+
+        .cpf-page::after {
+          content: '';
+          position: fixed;
+          inset: 0;
+          z-index: -2;
+          pointer-events: none;
+          background:
+            linear-gradient(180deg, rgba(0, 0, 0, 0.98) 0%, rgba(0, 0, 0, 0.9) 28%, rgba(0, 0, 0, 0.32) 56%, rgba(0, 0, 0, 0.38) 74%, rgba(0, 0, 0, 0.95) 100%),
+            radial-gradient(ellipse at 50% 58%, rgba(3, 3, 2, 0) 0%, rgba(0, 0, 0, 0.28) 48%, rgba(0, 0, 0, 0.92) 100%);
+        }
+
+        body:has(.cpf-page) button[aria-label^=Abrir][aria-label*=configura],
+        body:has(.cpf-page) nextjs-portal {
+          display: none;
+        }
+
+        .cpf-shell {
+          position: relative;
+          z-index: 30;
+          width: min(100% - (var(--page-x) * 2), 430px);
+          min-height: 100svh;
+          margin: 0 auto;
+          padding: 12px 0 28px;
+        }
+
+        .cpf-header {
+          display: grid;
+          grid-template-columns: 42px 1fr 42px;
+          align-items: start;
+          min-height: 102px;
+        }
+
+        .back-button {
+          width: 36px;
+          height: 36px;
+          display: grid;
+          place-items: center;
+          color: var(--gold);
+          background: rgba(0, 0, 0, 0.28);
+          border: 1.5px solid var(--gold);
+          border-radius: 50%;
+          box-shadow: 0 0 14px rgba(246, 198, 55, 0.16);
+          cursor: pointer;
+        }
+
+        .cpf-logo {
+          width: clamp(222px, 65vw, 282px);
+          height: auto;
+          justify-self: center;
+          filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.86));
+        }
+
+        .cpf-intro {
+          margin-top: 2px;
+          text-align: center;
+          text-shadow: 0 3px 12px rgba(0, 0, 0, 0.92);
+        }
+
+        .cpf-intro h1 {
+          margin: 0;
+          color: var(--gold);
+          font-family: 'Cinzel', serif;
+          font-size: clamp(2.35rem, 10.5vw, 3.35rem);
+          font-weight: 700;
+          line-height: 0.94;
+          text-transform: uppercase;
+        }
+
+        .title-divider {
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
+          align-items: center;
+          gap: 10px;
+          width: min(276px, 76vw);
+          margin: 14px auto 10px;
+          color: var(--gold);
+        }
+
+        .title-divider span {
+          height: 1px;
+          background: linear-gradient(90deg, transparent, rgba(246, 198, 55, 0.72), transparent);
+        }
+
+        .cpf-intro p {
+          margin: 0 auto;
+          color: #f5efe6;
+          font-size: clamp(0.98rem, 4vw, 1.12rem);
+          line-height: 1.35;
+        }
+
+        .cpf-card {
+          position: relative;
+          margin: 22px auto 0;
+          padding: 22px 18px 17px;
+          border: 1.5px solid rgba(246, 198, 55, 0.88);
+          border-radius: 20px;
+          background:
+            linear-gradient(180deg, rgba(255, 226, 138, 0.06), rgba(0, 0, 0, 0.72)),
+            rgba(9, 8, 6, 0.72);
+          box-shadow:
+            0 0 26px rgba(246, 198, 55, 0.2),
+            inset 0 0 28px rgba(246, 198, 55, 0.08),
+            0 22px 42px rgba(0, 0, 0, 0.42);
+          text-align: center;
+          backdrop-filter: blur(5px);
+        }
+
+        .cpf-card::before {
+          content: '';
+          position: absolute;
+          top: -1px;
+          left: 50%;
+          width: 44%;
+          height: 1px;
+          transform: translateX(-50%);
+          background: linear-gradient(90deg, transparent, #fff0ad, transparent);
+          box-shadow: 0 0 14px rgba(255, 230, 150, 0.95);
+        }
+
+        .search-orb {
+          width: 78px;
+          height: 78px;
+          display: grid;
+          place-items: center;
+          margin: 0 auto 13px;
+          color: var(--gold);
+          border: 1.5px solid var(--gold);
+          border-radius: 50%;
+          background:
+            radial-gradient(circle at 35% 30%, rgba(255, 238, 163, 0.2), transparent 38%),
+            rgba(0, 0, 0, 0.28);
+          box-shadow:
+            inset 0 0 18px rgba(246, 198, 55, 0.22),
+            0 0 22px rgba(246, 198, 55, 0.3);
+        }
+
+        .cpf-card label {
+          display: block;
+          color: var(--gold);
+          font-family: 'Cinzel', serif;
+          font-size: clamp(0.98rem, 4vw, 1.16rem);
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .cpf-input-wrap {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          height: 52px;
+          margin-top: 13px;
+          padding: 0 14px;
+          color: var(--gold);
+          border: 1.5px solid var(--gold);
+          border-radius: 9px;
+          background: rgba(4, 4, 3, 0.54);
+          box-shadow: inset 0 0 14px rgba(246, 198, 55, 0.08);
+        }
+
+        .cpf-input-wrap input {
+          width: 100%;
+          min-width: 0;
+          color: #fff1c5;
+          background: transparent;
+          border: 0;
+          outline: 0;
+          font-family: 'Cinzel', serif;
+          font-size: clamp(1rem, 4vw, 1.16rem);
+          letter-spacing: 0;
+        }
+
+        .cpf-input-wrap input::placeholder {
+          color: rgba(255, 241, 197, 0.48);
+        }
+
+        .cpf-error {
+          margin: 10px 0 0;
+          color: #ffb1a8;
+          font-size: 0.9rem;
+          font-weight: 700;
+        }
+
+        .submit-button {
+          width: 100%;
+          min-height: 52px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 14px;
+          margin-top: 15px;
+          color: #170f06;
+          background: linear-gradient(180deg, #ffe27b 0%, #e0a125 56%, #b46b06 100%);
+          border: 1px solid #ffeaa4;
+          border-radius: 14px;
+          box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.55),
+            0 12px 22px rgba(0, 0, 0, 0.42),
+            0 0 18px rgba(246, 198, 55, 0.22);
+          font-family: 'Cinzel', serif;
+          font-size: clamp(0.84rem, 3.5vw, 0.98rem);
+          font-weight: 700;
+          text-transform: uppercase;
+          cursor: pointer;
+        }
+
+        .submit-button svg {
+          flex: 0 0 auto;
+        }
+
+        .privacy-note {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          margin: 12px 0 0;
+          color: var(--gold);
+          font-size: clamp(0.72rem, 3vw, 0.84rem);
+          line-height: 1.2;
+        }
+
+        .hotel-showcase {
+          position: relative;
+          width: min(500px, 132vw);
+          height: clamp(430px, 120vw, 570px);
+          margin: -48px auto -20px;
+          overflow: hidden;
+          background-image: url('/images/background-cpf-atual.png');
+          background-repeat: no-repeat;
+          background-position: 68% bottom;
+          background-size: 128% auto;
+          filter: brightness(0.88) drop-shadow(0 18px 28px rgba(0, 0, 0, 0.7));
+          -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 86%, transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 86%, transparent 100%);
+          pointer-events: none;
+        }
+
+        .hotel-showcase::before,
+        .hotel-showcase::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          z-index: 2;
+          pointer-events: none;
+        }
+
+        .hotel-showcase::before {
+          background:
+            linear-gradient(180deg, rgba(0, 0, 0, 0.32) 0%, rgba(0, 0, 0, 0) 28%, rgba(0, 0, 0, 0) 72%, rgba(0, 0, 0, 0.48) 100%),
+            linear-gradient(90deg, #020302 0%, rgba(2, 3, 2, 0) 18%, rgba(2, 3, 2, 0) 82%, #020302 100%);
+        }
+
+        .hotel-showcase::after {
+          background: radial-gradient(ellipse at 50% 62%, rgba(246, 198, 55, 0.1) 0%, transparent 48%, rgba(0, 0, 0, 0.58) 94%);
+        }
+
+        .privacy-card {
+          display: grid;
+          grid-template-columns: 56px 1fr;
+          gap: 14px;
+          align-items: center;
+          margin: -1px auto 0;
+          padding: 16px;
+          border: 1.3px solid rgba(246, 198, 55, 0.78);
+          border-radius: 12px;
+          background: rgba(7, 7, 5, 0.8);
+          box-shadow: 0 0 20px rgba(246, 198, 55, 0.13);
+          backdrop-filter: blur(4px);
+        }
+
+        .privacy-icon {
+          width: 48px;
+          height: 58px;
+          display: grid;
+          place-items: center;
+          color: var(--gold);
+          background: rgba(246, 198, 55, 0.08);
+          clip-path: polygon(50% 0%, 90% 18%, 90% 70%, 50% 100%, 10% 70%, 10% 18%);
+        }
+
+        .privacy-card h2 {
+          margin: 0 0 4px;
+          color: var(--gold);
+          font-family: 'Cinzel', serif;
+          font-size: clamp(0.95rem, 3.8vw, 1.08rem);
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .privacy-card p {
+          margin: 0;
+          color: #fff4dd;
+          font-size: clamp(0.82rem, 3.25vw, 0.94rem);
+          line-height: 1.28;
+        }
+
+        @media (max-width: 390px) {
+          .cpf-page {
+            --page-x: 14px;
+          }
+
+          .cpf-shell {
+            padding-top: 10px;
+          }
+
+          .cpf-header {
+            min-height: 96px;
+          }
+
+          .cpf-logo {
+            width: 232px;
+          }
+
+          .cpf-card {
+            margin-top: 18px;
+          }
+
+          .hotel-showcase {
+            width: min(462px, 134vw);
+            height: clamp(398px, 119vw, 495px);
+            background-position: 76% bottom;
+          }
+        }
+
+        @media (max-width: 360px) {
+          .cpf-page {
+            --page-x: 12px;
+          }
+
+          .back-button {
+            width: 34px;
+            height: 34px;
+          }
+
+          .cpf-intro h1 {
+            font-size: 2.22rem;
+          }
+
+          .search-orb {
+            width: 72px;
+            height: 72px;
+          }
+
+          .cpf-card {
+            padding: 18px 15px 15px;
+          }
+
+          .submit-button {
+            gap: 9px;
+          }
+
+          .privacy-card {
+            grid-template-columns: 50px 1fr;
+            padding: 14px;
+          }
+        }
+
+        @media (min-width: 700px) {
+          .cpf-shell {
+            width: min(430px, calc(100% - 40px));
+          }
+        }
+      `}</style>
+    </main>
   )
 }
-

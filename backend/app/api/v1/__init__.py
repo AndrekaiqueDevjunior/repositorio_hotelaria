@@ -11,7 +11,12 @@ from .cielo_routes import router as cielo_router
 from .premios_routes import router as premios_router
 from .tarifas_routes import router as tarifas_router
 from .notificacao_routes import router as notificacao_router
+from .admin_coupon_routes import router as admin_coupon_router
 from .indicacao_routes import router as indicacao_router
+from .referral_routes import router as referral_router
+from .customer_auth_routes import router as customer_auth_router
+from .checkout_alerts_routes import router as checkout_alerts_router
+from .checkin_cash_approval_routes import router as checkin_cash_approval_router
 # from .checkin_routes import router as checkin_router
 # from .consumo_routes import router as consumo_router
 # from .cancelamento_routes import router as cancelamento_router
@@ -32,5 +37,10 @@ __all__ = [
     "premios_router",
     "tarifas_router",
     "notificacao_router",
+    "admin_coupon_router",
     "indicacao_router",
+    "referral_router",
+    "customer_auth_router",
+    "checkout_alerts_router",
+    "checkin_cash_approval_router",
 ]

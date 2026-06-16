@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from prisma import Client
@@ -114,6 +115,11 @@ class PontosRepository:
             "liberar_em": transacao.liberarEm.isoformat() if getattr(transacao, "liberarEm", None) else None,
             "origem": transacao.origem,
             "motivo": transacao.motivo if hasattr(transacao, 'motivo') else None,
+            "metadata": (
+                getattr(transacao, "metadata_json", None)
+                if hasattr(transacao, "metadata_json")
+                else getattr(transacao, "metadata", None)
+            ),
             "created_at": transacao.createdAt.isoformat() if transacao.createdAt else None,
             "reserva_id": transacao.reservaId if hasattr(transacao, 'reservaId') else None,
             "reserva_codigo": transacao.reserva.codigoReserva if hasattr(transacao, 'reserva') and transacao.reserva else None,
@@ -165,7 +171,8 @@ class PontosRepository:
         reserva_id: int = None,
         funcionario_id: int = None,
         status: str = "liberado",
-        liberar_em: Optional[datetime] = None
+        liberar_em: Optional[datetime] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Criar transação de pontos completa com todos os relacionamentos
@@ -178,6 +185,7 @@ class PontosRepository:
             motivo: Descrição da transação
             reserva_id: ID da reserva relacionada (se aplicável)
             funcionario_id: ID do funcionário que fez ajuste (se aplicável)
+            metadata: Dados estruturados para auditoria da transação
         """
         # VALIDAÇÃO DE SEGURANÇA: Limites de pontos
         if pontos == 0:
@@ -219,6 +227,7 @@ class PontosRepository:
                             if getattr(transacao_existente, "liberarEm", None)
                             else None
                         ),
+                        "metadata": getattr(transacao_existente, "metadata", None),
                     }
 
             usuario_pontos_raw = await transaction.query_raw(
@@ -260,6 +269,7 @@ class PontosRepository:
                             if getattr(transacao_existente, "liberarEm", None)
                             else None
                         ),
+                        "metadata": getattr(transacao_existente, "metadata", None),
                     }
 
             saldo_posterior = saldo_anterior + pontos if aplicar_saldo else saldo_anterior
@@ -278,22 +288,24 @@ class PontosRepository:
                     usuario_pontos_id,
                 )
 
-            transacao = await transaction.transacaopontos.create(
-                data={
-                    "clienteId": cliente_id,
-                    "usuarioPontosId": usuario_pontos_id,
-                    "funcionarioId": funcionario_id,
-                    "reservaId": reserva_id,
-                    "tipo": tipo,
-                    "origem": origem_norm,
-                    "pontos": pontos,
-                    "saldoAnterior": saldo_anterior,
-                    "saldoPosterior": saldo_posterior,
-                    "status": status_norm,
-                    "liberarEm": liberar_em,
-                    "motivo": motivo
-                }
-            )
+            transacao_data = {
+                "clienteId": cliente_id,
+                "usuarioPontosId": usuario_pontos_id,
+                "funcionarioId": funcionario_id,
+                "reservaId": reserva_id,
+                "tipo": tipo,
+                "origem": origem_norm,
+                "pontos": pontos,
+                "saldoAnterior": saldo_anterior,
+                "saldoPosterior": saldo_posterior,
+                "status": status_norm,
+                "liberarEm": liberar_em,
+                "motivo": motivo,
+            }
+            if metadata is not None:
+                transacao_data["metadata"] = metadata
+
+            transacao = await transaction.transacaopontos.create(data=transacao_data)
 
             return {
                 "success": True,
@@ -303,6 +315,7 @@ class PontosRepository:
                 "pontos": pontos,
                 "status": status_norm,
                 "liberar_em": liberar_em.isoformat() if liberar_em else None,
+                "metadata": metadata,
             }
 
     async def liberar_pontos_pendentes(
@@ -405,12 +418,96 @@ class PontosRepository:
                 liberadas.append({
                     "transacao_id": transacao_id,
                     "cliente_id": int(transacao["cliente_id"]),
+                    "reserva_id": transacao.get("reserva_id"),
+                    "origem": transacao.get("origem"),
+                    "metadata": transacao.get("metadata"),
                     "pontos": pontos,
                     "saldo_anterior": saldo_anterior,
                     "saldo_posterior": saldo_posterior,
                 })
 
+        for liberada in liberadas:
+            await self._notificar_pontos_liberados(liberada)
+
         return {"success": True, "total_liberadas": len(liberadas), "transacoes": liberadas}
+
+    async def _notificar_pontos_liberados(self, transacao: Dict[str, Any]) -> None:
+        origem = (transacao.get("origem") or "").strip().upper()
+        if origem != "CHECKOUT":
+            return
+
+        transacao_id = int(transacao["transacao_id"])
+        cliente_id = int(transacao["cliente_id"])
+        reserva_id = transacao.get("reserva_id")
+        try:
+            existente = await self.db.query_raw(
+                """
+                SELECT id
+                FROM logs_jornada
+                WHERE acao = 'pontos_pos_checkout_whatsapp'
+                  AND payload->>'transacao_id' = $1
+                LIMIT 1
+                """,
+                str(transacao_id),
+            )
+            if existente:
+                return
+
+            rows = await self.db.query_raw(
+                """
+                SELECT c.nome_completo,
+                       c.telefone,
+                       c.documento,
+                       r.codigo_reserva
+                FROM clientes c
+                LEFT JOIN reservas r ON r.id = $2
+                WHERE c.id = $1
+                LIMIT 1
+                """,
+                cliente_id,
+                int(reserva_id) if reserva_id else None,
+            )
+            if not rows:
+                return
+
+            row = rows[0]
+            metadata = transacao.get("metadata") or {}
+            from app.services.programa_pontos_service import ProgramaPontosService
+            from app.services.notification_service import NotificationService
+            from app.services.whatsapp_service import get_whatsapp_service
+
+            programa = await ProgramaPontosService(self.db).obter_programa_cliente(cliente_id)
+            proximo_premio = programa.get("proximo_premio") or {}
+            whatsapp_result = await get_whatsapp_service().enviar_pontos_pos_checkout(
+                cliente_nome=row.get("nome_completo") or "Cliente",
+                cliente_telefone=row.get("telefone"),
+                documento=row.get("documento"),
+                codigo_reserva=row.get("codigo_reserva") or str(reserva_id or transacao_id),
+                saldo_atual=int(transacao.get("saldo_posterior") or programa.get("saldo_atual") or 0),
+                pontos_ganhos_checkout=int(transacao.get("pontos") or 0),
+                bonus_percentual=metadata.get("bonus_percentual") if isinstance(metadata, dict) else None,
+                pontos_bonus_nivel=metadata.get("pontos_bonus_nivel") if isinstance(metadata, dict) else None,
+                faltam_pontos_para_proximo_premio=programa.get("faltam_pontos_para_proximo_premio"),
+                proximo_premio_nome=proximo_premio.get("nome"),
+            )
+            await self.db.execute_raw(
+                """
+                INSERT INTO logs_jornada (cliente_id, acao, payload, created_at)
+                VALUES ($1, $2, CAST($3 AS JSONB), NOW())
+                """,
+                cliente_id,
+                "pontos_pos_checkout_whatsapp",
+                json.dumps({
+                    "transacao_id": transacao_id,
+                    "reserva_id": reserva_id,
+                    "pontos": int(transacao.get("pontos") or 0),
+                    "saldo_posterior": int(transacao.get("saldo_posterior") or 0),
+                    "whatsapp_success": bool(whatsapp_result.get("success")),
+                }),
+            )
+            await NotificationService.notificar_premio_proximo(self.db, cliente_id, reserva_id=reserva_id)
+        except Exception as exc:
+            print(f"[POS CHECKOUT] Erro ao notificar pontos liberados: {exc}")
 
     async def listar_ajustes_manuais(
         self,

@@ -506,19 +506,44 @@ class ReservaRepository:
             pontos_ganhos = 0
             pontos_bonus_cupom = 0
             print(f"[CHECKOUT] Erro ao creditar pontos: {e}")
+
+        pontos_indicacao = 0
+        try:
+            from app.services.indicacao_service import IndicacaoService
+
+            resultado_indicacao = await IndicacaoService(self.db).processar_credito_indicacao_apos_checkout(
+                reserva_id=reserva_id,
+                funcionario_id=None,
+            )
+            pontos_indicacao = (
+                int(resultado_indicacao.get("pontos", 0) or 0)
+                if resultado_indicacao.get("creditado")
+                else 0
+            )
+            if pontos_indicacao:
+                print(f"[CONVITE REAL] +{pontos_indicacao} pontos creditados por indicacao")
+            elif resultado_indicacao.get("motivo"):
+                print(f"[CONVITE REAL] Sem credito de indicacao: {resultado_indicacao.get('motivo')}")
+        except Exception as e:
+            print(f"[CONVITE REAL] Erro ao processar credito de indicacao: {e}")
         
         # Criar notificaÃ§Ã£o de check-out
         await NotificationService.notificar_checkout_realizado(self.db, updated_reserva)
         await self._notificar_whatsapp_reserva(
             updated_reserva,
             "check-out realizado",
-            detalhe=f"Pontos ganhos: {pontos_ganhos or 0} | Bonus cupom: {pontos_bonus_cupom or 0}"
+            detalhe=(
+                f"Pontos ganhos: {pontos_ganhos or 0} | "
+                f"Bonus cupom: {pontos_bonus_cupom or 0} | "
+                f"Convite Real: {pontos_indicacao or 0}"
+            )
         )
         
         # Retornar reserva com informaÃ§Ãµes de pontos
         resultado = self._serialize_reserva(updated_reserva)
         resultado["pontos_ganhos"] = pontos_ganhos if pontos_ganhos > 0 else 0
         resultado["pontos_bonus_cupom"] = pontos_bonus_cupom if pontos_bonus_cupom > 0 else 0
+        resultado["pontos_convite_real"] = pontos_indicacao if pontos_indicacao > 0 else 0
         
         return resultado
     
@@ -1073,4 +1098,3 @@ class ReservaRepository:
             "created_at": reserva.createdAt.isoformat() if reserva.createdAt else None,
             "updated_at": reserva.updatedAt.isoformat() if hasattr(reserva, 'updatedAt') and reserva.updatedAt else None
         }
-

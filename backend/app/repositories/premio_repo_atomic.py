@@ -546,11 +546,21 @@ class PremioRepositoryAtomic:
                    rp.created_at
             FROM resgates_premios rp
             JOIN premios p ON p.id = rp.premio_id
-            LEFT JOIN codigos_resgate cr ON cr.resgate_id = rp.id
+            LEFT JOIN LATERAL (
+                SELECT *
+                FROM codigos_resgate cr
+                WHERE cr.resgate_id = rp.id
+                ORDER BY
+                    CASE WHEN cr.status = $2 THEN 0 ELSE 1 END,
+                    cr.created_at DESC,
+                    cr.id DESC
+                LIMIT 1
+            ) cr ON TRUE
             WHERE rp.cliente_id = $1
             ORDER BY rp.created_at DESC
             """,
             cliente_id,
+            CODIGO_STATUS_ACTIVE,
         )
 
         return [
@@ -574,11 +584,21 @@ class PremioRepositoryAtomic:
             """
             SELECT COALESCE(cr.codigo, rp.codigo_resgate) AS codigo
             FROM resgates_premios rp
-            LEFT JOIN codigos_resgate cr ON cr.resgate_id = rp.id
+            LEFT JOIN LATERAL (
+                SELECT *
+                FROM codigos_resgate cr
+                WHERE cr.resgate_id = rp.id
+                ORDER BY
+                    CASE WHEN cr.status = $2 THEN 0 ELSE 1 END,
+                    cr.created_at DESC,
+                    cr.id DESC
+                LIMIT 1
+            ) cr ON TRUE
             WHERE rp.id = $1
             LIMIT 1
             """,
             resgate_id,
+            CODIGO_STATUS_ACTIVE,
         )
         if not rows:
             return {"success": False, "error": "Resgate nao encontrado"}
@@ -597,6 +617,143 @@ class PremioRepositoryAtomic:
             },
         )
         return {"success": True, "message": "Entrega confirmada"}
+
+    async def expirar_codigos_vencidos(self) -> Dict[str, Any]:
+        agora = now_utc()
+        async with self.db.tx() as transaction:
+            expirados = await transaction.query_raw(
+                """
+                UPDATE codigos_resgate
+                SET status = $1,
+                    updated_at = NOW()
+                WHERE status = $2
+                  AND valido_ate < $3::timestamptz
+                RETURNING id, resgate_id, codigo
+                """,
+                CODIGO_STATUS_EXPIRED,
+                CODIGO_STATUS_ACTIVE,
+                agora,
+            )
+
+            for row in expirados:
+                resgate_id = int(row["resgate_id"])
+                await transaction.execute_raw(
+                    """
+                    UPDATE resgates_premios
+                    SET codigo_status = $1,
+                        status = $1,
+                        updated_at = NOW()
+                    WHERE id = $2
+                      AND codigo_resgate = $3
+                    """,
+                    CODIGO_STATUS_EXPIRED,
+                    resgate_id,
+                    row["codigo"],
+                )
+
+        return {
+            "success": True,
+            "codigos_expirados": len(expirados),
+            "expirados": [
+                {
+                    "id": int(row["id"]),
+                    "resgate_id": int(row["resgate_id"]),
+                    "codigo": row["codigo"],
+                }
+                for row in expirados
+            ],
+        }
+
+    async def renovar_codigo_resgate(
+        self,
+        resgate_id: int,
+        funcionario_id: Optional[int] = None,
+        dias_validade: int = 30,
+    ) -> Dict[str, Any]:
+        async with self.db.tx() as transaction:
+            rows = await transaction.query_raw(
+                """
+                SELECT id, cliente_id, premio_id, status
+                FROM resgates_premios
+                WHERE id = $1
+                FOR UPDATE
+                """,
+                resgate_id,
+            )
+            if not rows:
+                return {"success": False, "error": "Resgate nao encontrado"}
+
+            resgate = rows[0]
+            status_resgate = (resgate.get("status") or "").lower()
+            if status_resgate == RESGATE_STATUS_UTILIZADO:
+                return {"success": False, "error": "Resgate ja utilizado nao pode ter codigo renovado"}
+
+            cancelados = await transaction.query_raw(
+                """
+                UPDATE codigos_resgate
+                SET status = $1,
+                    updated_at = NOW()
+                WHERE resgate_id = $2
+                  AND status = $3
+                RETURNING codigo
+                """,
+                CODIGO_STATUS_CANCELLED,
+                resgate_id,
+                CODIGO_STATUS_ACTIVE,
+            )
+
+            novo_codigo = await self._gerar_codigo_resgate(transaction)
+            expira_em = now_utc() + timedelta(days=int(dias_validade or 30))
+            codigo_row = await transaction.codigoresgate.create(
+                data={
+                    "resgateId": resgate_id,
+                    "codigo": novo_codigo,
+                    "status": CODIGO_STATUS_ACTIVE,
+                    "validoAte": expira_em,
+                    "funcionarioId": funcionario_id,
+                }
+            )
+            await transaction.execute_raw(
+                """
+                UPDATE resgates_premios
+                SET codigo_resgate = $1,
+                    codigo_status = $2,
+                    expira_em = $3::timestamptz,
+                    status = $4,
+                    updated_at = NOW()
+                WHERE id = $5
+                """,
+                novo_codigo,
+                CODIGO_STATUS_ACTIVE,
+                expira_em,
+                RESGATE_STATUS_AGUARDANDO_USO,
+                resgate_id,
+            )
+            await transaction.execute_raw(
+                """
+                INSERT INTO logs_jornada (cliente_id, acao, payload, created_at)
+                VALUES ($1, $2, CAST($3 AS JSONB), NOW())
+                """,
+                int(resgate["cliente_id"]),
+                "codigo_resgate_renovado",
+                json.dumps({
+                    "resgate_id": resgate_id,
+                    "codigo_novo": novo_codigo,
+                    "codigos_cancelados": [row["codigo"] for row in cancelados],
+                    "funcionario_id": funcionario_id,
+                }),
+            )
+
+        return {
+            "success": True,
+            "resgate_id": resgate_id,
+            "codigo": codigo_row.codigo,
+            "codigo_resgate": codigo_row.codigo,
+            "codigo_status": CODIGO_STATUS_ACTIVE,
+            "valido_ate": expira_em.isoformat(),
+            "expira_em": expira_em.isoformat(),
+            "codigos_cancelados": [row["codigo"] for row in cancelados],
+        }
 
     def _serialize(self, premio) -> Dict[str, Any]:
         return {
@@ -649,7 +806,13 @@ class PremioRepositoryAtomic:
                 status = $1,
                 updated_at = NOW()
             WHERE id = $2
+              AND codigo_resgate = (
+                  SELECT codigo
+                  FROM codigos_resgate
+                  WHERE id = $3
+              )
             """,
             CODIGO_STATUS_EXPIRED,
             resgate_id,
+            codigo_id,
         )

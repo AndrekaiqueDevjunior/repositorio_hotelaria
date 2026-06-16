@@ -23,10 +23,11 @@ module.exports = {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || ''
   },
 
+
   async rewrites() {
     // Detecta se está rodando no Docker
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
-    
+
     return [
       {
         source: '/api/v1/:path*',

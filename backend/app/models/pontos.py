@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Enum as SQLEnum, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base import Base
@@ -28,6 +28,7 @@ class TransacaoPontos(Base):
     reserva_id = Column(Integer, ForeignKey("reservas.id"), nullable=True)
     pontos = Column(Integer, nullable=False)
     motivo = Column(String(500), nullable=True)
+    metadata_json = Column("metadata", JSON, nullable=True)
     criado_por_usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

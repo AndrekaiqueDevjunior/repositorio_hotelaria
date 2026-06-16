@@ -148,20 +148,44 @@ class WhatsAppService:
         mensagem = self.montar_mensagem_convite_real(link_final)
         return await self._send_message(telefone_destino, mensagem)
 
+    async def enviar_otp_verificacao(self, telefone_destino: str, codigo: str) -> Dict[str, Any]:
+        if not telefone_destino:
+            return {"success": False, "error": "Telefone de destino nao informado"}
+        mensagem = (
+            f"Seu codigo de verificacao e: {codigo}\n"
+            "Valido por 5 minutos.\n"
+            "Nao compartilhe com ninguem."
+        )
+        return await self._send_message(telefone_destino, mensagem)
+
     async def enviar_aviso_premio_proximo(
         self,
         cliente_telefone: Optional[str],
         documento: Optional[str],
+        cliente_nome: Optional[str] = None,
+        premio_nome: Optional[str] = None,
+        saldo_atual: Optional[int] = None,
+        pontos_faltantes: Optional[int] = None,
     ) -> Dict[str, Any]:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
 
         link_pontos = self._build_link("/consultar-pontos", {"documento": documento})
-        mensagem = (
-            "Você está a poucos pontos do seu próximo prêmio 😮\n"
-            "Falta muito pouco…\n"
-            f"👉 Continue sua jornada: {link_pontos}"
-        )
+        linhas = [
+            "Você está a poucos pontos do seu próximo prêmio 😮",
+            "Falta muito pouco…",
+        ]
+        if link_pontos:
+            linhas.append(f"👉 Continue sua jornada: {link_pontos}")
+        if premio_nome:
+            linhas.extend(["", f"Próximo prêmio: {premio_nome}"])
+        if saldo_atual is not None:
+            linhas.append(f"Você tem: {int(saldo_atual or 0)} pontos")
+        if pontos_faltantes is not None:
+            linhas.append(f"Faltam: {int(pontos_faltantes or 0)} pontos")
+        if cliente_nome:
+            linhas.append(f"Cliente: {cliente_nome}")
+        mensagem = "\n".join(linhas)
         return await self._send_message(cliente_telefone, mensagem)
 
     async def enviar_confirmacao_checkin_dinheiro(
@@ -171,9 +195,12 @@ class WhatsAppService:
         valor: float,
         comprovante_id: Optional[int] = None,
         reserva_id: Optional[int] = None,
+        approval_code: Optional[str] = None,
+        approval_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         link_reserva = self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
         link_comprovante = self._build_link("/comprovantes", {"comprovanteId": comprovante_id})
+        link_aprovacao = approval_url or self._build_link("/checkin-approvals", {"code": approval_code})
         linhas = [
             "Pagamento em dinheiro aguardando liberação de check-in",
             "",
@@ -182,10 +209,14 @@ class WhatsAppService:
             f"Valor: R$ {float(valor or 0):.2f}",
             "Ação: conferir comprovante e liberar check-in no sistema.",
         ]
+        if approval_code:
+            linhas.append(f"Codigo: {approval_code}")
         if link_reserva:
             linhas.append(f"Reserva: {link_reserva}")
         if link_comprovante:
             linhas.append(f"Comprovante: {link_comprovante}")
+        if link_aprovacao:
+            linhas.append(f"Confirmar: {link_aprovacao}")
         return await self._send_message(self.notification_number, "\n".join(linhas))
 
     async def enviar_notificacao_resgate_premio(
@@ -376,6 +407,8 @@ class WhatsAppService:
         codigo_reserva: str,
         saldo_atual: int,
         pontos_ganhos_checkout: int = 0,
+        bonus_percentual: Optional[float] = None,
+        pontos_bonus_nivel: Optional[int] = None,
         faltam_pontos_para_proximo_premio: Optional[int] = None,
         proximo_premio_nome: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -391,7 +424,12 @@ class WhatsAppService:
             linhas.append(f"👉 Veja seu progresso: {link_pontos}")
         linhas.extend(["", f"Reserva: {codigo_reserva}"])
         if pontos_ganhos_checkout:
-            linhas.append(f"Pontos liberados nesta estadia: {pontos_ganhos_checkout}")
+            detalhe = f"Pontos liberados nesta estadia: {pontos_ganhos_checkout}"
+            if bonus_percentual and float(bonus_percentual) > 0:
+                detalhe += f" (com seu bonus de +{float(bonus_percentual):g}%)"
+            linhas.append(detalhe)
+        if pontos_bonus_nivel:
+            linhas.append(f"Bonus de nivel: +{int(pontos_bonus_nivel)} pontos")
         linhas.append(f"Saldo atual: {int(saldo_atual or 0)} pontos")
 
         if faltam_pontos_para_proximo_premio is not None and proximo_premio_nome:

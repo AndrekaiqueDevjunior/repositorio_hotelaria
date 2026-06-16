@@ -367,7 +367,16 @@ class JornadaService:
                    rp.created_at
             FROM resgates_premios rp
             JOIN premios p ON p.id = rp.premio_id
-            LEFT JOIN codigos_resgate cr ON cr.resgate_id = rp.id
+            LEFT JOIN LATERAL (
+                SELECT *
+                FROM codigos_resgate cr
+                WHERE cr.resgate_id = rp.id
+                ORDER BY
+                    CASE WHEN cr.status = 'ativo' THEN 0 ELSE 1 END,
+                    cr.created_at DESC,
+                    cr.id DESC
+                LIMIT 1
+            ) cr ON TRUE
             WHERE rp.cliente_id = $1
             ORDER BY rp.created_at DESC
             LIMIT $2

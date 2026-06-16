@@ -1,14 +1,32 @@
 'use client'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import Script from 'next/script'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
+import {
+  ArrowLeft,
+  CalendarDays,
+  ChevronDown,
+  Crown,
+  Gift,
+  Mail,
+  Phone,
+  Search,
+  ShieldCheck,
+  Star,
+  User,
+} from 'lucide-react'
 import { api } from '../../lib/api'
+import GoldParticles from '@/components/GoldParticles'
 
-const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ''
-const WHATSAPP_PHONE = '552226485900'
+const initialCustomerAuth = {
+  status: 'idle',
+  customer: null,
+  otpId: '',
+  otpCode: '',
+  accessToken: '',
+  expiresInSeconds: 0,
+}
 
 export default function Reservar() {
   const router = useRouter()
@@ -16,20 +34,6 @@ export default function Reservar() {
   // Estados do fluxo
   const [step, setStep] = useState(1) // 1: Datas, 2: Quarto, 3: Dados, 4: Pagamento, 5: Confirmação
   const [loading, setLoading] = useState(false)
-  const [perfilReserva, setPerfilReserva] = useState('primeira_reserva')
-  const [clienteLookupLoading, setClienteLookupLoading] = useState(false)
-  const [clienteLookupStatus, setClienteLookupStatus] = useState('idle')
-  const [clienteRecorrente, setClienteRecorrente] = useState(null)
-  const [reservaAtivaCliente, setReservaAtivaCliente] = useState(null)
-  const [cupomCodigo, setCupomCodigo] = useState('')
-  const [cupomLoading, setCupomLoading] = useState(false)
-  const [cupomStatus, setCupomStatus] = useState('idle')
-  const [cupomInfo, setCupomInfo] = useState(null)
-  const [captchaStatus, setCaptchaStatus] = useState(TURNSTILE_SITE_KEY ? 'ready' : 'disabled')
-  const [turnstileLoaded, setTurnstileLoaded] = useState(false)
-  const [turnstileToken, setTurnstileToken] = useState('')
-  const turnstileContainerRef = useRef(null)
-  const turnstileWidgetIdRef = useRef(null)
   
   // Dados da busca
   const [searchData, setSearchData] = useState({
@@ -55,6 +59,8 @@ export default function Reservar() {
     num_criancas: 0,
     observacoes: ''
   })
+  const [customerAuth, setCustomerAuth] = useState(initialCustomerAuth)
+  const [authLoading, setAuthLoading] = useState(false)
   
   // Pagamento
   const [metodoPagamento, setMetodoPagamento] = useState('balcao')
@@ -64,6 +70,53 @@ export default function Reservar() {
   
   // Definir data mínima (hoje)
   const today = new Date().toISOString().split('T')[0]
+  const onlyDigits = (value) => (value || '').replace(/\D/g, '')
+  const cpfLimpo = onlyDigits(hospedeData.documento)
+  const telefoneLimpo = onlyDigits(hospedeData.telefone)
+  const isCustomerAuthenticated = Boolean(customerAuth.accessToken && customerAuth.customer)
+
+  const isValidCPF = (value) => {
+    const cpf = onlyDigits(value)
+    if (cpf.length !== 11 || cpf === cpf[0]?.repeat(11)) return false
+
+    const calcDigit = (base) => {
+      const sum = base
+        .split('')
+        .reduce((total, digit, index) => total + Number(digit) * (base.length + 1 - index), 0)
+      const rest = (sum * 10) % 11
+      return rest === 10 ? '0' : String(rest)
+    }
+
+    return cpf.slice(9) === `${calcDigit(cpf.slice(0, 9))}${calcDigit(cpf.slice(0, 10))}`
+  }
+
+  const getApiErrorMessage = (error, fallback) => {
+    const detail = error?.response?.data?.detail
+    if (Array.isArray(detail)) return detail[0]?.msg || fallback
+    return detail || error?.message || fallback
+  }
+
+  const resetCustomerAuth = () => {
+    setCustomerAuth({ ...initialCustomerAuth })
+  }
+
+  const applyCustomerToForm = (customer) => {
+    setHospedeData((current) => ({
+      ...current,
+      nome_completo: customer?.nome_completo || current.nome_completo,
+      documento: formatCPF(customer?.documento || current.documento),
+      email: customer?.email || current.email,
+      telefone: formatTelefone(customer?.telefone || current.telefone),
+    }))
+  }
+
+  const handleCpfChange = (value) => {
+    setHospedeData((current) => ({
+      ...current,
+      documento: formatCPF(value),
+    }))
+    resetCustomerAuth()
+  }
   
   // Buscar disponibilidade
   const buscarDisponibilidade = async (options = {}) => {
@@ -126,76 +179,6 @@ export default function Reservar() {
 
     return () => clearInterval(id)
   }, [step, searchData.data_checkin, searchData.data_checkout])
-
-  const resetTurnstile = () => {
-    if (!TURNSTILE_SITE_KEY) return
-
-    try {
-      if (
-        typeof window !== 'undefined' &&
-        window.turnstile &&
-        turnstileWidgetIdRef.current !== null
-      ) {
-        window.turnstile.reset(turnstileWidgetIdRef.current)
-      }
-    } catch (error) {
-      console.error('Erro ao resetar Turnstile:', error)
-    } finally {
-      setTurnstileToken('')
-      setCaptchaStatus('ready')
-    }
-  }
-
-  useEffect(() => {
-    if (!TURNSTILE_SITE_KEY) return
-    if (step !== 3) return
-    if (!turnstileLoaded) return
-    if (!turnstileContainerRef.current) return
-    if (typeof window === 'undefined' || !window.turnstile?.render) return
-
-    if (turnstileWidgetIdRef.current !== null) {
-      return
-    }
-
-    turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
-      sitekey: TURNSTILE_SITE_KEY,
-      action: 'criar_reserva_publica',
-      theme: 'light',
-      callback: (token) => {
-        setTurnstileToken(token)
-        setCaptchaStatus('verified')
-      },
-      'expired-callback': () => {
-        setTurnstileToken('')
-        setCaptchaStatus('ready')
-      },
-      'error-callback': () => {
-        setTurnstileToken('')
-        setCaptchaStatus('error')
-      }
-    })
-  }, [step, turnstileLoaded])
-
-  useEffect(() => {
-    if (!TURNSTILE_SITE_KEY) return
-    if (step === 3 || step === 4 || step === 5) return
-
-    turnstileWidgetIdRef.current = null
-    setTurnstileToken('')
-    setCaptchaStatus('ready')
-  }, [step])
-
-  useEffect(() => {
-    setClienteLookupStatus('idle')
-    setClienteRecorrente(null)
-    setReservaAtivaCliente(null)
-  }, [hospedeData.documento, hospedeData.email])
-
-  useEffect(() => {
-    setCupomStatus('idle')
-    setCupomInfo(null)
-    setCupomCodigo('')
-  }, [searchData.data_checkin, searchData.data_checkout, quartoSelecionado?.numero])
   
   // Selecionar quarto
   const selecionarQuarto = (tipo, quarto) => {
@@ -208,75 +191,169 @@ export default function Reservar() {
     setStep(3)
   }
 
-  const buscarClienteRecorrente = async () => {
-    const cpfLimpo = hospedeData.documento.replace(/\D/g, '')
-    const emailNormalizado = hospedeData.email.trim().toLowerCase()
-
-    if (cpfLimpo.length !== 11) {
-      toast.warning('Informe um CPF válido para buscar seus dados')
+  const buscarCadastroCpf = async () => {
+    if (!isValidCPF(cpfLimpo)) {
+      toast.warning('Informe um CPF válido para autenticar a reserva')
       return
     }
 
-    if (!emailNormalizado.includes('@')) {
-      toast.warning('Informe o mesmo email usado na reserva anterior')
-      return
-    }
-
-    setClienteLookupLoading(true)
-
+    setAuthLoading(true)
     try {
-      const response = await api.post('/public/clientes/identificar', {
-        documento: cpfLimpo,
-        email: emailNormalizado
+      const response = await api.get(`/customers/${cpfLimpo}`)
+      const customer = response.data
+      applyCustomerToForm(customer)
+      setCustomerAuth({
+        ...initialCustomerAuth,
+        status: 'found',
+        customer,
       })
-
-      const data = response.data
-      if (data?.cliente_encontrado && data?.cliente) {
-        setHospedeData((prev) => ({
-          ...prev,
-          nome_completo: data.cliente.nome_completo || prev.nome_completo,
-          email: data.cliente.email || prev.email,
-          telefone: data.cliente.telefone ? formatTelefone(data.cliente.telefone) : prev.telefone
-        }))
-        setClienteRecorrente(data.cliente)
-        setReservaAtivaCliente(data.reserva_ativa || null)
-        if (data.tem_reserva_ativa) {
-          setClienteLookupStatus('active_reservation')
-          toast.warning(data.mensagem || `${data.cliente.nome_completo}, você já tem uma reserva ativa.`)
-        } else {
-          setClienteLookupStatus('found')
-          toast.success('Dados do cadastro anterior carregados')
-        }
-        return
-      }
-
-      setClienteRecorrente(null)
-      setReservaAtivaCliente(null)
-      setClienteLookupStatus('not_found')
-      toast.info('Nenhum cadastro compatível encontrado para CPF + email')
+      toast.success('Cadastro encontrado. Envie o código por WhatsApp.')
     } catch (error) {
-      console.error('Erro ao buscar cliente recorrente:', error)
-      setClienteRecorrente(null)
-      setReservaAtivaCliente(null)
-      setClienteLookupStatus('error')
-      toast.error(error?.response?.data?.detail || 'Erro ao buscar cadastro anterior')
+      if (error?.response?.status === 404) {
+        setCustomerAuth({
+          ...initialCustomerAuth,
+          status: 'not_found',
+        })
+        setHospedeData((current) => ({
+          ...current,
+          documento: formatCPF(cpfLimpo),
+        }))
+        toast.info('CPF ainda não cadastrado. Complete seus dados para criar o cadastro.')
+      } else {
+        toast.error(getApiErrorMessage(error, 'Erro ao consultar CPF'))
+      }
     } finally {
-      setClienteLookupLoading(false)
+      setAuthLoading(false)
+    }
+  }
+
+  const criarCadastroCustomer = async () => {
+    if (!isValidCPF(cpfLimpo)) {
+      toast.warning('CPF inválido')
+      return
+    }
+    if (!hospedeData.nome_completo || !hospedeData.email || !hospedeData.telefone) {
+      toast.warning('Preencha nome, email e telefone para criar o cadastro')
+      return
+    }
+    if (!hospedeData.email.includes('@')) {
+      toast.warning('Email inválido')
+      return
+    }
+    if (telefoneLimpo.length < 10) {
+      toast.warning('Telefone inválido')
+      return
+    }
+
+    setAuthLoading(true)
+    try {
+      const response = await api.post('/customers/create', {
+        nome_completo: hospedeData.nome_completo.trim(),
+        documento: cpfLimpo,
+        email: hospedeData.email.trim(),
+        telefone: telefoneLimpo,
+      })
+      const customer = response.data
+      applyCustomerToForm(customer)
+      setCustomerAuth({
+        ...initialCustomerAuth,
+        status: 'found',
+        customer,
+      })
+      toast.success('Cadastro criado. Agora envie o código por WhatsApp.')
+    } catch (error) {
+      if (error?.response?.status === 409) {
+        toast.info('CPF já cadastrado. Vou buscar seus dados para autenticação.')
+        await buscarCadastroCpf()
+      } else {
+        toast.error(getApiErrorMessage(error, 'Erro ao criar cadastro'))
+      }
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const enviarOtpCustomer = async () => {
+    if (!customerAuth.customer) {
+      toast.warning('Consulte ou crie o cadastro antes de enviar o código')
+      return
+    }
+
+    setAuthLoading(true)
+    try {
+      const response = await api.post('/auth/otp/generate', {
+        cpf: cpfLimpo,
+      })
+      setCustomerAuth((current) => ({
+        ...current,
+        status: 'otp_sent',
+        otpId: response.data.otp_id,
+        otpCode: '',
+        accessToken: '',
+        expiresInSeconds: response.data.expires_in_seconds || 300,
+      }))
+      toast.success('Código enviado pelo WhatsApp')
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Erro ao enviar código por WhatsApp'))
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const validarOtpCustomer = async () => {
+    if (!customerAuth.otpId) {
+      toast.warning('Envie o código por WhatsApp antes de validar')
+      return
+    }
+    if (!/^\d{6}$/.test(customerAuth.otpCode)) {
+      toast.warning('Digite o código de 6 dígitos')
+      return
+    }
+
+    setAuthLoading(true)
+    try {
+      const response = await api.post('/auth/otp/validate', {
+        otp_id: customerAuth.otpId,
+        code: customerAuth.otpCode,
+      })
+      const customer = response.data.customer || customerAuth.customer
+      applyCustomerToForm(customer)
+      setCustomerAuth((current) => ({
+        ...current,
+        status: 'verified',
+        customer,
+        accessToken: response.data.access_token,
+      }))
+      toast.success('Cadastro autenticado. Você pode continuar a reserva.')
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Erro ao validar código'))
+    } finally {
+      setAuthLoading(false)
     }
   }
   
   // Criar reserva
   const criarReserva = async () => {
+    if (!isCustomerAuthenticated) {
+      toast.warning('Autentique seu cadastro por WhatsApp antes de confirmar a reserva')
+      setStep(3)
+      return
+    }
+
     // Validações
     if (!hospedeData.nome_completo || !hospedeData.documento || !hospedeData.email || !hospedeData.telefone) {
       toast.warning('Preencha todos os campos obrigatórios')
       return
     }
     
-    // Validar CPF (simples)
-    const cpfLimpo = hospedeData.documento.replace(/\D/g, '')
-    if (cpfLimpo.length !== 11) {
+    if (!isValidCPF(cpfLimpo)) {
       toast.warning('CPF inválido')
+      return
+    }
+
+    if (onlyDigits(customerAuth.customer?.documento) !== cpfLimpo) {
+      toast.warning('O CPF autenticado não corresponde ao CPF informado')
+      setStep(3)
       return
     }
     
@@ -285,33 +362,10 @@ export default function Reservar() {
       toast.warning('Email inválido')
       return
     }
-
-    if (reservaAtivaCliente) {
-      toast.warning(`${hospedeData.nome_completo || 'Cliente'}, você já tem uma reserva ativa.`)
-      return
-    }
     
     setLoading(true)
-    let attemptedCaptcha = false
-    let captchaVerified = false
-
+    
     try {
-      let antibotHeaders = {}
-      if (TURNSTILE_SITE_KEY) {
-        attemptedCaptcha = true
-        if (!turnstileToken) {
-          setCaptchaStatus('error')
-          toast.error('❌ Resolva o captcha antes de confirmar a reserva.')
-          return
-        }
-
-        setCaptchaStatus('checking')
-        antibotHeaders = {
-          'X-Turnstile-Token': turnstileToken,
-          'X-Turnstile-Action': 'criar_reserva_publica'
-        }
-      }
-
       const payload = {
         nome_completo: hospedeData.nome_completo,
         documento: cpfLimpo,
@@ -325,20 +379,14 @@ export default function Reservar() {
         num_criancas: hospedeData.num_criancas,
         observacoes: hospedeData.observacoes,
         metodo_pagamento: metodoPagamento,
-        cupom_codigo: cupomStatus === 'valid' && cupomInfo?.codigo ? cupomInfo.codigo : null
+        customer_auth_token: customerAuth.accessToken
       }
       
-      const response = await api.post(
-        '/public/reservas',
-        payload,
-        Object.keys(antibotHeaders).length ? { headers: antibotHeaders } : undefined
-      )
+      const response = await api.post('/public/reservas', payload)
       
       const data = response.data
       
       if (data.success) {
-        captchaVerified = true
-        setCaptchaStatus(TURNSTILE_SITE_KEY ? 'verified' : 'disabled')
         setReservaConfirmada(data)
         toast.success('🎉 Reserva confirmada com sucesso!')
         setStep(5)
@@ -364,11 +412,16 @@ export default function Reservar() {
       // Tratamento de erros de rede
       if (error.code === 'ECONNREFUSED') {
         toast.error('❌ Servidor indisponível. Tente novamente em alguns instantes.')
-      } else if (error.response?.status === 403) {
-        setCaptchaStatus('error')
-        toast.error(`❌ ${error.response?.data?.detail || 'Captcha inválido ou expirado.'}`)
-      } else if (error.response?.status === 409) {
-        toast.warning(error.response?.data?.detail || `${hospedeData.nome_completo || 'Cliente'}, você já tem uma reserva ativa.`)
+      } else if ([401, 403].includes(error.response?.status)) {
+        toast.error('❌ Autenticação expirada ou CPF divergente. Valide o código novamente.')
+        setCustomerAuth((current) => ({
+          ...current,
+          status: current.customer ? 'found' : 'idle',
+          otpId: '',
+          otpCode: '',
+          accessToken: '',
+        }))
+        setStep(3)
       } else if (error.response?.status === 400) {
         toast.error('❌ Dados inválidos. Verifique as informações e tente novamente.')
       } else if (error.response?.status === 500) {
@@ -377,9 +430,6 @@ export default function Reservar() {
         toast.error('❌ Erro ao conectar com o servidor. Tente novamente.')
       }
     } finally {
-      if (TURNSTILE_SITE_KEY && attemptedCaptcha && !captchaVerified) {
-        resetTurnstile()
-      }
       setLoading(false)
     }
   }
@@ -423,187 +473,106 @@ export default function Reservar() {
     return descricoes[tipo] || { titulo: tipo, descricao: '', amenidades: [] }
   }
 
-  const getCaptchaBadge = () => {
-    switch (captchaStatus) {
-      case 'checking':
-        return {
-          label: 'Validando',
-          classes: 'bg-amber-100 text-amber-800 border-amber-200',
-          description: 'Validando o captcha antes de confirmar a reserva.'
-        }
-      case 'verified':
-        return {
-          label: 'Validado',
-          classes: 'bg-green-100 text-green-800 border-green-200',
-          description: 'Captcha concluído. Você pode confirmar a reserva.'
-        }
-      case 'error':
-        return {
-          label: 'Falhou',
-          classes: 'bg-red-100 text-red-800 border-red-200',
-          description: 'O captcha falhou ou expirou. Resolva novamente antes de prosseguir.'
-        }
-      case 'disabled':
-        return {
-          label: 'Dev',
-          classes: 'bg-slate-100 text-slate-700 border-slate-200',
-          description: 'Captcha visível desativado neste ambiente. Ative as chaves para produção.'
-        }
-      case 'ready':
-      default:
-        return {
-          label: 'Pendente',
-          classes: 'bg-blue-100 text-blue-800 border-blue-200',
-          description: 'Resolva o captcha visível antes de confirmar a reserva.'
-        }
-    }
-  }
-
-  const captchaBadge = getCaptchaBadge()
-  const resumoValores = useMemo(() => {
-    const subtotal = Number(quartoSelecionado?.preco_total || 0)
-    const desconto = Number(cupomInfo?.valor_desconto_calculado || 0)
-    const total = cupomStatus === 'valid' && cupomInfo?.valor_final_estimado != null
-      ? Number(cupomInfo.valor_final_estimado)
-      : subtotal
-
-    return { subtotal, desconto, total }
-  }, [quartoSelecionado, cupomInfo, cupomStatus])
-  const whatsappReservaAtivaUrl = reservaAtivaCliente
-    ? `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(
-        `Olá Hotel real cabo frio, tudo bem?\n\nGostaria de falar sobre minha reserva.\nCódigo ${reservaAtivaCliente.codigo} | Quarto ${reservaAtivaCliente.quarto_numero} | Status ${reservaAtivaCliente.status}`
-      )}&type=phone_number&app_absent=0`
-    : null
-  const tabsReserva = [
-    {
-      id: 'primeira_reserva',
-      titulo: 'Primeira reserva',
-      descricao: 'Fluxo guiado para quem ainda vai se cadastrar.'
-    },
-    {
-      id: 'ja_sou_cliente',
-      titulo: 'Já sou cliente',
-      descricao: 'Vamos reaproveitar seus dados no passo seguinte.'
-    }
+  const reservationSteps = [
+    { num: 1, label: 'Datas' },
+    { num: 2, label: 'Quarto' },
+    { num: 3, label: 'Dados' },
+    { num: 4, label: 'Pagamento' },
+    { num: 5, label: 'Confirmação' },
   ]
-
-  const validarCupom = async () => {
-    if (!cupomCodigo.trim()) {
-      toast.warning('Informe um código de cupom para validar')
-      return
-    }
-
-    if (!quartoSelecionado || !numDiarias) {
-      toast.warning('Selecione as datas e o quarto antes de validar o cupom')
-      return
-    }
-
-    try {
-      setCupomLoading(true)
-      setCupomStatus('checking')
-
-      const response = await api.post('/cupons/validar', {
-        codigo: cupomCodigo.trim().toUpperCase(),
-        suite_tipo: quartoSelecionado.tipo,
-        num_diarias: numDiarias,
-        valor_total_base: Number(quartoSelecionado.preco_total)
-      })
-
-      if (response.data?.valido) {
-        setCupomInfo(response.data)
-        setCupomCodigo(response.data.codigo || cupomCodigo.trim().toUpperCase())
-        setCupomStatus('valid')
-        toast.success(`Cupom ${response.data.codigo} aplicado ao resumo da reserva`)
-        return
-      }
-
-      setCupomInfo(response.data || null)
-      setCupomStatus('invalid')
-      toast.warning(response.data?.mensagem || 'Cupom inválido para esta reserva')
-    } catch (error) {
-      console.error('Erro ao validar cupom:', error)
-      setCupomInfo(null)
-      setCupomStatus('invalid')
-      toast.error(error?.response?.data?.detail || 'Não foi possível validar o cupom agora')
-    } finally {
-      setCupomLoading(false)
-    }
-  }
-
-  const removerCupom = () => {
-    setCupomCodigo('')
-    setCupomInfo(null)
-    setCupomStatus('idle')
-  }
-
-  const renderResumoFinanceiro = (variant = 'default') => {
-    const containerClasses = variant === 'compact'
-      ? 'rounded-xl border border-slate-200 bg-slate-50 p-4'
-      : 'rounded-xl border border-green-100 bg-green-50 p-4'
-    const titleClasses = variant === 'compact'
-      ? 'text-sm font-semibold text-slate-900'
-      : 'text-sm font-semibold text-green-900'
-
-    return (
-      <div className={containerClasses}>
-        <p className={titleClasses}>Resumo financeiro</p>
-        <div className="mt-3 space-y-2 text-sm">
-          <div className="flex items-center justify-between text-gray-700">
-            <span>Subtotal da hospedagem</span>
-            <strong>R$ {resumoValores.subtotal.toFixed(2)}</strong>
-          </div>
-          {cupomStatus === 'valid' && cupomInfo ? (
-            <>
-              <div className="flex items-center justify-between text-green-700">
-                <span>Desconto do cupom {cupomInfo.codigo}</span>
-                <strong>- R$ {resumoValores.desconto.toFixed(2)}</strong>
-              </div>
-              {cupomInfo.pontos_bonus > 0 ? (
-                <div className="flex items-center justify-between text-blue-700">
-                  <span>Bônus previsto no checkout</span>
-                  <strong>+ {cupomInfo.pontos_bonus} RP</strong>
-                </div>
-              ) : null}
-            </>
-          ) : null}
-          <div className="flex items-center justify-between border-t border-white/70 pt-2 text-base font-bold text-gray-900">
-            <span>Total estimado</span>
-            <span>R$ {resumoValores.total.toFixed(2)}</span>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const canEditCustomerFields = customerAuth.status === 'not_found'
+  const authBadge = {
+    idle: { label: 'Pendente', className: 'border-blue-200 bg-blue-100 text-blue-800' },
+    not_found: { label: 'Novo cadastro', className: 'border-amber-200 bg-amber-100 text-amber-800' },
+    found: { label: 'Cadastro localizado', className: 'border-blue-200 bg-blue-100 text-blue-800' },
+    otp_sent: { label: 'Código enviado', className: 'border-purple-200 bg-purple-100 text-purple-800' },
+    verified: { label: 'Autenticado', className: 'border-green-200 bg-green-100 text-green-800' },
+  }[customerAuth.status] || { label: 'Pendente', className: 'border-blue-200 bg-blue-100 text-blue-800' }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-900 via-blue-800 to-blue-900">
-      {TURNSTILE_SITE_KEY && (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-          strategy="afterInteractive"
-          onLoad={() => setTurnstileLoaded(true)}
-        />
-      )}
-      {/* Header */}
-      <header className="bg-white/10 backdrop-blur-md border-b border-white/20">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-4xl">🏨</span>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Hotel Real</h1>
-              <p className="text-yellow-400 text-sm">Cabo Frio</p>
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#050403] text-white">
+      <div className="absolute inset-0">
+        <div className="absolute inset-0 bg-[#050403]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(218,166,55,0.18),transparent_22rem),radial-gradient(circle_at_12%_34%,rgba(157,91,8,0.22),transparent_18rem),radial-gradient(circle_at_88%_28%,rgba(246,198,55,0.11),transparent_16rem),radial-gradient(circle_at_50%_82%,rgba(92,36,145,0.12),transparent_18rem)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.16)_0%,rgba(5,4,3,0.86)_44%,#050403_100%)]" />
+      </div>
+
+      <GoldParticles />
+
+      <header className="relative z-40 border-b border-[#b9821b]/35 bg-black/42 backdrop-blur-[2px]">
+        <div className="mx-auto grid w-full max-w-[820px] grid-cols-[72px_minmax(0,1fr)_72px] items-start px-4 py-5 sm:grid-cols-[88px_minmax(0,1fr)_88px] sm:px-8 sm:py-7">
+          <button
+            type="button"
+            aria-label="Voltar"
+            onClick={() => router.push('/entrar-jornada-real')}
+            className="mt-1 grid h-16 w-16 place-items-center rounded-full border border-white/15 bg-black/24 text-white/80 shadow-[inset_0_0_14px_rgba(255,255,255,0.04)] transition hover:border-[#e5b84a]/60 hover:text-[#e5b84a]"
+          >
+            <ArrowLeft size={34} strokeWidth={1.6} />
+          </button>
+
+          <div className="min-w-0 justify-self-center text-center">
+            <img
+              src="/images/logo-jornada-real.png"
+              alt="Hotel Real Cabo Frio"
+              className="mx-auto h-auto w-[230px] max-w-full object-contain drop-shadow-[0_8px_18px_rgba(0,0,0,0.9)] sm:w-[330px]"
+            />
+            <div className="mx-auto mt-4 w-fit max-w-full space-y-3 font-serif text-[0.76rem] uppercase tracking-wide text-[#f4ead2] sm:text-[1.08rem]">
+              <p className="flex items-center justify-center gap-4">
+                <Phone size={22} className="shrink-0 text-[#d7a52c] drop-shadow-[0_0_8px_rgba(215,165,44,0.7)]" />
+                <span>(22) 2648-5900</span>
+              </p>
+              <p className="flex items-center justify-center gap-4 break-all leading-snug">
+                <Mail size={22} className="shrink-0 text-[#d7a52c] drop-shadow-[0_0_8px_rgba(215,165,44,0.7)]" />
+                <span>contato@hotelrealcabofrio.com.br</span>
+              </p>
             </div>
           </div>
-          <div className="text-right text-white/80 text-sm">
-            <p>📞 (22) 2648-5900</p>
-            <p>📧 contato@hotelrealcabofrio.com.br</p>
+
+          <div aria-hidden="true" />
+        </div>
+      </header>
+
+      {/* Header */}
+      <header className="hidden">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl sm:text-4xl">🏨</span>
+            <div>
+              <h1 className="text-xl font-bold text-white sm:text-2xl">Hotel Real</h1>
+              <p className="text-sm text-yellow-400">Cabo Frio</p>
+            </div>
+          </div>
+          <div className="space-y-1 text-left text-xs text-white/80 sm:text-right sm:text-sm">
+            <p className="break-words">📞 (22) 2648-5900</p>
+            <p className="break-all">📧 contato@hotelrealcabofrio.com.br</p>
           </div>
         </div>
       </header>
       
+      <div className="relative z-40 mx-auto w-full max-w-[820px] px-4 py-5 sm:px-8">
+        <div className="grid grid-cols-5 gap-2 border-b border-[#b9821b]/25 pb-5">
+          {reservationSteps.map((s) => (
+            <div key={s.num} className="flex flex-col items-center gap-2">
+              <div className={`grid h-14 w-14 place-items-center rounded-full border font-serif text-2xl font-bold transition-all sm:h-[72px] sm:w-[72px] sm:text-3xl ${
+                step >= s.num
+                  ? 'border-[#fff0ad] bg-[radial-gradient(circle_at_30%_22%,#fff3b4,#d79b22_58%,#8c5706)] text-[#1e1004] shadow-[0_0_22px_rgba(235,190,75,0.7)]'
+                  : 'border-[#9f721f]/38 bg-black/28 text-white/38'
+              }`}>
+                {step > s.num ? '✓' : s.num}
+              </div>
+              <span className={`font-serif text-[0.52rem] font-bold uppercase leading-none sm:text-[1rem] ${
+                step >= s.num ? 'text-[#e5b84a]' : 'text-white/78'
+              }`}>
+                {s.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Progress Steps */}
-      <div className="max-w-4xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-8">
+      <div className="hidden">
+        <div className="mb-6 grid grid-cols-5 items-start gap-2 sm:mb-8 sm:flex sm:items-center sm:justify-between">
           {[
             { num: 1, label: 'Datas' },
             { num: 2, label: 'Quarto' },
@@ -611,19 +580,19 @@ export default function Reservar() {
             { num: 4, label: 'Pagamento' },
             { num: 5, label: 'Confirmação' }
           ].map((s, i) => (
-            <div key={s.num} className="flex items-center">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
+            <div key={s.num} className="flex flex-col items-center gap-2 sm:flex-row sm:items-center sm:gap-0">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition-all sm:h-10 sm:w-10 sm:text-base ${
                 step >= s.num 
-                  ? 'bg-yellow-400 text-blue-900' 
-                  : 'bg-white/20 text-white/60'
+                  ? 'border border-[#fff0b8]/45 bg-gradient-to-b from-[#ffe89a] via-[#e7b938] to-[#bf7d0e] text-[#241102] shadow-[0_0_18px_rgba(212,175,55,0.25)]' 
+                  : 'border border-[#d4af37]/20 bg-[#2a1814]/70 text-[#f8e9c2]/55'
               }`}>
                 {step > s.num ? '✓' : s.num}
               </div>
-              <span className={`ml-2 text-sm hidden sm:inline ${step >= s.num ? 'text-yellow-400' : 'text-white/60'}`}>
+              <span className={`text-center text-[10px] font-semibold uppercase tracking-[0.14em] sm:ml-2 sm:text-sm sm:normal-case sm:tracking-normal ${step >= s.num ? 'text-yellow-400' : 'text-white/60'}`}>
                 {s.label}
               </span>
               {i < 4 && (
-                <div className={`w-8 sm:w-16 h-1 mx-2 rounded ${step > s.num ? 'bg-yellow-400' : 'bg-white/20'}`} />
+                <div className={`hidden h-1 w-8 rounded sm:mx-2 sm:block sm:w-16 ${step > s.num ? 'bg-gradient-to-r from-[#f7d878] via-[#d8a83b] to-[#8d5a14]' : 'bg-[#6d5846]/45'}`} />
               )}
             </div>
           ))}
@@ -631,116 +600,164 @@ export default function Reservar() {
       </div>
       
       {/* Content */}
-      <main className="max-w-4xl mx-auto px-4 pb-12">
+      <main className="relative z-30 mx-auto w-full max-w-[820px] flex-1 px-4 pb-12 sm:px-8">
         
         {/* Step 1: Datas */}
         {step === 1 && (
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-white/15 bg-white/10 p-2 shadow-xl backdrop-blur-md">
-              <div className="grid gap-2 md:grid-cols-3">
-                {tabsReserva.map((tab) => {
-                  const ativo = perfilReserva === tab.id
+          <div>
+          <div className="overflow-hidden rounded-[22px] border border-[#8b651c]/70 bg-black/64 shadow-[0_0_36px_rgba(0,0,0,0.62),inset_0_0_28px_rgba(229,184,74,0.06)] backdrop-blur-[2px]">
+            <div className="px-5 pb-5 pt-8 text-center sm:px-9 sm:pt-9">
+              <h2 className="font-serif text-[2rem] font-bold uppercase leading-none tracking-wide text-[#e5b84a] drop-shadow-[0_0_10px_rgba(229,184,74,0.35)] sm:text-[2.4rem]">
+                Encontre Sua Data Ideal
+              </h2>
+              <div className="mx-auto mt-5 flex w-[78%] items-center justify-center gap-2 text-[#d7a52c]">
+                <span className="h-px flex-1 bg-gradient-to-r from-transparent via-[#8e651b] to-[#d7a52c]" />
+                <span className="h-2 w-2 rotate-45 border border-[#d7a52c]" />
+                <span className="h-px flex-1 bg-gradient-to-l from-transparent via-[#8e651b] to-[#d7a52c]" />
+              </div>
+              <p className="mt-5 text-xl text-[#f4ead2] sm:text-2xl">Escolha as datas da sua estadia</p>
+            </div>
+
+            <div className="mx-4 rounded-[24px] border border-white/10 bg-[#120d09]/72 p-5 shadow-[inset_0_0_18px_rgba(255,255,255,0.03)] sm:mx-9 sm:p-7">
+              <div className="grid gap-6">
+                <label className="grid grid-cols-[74px_1fr] items-center gap-4 border-b border-white/10 pb-6">
+                  <span className="grid h-14 w-14 place-items-center rounded-full border border-[#9f721f]/65 bg-black/30 text-[#e5b84a] shadow-[0_0_14px_rgba(229,184,74,0.22)]">
+                    <CalendarDays size={30} strokeWidth={1.7} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-serif text-xl font-bold uppercase text-[#f4ead2]">Check-in</span>
+                    <span className="relative mt-2 block">
+                      <input
+                        type="date"
+                        min={today}
+                        value={searchData.data_checkin}
+                        onChange={(e) => setSearchData({ ...searchData, data_checkin: e.target.value })}
+                        className="royal-date-input peer w-full border-0 border-b border-white/10 bg-transparent py-2 pr-12 text-2xl uppercase text-[#f4ead2] outline-none [color-scheme:dark] focus:border-[#e5b84a]"
+                      />
+                      <CalendarDays className="hidden" size={30} />
+                    </span>
+                    <span className="mt-3 block text-lg text-[#c7b99b]">A partir das <strong className="text-[#e5b84a]">12:00</strong></span>
+                  </span>
+                </label>
+
+                <label className="grid grid-cols-[74px_1fr] items-center gap-4 border-b border-white/10 pb-6">
+                  <span className="grid h-14 w-14 place-items-center rounded-full border border-[#9f721f]/65 bg-black/30 text-[#e5b84a] shadow-[0_0_14px_rgba(229,184,74,0.22)]">
+                    <CalendarDays size={30} strokeWidth={1.7} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-serif text-xl font-bold uppercase text-[#f4ead2]">Check-out</span>
+                    <span className="relative mt-2 block">
+                      <input
+                        type="date"
+                        min={searchData.data_checkin || today}
+                        value={searchData.data_checkout}
+                        onChange={(e) => setSearchData({ ...searchData, data_checkout: e.target.value })}
+                        className="royal-date-input w-full border-0 border-b border-white/10 bg-transparent py-2 pr-12 text-2xl uppercase text-[#f4ead2] outline-none [color-scheme:dark] focus:border-[#e5b84a]"
+                      />
+                      <CalendarDays className="hidden" size={30} />
+                    </span>
+                    <span className="mt-3 block text-lg text-[#c7b99b]">Até as <strong className="text-[#e5b84a]">11:00</strong></span>
+                  </span>
+                </label>
+
+                <label className="grid grid-cols-[74px_1fr] items-center gap-4">
+                  <span className="grid h-14 w-14 place-items-center rounded-full border border-[#9f721f]/65 bg-black/30 text-[#e5b84a] shadow-[0_0_14px_rgba(229,184,74,0.22)]">
+                    <User size={30} strokeWidth={1.7} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-serif text-xl font-bold uppercase text-[#f4ead2]">Hóspedes</span>
+                    <span className="relative mt-3 block">
+                      <select
+                        value={searchData.num_hospedes}
+                        onChange={(e) => setSearchData({ ...searchData, num_hospedes: parseInt(e.target.value) })}
+                        className="w-full appearance-none rounded-xl border border-white/12 bg-[#080604] px-5 py-4 text-2xl text-[#f4ead2] outline-none [color-scheme:dark] focus:border-[#e5b84a]"
+                      >
+                        {[1, 2, 3, 4, 5, 6].map(n => (
+                          <option key={n} value={n}>{n} {n === 1 ? 'hóspede' : 'hóspedes'}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-5 top-1/2 -translate-y-1/2 text-white/70" size={28} />
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <button
+                onClick={buscarDisponibilidade}
+                disabled={loading}
+                className="mt-7 grid min-h-[76px] w-full grid-cols-[46px_minmax(0,1fr)_42px] items-center gap-2 rounded-[28px] border border-[#fff0ad]/65 bg-[linear-gradient(180deg,#fff0ad_0%,#e7b943_48%,#a86608_100%)] px-4 font-serif text-[0.78rem] font-bold uppercase tracking-wide text-[#160d04] shadow-[0_14px_28px_rgba(0,0,0,0.48),0_0_28px_rgba(229,184,74,0.4),inset_0_1px_0_rgba(255,255,255,0.5)] transition hover:scale-[1.01] disabled:opacity-55 sm:grid-cols-[58px_minmax(0,1fr)_48px] sm:gap-4 sm:px-5 sm:text-[1.45rem]"
+              >
+                <span className="grid h-11 w-11 place-items-center justify-self-start rounded-full border-2 border-[#1d1205]/70 sm:h-14 sm:w-14">
+                  <Search size={27} strokeWidth={1.8} />
+                </span>
+                <span className="min-w-0 text-center leading-tight">{loading ? 'Buscando...' : 'Verificar Disponibilidade'}</span>
+                <img className="jr-button-crest justify-self-end" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-5 border-t border-[#8b651c]/45 px-5 py-5 sm:px-7">
+              <div className="grid grid-cols-3 divide-x divide-white/12 rounded-[20px] border border-white/10 bg-black/22 py-4 text-center">
+                {[
+                  { icon: ShieldCheck, title: 'Reserva Segura', text: 'Ambiente 100% protegido' },
+                  { icon: Gift, title: 'Melhor Preço', text: 'Condições exclusivas para você' },
+                  { icon: Star, title: 'Acumule Pontos', text: 'Ganhe pontos na Jornada Real' },
+                ].map((item) => {
+                  const Icon = item.icon
                   return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setPerfilReserva(tab.id)}
-                      className={`rounded-xl px-5 py-4 text-left transition-all ${
-                        ativo
-                          ? 'bg-white text-blue-900 shadow-lg ring-2 ring-yellow-300/80'
-                          : 'bg-transparent text-white/80 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-base font-bold">{tab.titulo}</p>
-                          <p className={`mt-1 text-sm ${ativo ? 'text-blue-700' : 'text-white/65'}`}>
-                            {tab.descricao}
-                          </p>
-                        </div>
-                        <span
-                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${
-                            ativo
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-white/10 text-white/60'
-                          }`}
-                        >
-                          {ativo ? 'ativo' : 'opção'}
-                        </span>
-                      </div>
-                    </button>
+                    <div key={item.title} className="px-2">
+                      <Icon className="mx-auto mb-2 text-[#d7a52c]" size={30} strokeWidth={1.7} />
+                      <strong className="block font-serif text-[0.75rem] uppercase text-[#e5b84a] sm:text-[0.95rem]">{item.title}</strong>
+                      <span className="mt-2 block text-[0.72rem] leading-snug text-[#f4ead2] sm:text-[0.9rem]">{item.text}</span>
+                    </div>
                   )
                 })}
-                <Link
-                  href="/consultar"
-                  className="rounded-xl px-5 py-4 text-left transition-all bg-transparent text-white/80 hover:bg-white/10 hover:text-white"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-base font-bold">Consultar minha reserva</p>
-                      <p className="mt-1 text-sm text-white/65">
-                        Acesse código, status e instruções da sua reserva atual.
-                      </p>
-                    </div>
-                    <span className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] bg-white/10 text-white/60">
-                      consulta
-                    </span>
-                  </div>
-                </Link>
               </div>
-            </div>
 
-            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
-            <div className="bg-gradient-to-r from-yellow-400 to-yellow-500 p-6 text-center">
-              <h2 className="text-2xl font-bold text-blue-900">🔍 Buscar Disponibilidade</h2>
-              <p className="text-blue-800">
-                {perfilReserva === 'ja_sou_cliente'
-                  ? 'Selecione as datas da sua estadia e depois recuperamos seu cadastro.'
-                  : 'Selecione as datas da sua estadia'}
+              <p className="mx-auto mt-5 flex w-fit items-center justify-center gap-3 rounded-full border border-[#8b651c]/55 bg-black/30 px-6 py-3 text-center text-[#f4ead2]">
+                <Crown size={26} className="text-[#e5b84a]" />
+                <span>Sua reserva é garantida e seus pontos também!</span>
               </p>
             </div>
-            
-            <div className="p-8">
-              {perfilReserva === 'ja_sou_cliente' && (
-                <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-left">
-                  <p className="text-sm font-semibold text-blue-900">Cliente recorrente</p>
-                  <p className="mt-1 text-sm text-blue-800">
-                    No passo de dados, informe o mesmo CPF e email usados antes para preencher seu cadastro automaticamente.
-                  </p>
-                </div>
-              )}
+          </div>
 
+          <div className="hidden">
+            <div className="border-b border-[#d4af37]/30 bg-gradient-to-b from-[#f7d878] via-[#d8a83b] to-[#8d5a14] px-4 py-5 text-center sm:p-6">
+              <h2 className="text-xl font-bold text-blue-900 sm:text-2xl">🔍 Buscar Disponibilidade</h2>
+              <p className="mt-1 text-sm text-blue-800 sm:text-base">Selecione as datas da sua estadia</p>
+            </div>
+            
+            <div className="bg-[linear-gradient(180deg,rgba(36,20,13,0.9)_0%,rgba(21,11,8,0.96)_100%)] p-6 sm:p-8">
               <div className="grid md:grid-cols-3 gap-6">
                 <div>
-                  <label className="block text-gray-700 font-medium mb-2">📅 Check-in</label>
+                  <label className="block text-[#f3dfab] font-medium mb-2">📅 Check-in</label>
                   <input
                     type="date"
                     min={today}
                     value={searchData.data_checkin}
                     onChange={(e) => setSearchData({ ...searchData, data_checkin: e.target.value })}
-                    className="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none text-lg"
+                    className="w-full rounded-xl border border-[#d4af37]/28 bg-[#241611] p-4 text-lg text-[#fff4d6] focus:border-[#f4cf65] focus:outline-none focus:shadow-[0_0_18px_rgba(212,175,55,0.18)]"
                   />
-                  <p className="text-sm text-gray-500 mt-1">A partir das 12:00</p>
+                  <p className="text-sm text-[#cdbb97] mt-1">A partir das 12:00</p>
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 font-medium mb-2">📅 Check-out</label>
+                  <label className="block text-[#f3dfab] font-medium mb-2">📅 Check-out</label>
                   <input
                     type="date"
                     min={searchData.data_checkin || today}
                     value={searchData.data_checkout}
                     onChange={(e) => setSearchData({ ...searchData, data_checkout: e.target.value })}
-                    className="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none text-lg"
+                    className="w-full rounded-xl border border-[#d4af37]/28 bg-[#241611] p-4 text-lg text-[#fff4d6] focus:border-[#f4cf65] focus:outline-none focus:shadow-[0_0_18px_rgba(212,175,55,0.18)]"
                   />
-                  <p className="text-sm text-gray-500 mt-1">Até as 11:00</p>
+                  <p className="text-sm text-[#cdbb97] mt-1">Até as 11:00</p>
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 font-medium mb-2">👥 Hóspedes</label>
+                  <label className="block text-[#f3dfab] font-medium mb-2">👥 Hóspedes</label>
                   <select
                     value={searchData.num_hospedes}
                     onChange={(e) => setSearchData({ ...searchData, num_hospedes: parseInt(e.target.value) })}
-                    className="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none text-lg"
+                    className="w-full rounded-xl border border-[#d4af37]/28 bg-[#241611] p-4 text-lg text-[#fff4d6] focus:border-[#f4cf65] focus:outline-none focus:shadow-[0_0_18px_rgba(212,175,55,0.18)]"
                   >
                     {[1, 2, 3, 4, 5, 6].map(n => (
                       <option key={n} value={n}>{n} {n === 1 ? 'hóspede' : 'hóspedes'}</option>
@@ -752,7 +769,7 @@ export default function Reservar() {
               <button
                 onClick={buscarDisponibilidade}
                 disabled={loading}
-                className="w-full mt-8 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-4 rounded-xl font-bold text-lg hover:from-blue-700 hover:to-blue-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                className="mt-8 flex w-full items-center justify-center gap-2 rounded-xl border border-[#fff0b8]/40 bg-gradient-to-b from-[#ffe89a] via-[#e7b938] to-[#bf7d0e] py-4 text-lg font-bold text-[#241102] shadow-[0_12px_24px_rgba(0,0,0,0.34),0_0_24px_rgba(212,175,55,0.18)] transition-all hover:scale-[1.01] disabled:opacity-50"
               >
                 {loading ? (
                   <>⏳ Buscando...</>
@@ -790,7 +807,7 @@ export default function Reservar() {
             <h2 className="text-2xl font-bold text-white text-center">🛏️ Escolha sua Suíte</h2>
             
             {tiposDisponiveis.length === 0 ? (
-              <div className="bg-white rounded-xl p-8 text-center">
+              <div className="bg-white rounded-xl p-8 text-center text-gray-900">
                 <p className="text-gray-600">Não há quartos disponíveis para as datas selecionadas.</p>
                 <button
                   onClick={() => setStep(1)}
@@ -804,7 +821,7 @@ export default function Reservar() {
                 {tiposDisponiveis.map((tipo) => {
                   const info = getDescricaoSuite(tipo.tipo)
                   return (
-                    <div key={tipo.tipo} className="bg-white rounded-2xl shadow-xl overflow-hidden">
+                    <div key={tipo.tipo} className="bg-white rounded-2xl shadow-xl overflow-hidden text-gray-900">
                       <div className="md:flex">
                         {/* Imagem da suíte */}
                         <div className="md:w-1/3 relative h-48 md:h-auto">
@@ -865,6 +882,7 @@ export default function Reservar() {
                                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all"
                                 >
                                   Quarto {quarto.numero}
+                                  <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
                                 </button>
                               ))}
                               {tipo.quartos.length > 5 && (
@@ -890,10 +908,10 @@ export default function Reservar() {
         
         {/* Step 3: Dados do Hóspede */}
         {step === 3 && quartoSelecionado && (
-          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden text-gray-900">
             <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-6">
-              <h2 className="text-2xl font-bold text-white">📝 Seus Dados</h2>
-              <p className="text-blue-100">Preencha os dados para a reserva</p>
+              <h2 className="text-xl font-bold text-white sm:text-2xl">📝 Seus Dados</h2>
+              <p className="text-blue-100">Autentique seu cadastro para liberar a reserva</p>
             </div>
             
             {/* Resumo */}
@@ -911,6 +929,136 @@ export default function Reservar() {
             </div>
             
             <div className="p-6 space-y-4">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-gray-800">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-blue-600 text-white">
+                      <ShieldCheck size={24} strokeWidth={1.8} />
+                    </span>
+                    <div>
+                      <h3 className="font-bold text-blue-900">Autenticação do cadastro</h3>
+                      <p className="text-sm text-blue-800">
+                        O código é enviado para o WhatsApp do cadastro e vincula esta reserva ao CPF.
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase ${authBadge.className}`}>
+                    {authBadge.label}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-medium text-gray-700">CPF *</span>
+                    <input
+                      type="text"
+                      placeholder="000.000.000-00"
+                      value={hospedeData.documento}
+                      onChange={(e) => handleCpfChange(e.target.value)}
+                      disabled={customerAuth.status !== 'idle' && customerAuth.status !== 'not_found'}
+                      className="w-full rounded-lg border-2 border-gray-200 p-3 focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
+                      maxLength={14}
+                    />
+                  </label>
+                  <div className="flex items-end gap-2">
+                    <button
+                      type="button"
+                      onClick={buscarCadastroCpf}
+                      disabled={authLoading || customerAuth.status !== 'idle'}
+                      className="min-h-[48px] rounded-lg bg-blue-600 px-5 font-bold text-white transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {authLoading && customerAuth.status === 'idle' ? 'Consultando...' : 'Consultar'}
+                    </button>
+                    {customerAuth.status !== 'idle' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetCustomerAuth()
+                          setHospedeData((current) => ({
+                            ...current,
+                            documento: '',
+                            nome_completo: '',
+                            email: '',
+                            telefone: '',
+                          }))
+                        }}
+                        className="min-h-[48px] rounded-lg border border-gray-300 px-4 font-medium text-gray-700 transition-all hover:bg-white"
+                      >
+                        Trocar
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {customerAuth.status === 'not_found' && (
+                  <div className="mt-4 rounded-lg border border-amber-200 bg-white p-4 text-gray-900">
+                    <p className="text-sm text-amber-800">
+                      CPF não cadastrado. Preencha nome, email e telefone abaixo para criar o cadastro antes do OTP.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={criarCadastroCustomer}
+                      disabled={authLoading}
+                      className="mt-3 rounded-lg bg-amber-500 px-5 py-3 font-bold text-white transition-all hover:bg-amber-600 disabled:opacity-50"
+                    >
+                      {authLoading ? 'Criando cadastro...' : 'Criar cadastro'}
+                    </button>
+                  </div>
+                )}
+
+                {customerAuth.customer && customerAuth.status !== 'verified' && (
+                  <div className="mt-4 rounded-lg border border-blue-200 bg-white p-4 text-gray-900">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-bold text-gray-900">{customerAuth.customer.nome_completo}</p>
+                        <p className="text-sm text-gray-600">
+                          WhatsApp cadastrado: {formatTelefone(customerAuth.customer.telefone || '') || 'telefone indisponível'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={enviarOtpCustomer}
+                        disabled={authLoading}
+                        className="rounded-lg bg-blue-600 px-5 py-3 font-bold text-white transition-all hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {customerAuth.status === 'otp_sent' ? 'Reenviar código' : 'Enviar código'}
+                      </button>
+                    </div>
+
+                    {customerAuth.status === 'otp_sent' && (
+                      <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,220px)_auto]">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="000000"
+                          value={customerAuth.otpCode}
+                          onChange={(e) => setCustomerAuth((current) => ({
+                            ...current,
+                            otpCode: onlyDigits(e.target.value).slice(0, 6),
+                          }))}
+                          className="rounded-lg border-2 border-gray-200 p-3 text-center text-xl font-bold tracking-[0.2em] focus:border-blue-400 focus:outline-none"
+                          maxLength={6}
+                        />
+                        <button
+                          type="button"
+                          onClick={validarOtpCustomer}
+                          disabled={authLoading}
+                          className="rounded-lg bg-green-600 px-5 py-3 font-bold text-white transition-all hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {authLoading ? 'Validando...' : 'Validar código'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isCustomerAuthenticated && (
+                  <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-800">
+                    Cadastro autenticado. Você já pode revisar os dados da reserva e continuar.
+                  </div>
+                )}
+              </div>
+
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-gray-700 font-medium mb-1">Nome Completo *</label>
@@ -919,19 +1067,8 @@ export default function Reservar() {
                     placeholder="Como está no documento"
                     value={hospedeData.nome_completo}
                     onChange={(e) => setHospedeData({ ...hospedeData, nome_completo: e.target.value })}
-                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">CPF *</label>
-                  <input
-                    type="text"
-                    placeholder="000.000.000-00"
-                    value={hospedeData.documento}
-                    onChange={(e) => setHospedeData({ ...hospedeData, documento: formatCPF(e.target.value) })}
-                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none"
-                    maxLength={14}
+                    disabled={!canEditCustomerFields}
+                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
                   />
                 </div>
                 
@@ -942,7 +1079,8 @@ export default function Reservar() {
                     placeholder="seu@email.com"
                     value={hospedeData.email}
                     onChange={(e) => setHospedeData({ ...hospedeData, email: e.target.value })}
-                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none"
+                    disabled={!canEditCustomerFields}
+                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
                   />
                   <p className="text-xs text-gray-500 mt-1">Enviaremos a confirmação para este email</p>
                 </div>
@@ -954,7 +1092,8 @@ export default function Reservar() {
                     placeholder="(00) 00000-0000"
                     value={hospedeData.telefone}
                     onChange={(e) => setHospedeData({ ...hospedeData, telefone: formatTelefone(e.target.value) })}
-                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none"
+                    disabled={!canEditCustomerFields}
+                    className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
                     maxLength={15}
                   />
                 </div>
@@ -985,143 +1124,6 @@ export default function Reservar() {
                   </select>
                 </div>
               </div>
-
-              <div className={`rounded-xl border p-4 ${
-                perfilReserva === 'ja_sou_cliente'
-                  ? 'border-blue-200 bg-blue-50'
-                  : 'border-gray-200 bg-gray-50'
-              }`}>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">Já reservou antes?</p>
-                    <p className="mt-1 text-sm text-gray-600">
-                      Informe o mesmo CPF e email usados anteriormente para reaproveitar seu cadastro.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={buscarClienteRecorrente}
-                    disabled={clienteLookupLoading}
-                    className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {clienteLookupLoading ? 'Buscando...' : 'Buscar meus dados'}
-                  </button>
-                </div>
-
-                {clienteLookupStatus === 'found' && clienteRecorrente && (
-                  <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-                    Cadastro anterior localizado para <strong>{clienteRecorrente.nome_completo}</strong>.
-                    Revise telefone e demais dados antes de continuar.
-                  </div>
-                )}
-
-                {clienteLookupStatus === 'active_reservation' && clienteRecorrente && reservaAtivaCliente && (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    <p>
-                      <strong>{clienteRecorrente.nome_completo}</strong>, você já tem uma reserva ativa.
-                    </p>
-                    <p className="mt-2">
-                      Código {reservaAtivaCliente.codigo} | Quarto {reservaAtivaCliente.quarto_numero} | Status {reservaAtivaCliente.status}
-                    </p>
-                    <p className="mt-2">
-                      Cliente recorrente só pode criar nova reserva após ter histórico com check-out realizado e nenhuma reserva aberta.
-                    </p>
-                    {whatsappReservaAtivaUrl && (
-                      <a
-                        href={whatsappReservaAtivaUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-3 inline-flex items-center rounded-lg border border-amber-300 bg-white px-4 py-2 font-semibold text-amber-900 transition hover:bg-amber-100"
-                      >
-                        Falar no WhatsApp sobre essa reserva
-                      </a>
-                    )}
-                  </div>
-                )}
-
-                {clienteLookupStatus === 'not_found' && (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    Nenhum cadastro compatível foi encontrado. Você pode seguir com uma nova reserva normalmente.
-                  </div>
-                )}
-
-                {clienteLookupStatus === 'error' && (
-                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                    Não foi possível buscar o cadastro anterior agora. Tente novamente em instantes.
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-emerald-900">Cupom de desconto</p>
-                    <p className="mt-1 text-sm text-emerald-800">
-                      Se você recebeu um código promocional, valide agora antes de seguir para o pagamento.
-                    </p>
-                  </div>
-                  {cupomStatus === 'valid' ? (
-                    <span className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                      Aplicado
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="mt-4 flex flex-col gap-3 md:flex-row">
-                  <input
-                    type="text"
-                    value={cupomCodigo}
-                    onChange={(e) => {
-                      setCupomCodigo(e.target.value.toUpperCase())
-                      if (cupomStatus !== 'idle') {
-                        setCupomStatus('idle')
-                        setCupomInfo(null)
-                      }
-                    }}
-                    className="flex-1 rounded-lg border-2 border-emerald-200 bg-white p-3 focus:border-emerald-400 focus:outline-none"
-                    placeholder="Ex: CARNAVAL10"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={validarCupom}
-                      disabled={cupomLoading}
-                      className="rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                    >
-                      {cupomLoading ? 'Validando...' : 'Validar cupom'}
-                    </button>
-                    {cupomStatus === 'valid' ? (
-                      <button
-                        type="button"
-                        onClick={removerCupom}
-                        className="rounded-lg border border-gray-300 bg-white px-4 py-3 font-semibold text-gray-700 transition hover:bg-gray-50"
-                      >
-                        Remover
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                {cupomStatus === 'valid' && cupomInfo ? (
-                  <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900">
-                    <p>
-                      <strong>{cupomInfo.codigo}</strong> validado com sucesso.
-                      {cupomInfo.tipo_desconto === 'PERCENTUAL'
-                        ? ` Desconto de ${cupomInfo.valor_desconto}% aplicado nesta reserva.`
-                        : ` Desconto fixo de R$ ${Number(cupomInfo.valor_desconto || 0).toFixed(2)} aplicado nesta reserva.`}
-                    </p>
-                    <p className="mt-2">
-                      Total estimado com cupom: <strong>R$ {resumoValores.total.toFixed(2)}</strong>
-                    </p>
-                  </div>
-                ) : null}
-
-                {cupomStatus === 'invalid' ? (
-                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                    {cupomInfo?.mensagem || 'O cupom informado não pode ser usado nesta reserva.'}
-                  </div>
-                ) : null}
-              </div>
               
               <div>
                 <label className="block text-gray-700 font-medium mb-1">Observações (opcional)</label>
@@ -1133,38 +1135,6 @@ export default function Reservar() {
                   rows={3}
                 />
               </div>
-
-              <div className="rounded-xl border border-blue-100 bg-blue-50/80 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-blue-900">Proteção anti-bot</p>
-                    <p className="mt-1 text-sm text-blue-800">
-                      Resolva o captcha antes de seguir para a etapa de pagamento.
-                    </p>
-                    <p className="mt-2 text-xs text-blue-700">
-                      Isso reduz spam automatizado e valida a solicitação ainda na etapa de dados.
-                    </p>
-                  </div>
-                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${captchaBadge.classes}`}>
-                    {captchaBadge.label}
-                  </span>
-                </div>
-
-                <div className="mt-4 rounded-lg border border-white/70 bg-white/90 p-4">
-                  {TURNSTILE_SITE_KEY ? (
-                    <>
-                      <div ref={turnstileContainerRef} className="min-h-[65px]" />
-                      <p className="mt-3 text-xs text-gray-600">{captchaBadge.description}</p>
-                    </>
-                  ) : (
-                    <p className="text-xs text-gray-600">
-                      Captcha visível desativado neste ambiente. Configure as chaves para habilitar a validação.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {renderResumoFinanceiro('default')}
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -1175,10 +1145,11 @@ export default function Reservar() {
                 </button>
                 <button
                   onClick={() => setStep(4)}
-                  disabled={Boolean(reservaAtivaCliente) || (TURNSTILE_SITE_KEY && !turnstileToken)}
-                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all disabled:cursor-not-allowed disabled:bg-blue-300"
+                  disabled={!isCustomerAuthenticated}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Continuar →
+                  {isCustomerAuthenticated ? 'Continuar →' : 'Autentique para continuar'}
+                  <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -1187,9 +1158,9 @@ export default function Reservar() {
         
         {/* Step 4: Pagamento */}
         {step === 4 && quartoSelecionado && (
-          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden text-gray-900">
             <div className="bg-gradient-to-r from-green-600 to-green-700 p-6">
-              <h2 className="text-2xl font-bold text-white">💳 Forma de Pagamento</h2>
+              <h2 className="text-xl font-bold text-white sm:text-2xl">💳 Forma de Pagamento</h2>
               <p className="text-green-100">Escolha como deseja pagar</p>
             </div>
             
@@ -1207,7 +1178,7 @@ export default function Reservar() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600">Total</p>
-                  <p className="text-2xl font-bold text-green-600">R$ {resumoValores.total.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-600">R$ {quartoSelecionado.preco_total.toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -1279,27 +1250,6 @@ export default function Reservar() {
                     {metodoPagamento === 'pix' && <span className="ml-auto text-green-600 font-bold">✓</span>}
                   </div>
                 </label>
-
-                <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                  metodoPagamento === 'tef' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
-                }`}>
-                  <input
-                    type="radio"
-                    name="pagamento"
-                    value="tef"
-                    checked={metodoPagamento === 'tef'}
-                    onChange={(e) => setMetodoPagamento(e.target.value)}
-                    className="hidden"
-                  />
-                  <div className="flex items-center gap-4">
-                    <span className="text-3xl">🖥️</span>
-                    <div>
-                      <p className="font-bold text-gray-800">TEF (Maquininha)</p>
-                      <p className="text-sm text-gray-600">Pagamento via CliSiTef no balcão</p>
-                    </div>
-                    {metodoPagamento === 'tef' && <span className="ml-auto text-green-600 font-bold">✓</span>}
-                  </div>
-                </label>
                 
                 <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
                   metodoPagamento === 'na_chegada' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
@@ -1329,8 +1279,6 @@ export default function Reservar() {
                   Cancelamentos podem ser feitos até 24h antes do check-in sem custo.
                 </p>
               </div>
-
-              {renderResumoFinanceiro('compact')}
               
               <div className="flex gap-4 pt-4">
                 <button
@@ -1341,10 +1289,11 @@ export default function Reservar() {
                 </button>
                 <button
                   onClick={criarReserva}
-                  disabled={loading || (TURNSTILE_SITE_KEY && !turnstileToken)}
+                  disabled={loading}
                   className="flex-1 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-all disabled:opacity-50"
                 >
                   {loading ? '⏳ Processando...' : '✅ Confirmar Reserva'}
+                  <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -1353,7 +1302,7 @@ export default function Reservar() {
         
         {/* Step 5: Confirmação */}
         {step === 5 && reservaConfirmada && (
-          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden text-gray-900">
             <div className="bg-gradient-to-r from-green-500 to-green-600 p-8 text-center">
               <div className="text-6xl mb-4">🎉</div>
               <h2 className="text-3xl font-bold text-white">Reserva Confirmada!</h2>
@@ -1394,37 +1343,11 @@ export default function Reservar() {
                     <p className="font-medium">{reservaConfirmada.reserva.num_diarias} {reservaConfirmada.reserva.num_diarias === 1 ? 'diária' : 'diárias'}</p>
                   </div>
                   <div className="bg-green-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-500">Valor Final</p>
-                    <p className="font-bold text-green-600 text-xl">
-                      R$ {(reservaConfirmada.reserva.valor_total_com_desconto ?? reservaConfirmada.reserva.valor_total).toFixed(2)}
-                    </p>
+                    <p className="text-sm text-gray-500">Valor Total</p>
+                    <p className="font-bold text-green-600 text-xl">R$ {reservaConfirmada.reserva.valor_total.toFixed(2)}</p>
                   </div>
                 </div>
               </div>
-
-              {reservaConfirmada.reserva.cupom_uso ? (
-                <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                  <h3 className="font-bold text-emerald-900">🎟️ Cupom aplicado</h3>
-                  <div className="mt-3 grid gap-3 md:grid-cols-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-emerald-700">Código</p>
-                      <p className="font-semibold text-emerald-900">{reservaConfirmada.reserva.cupom_uso.codigo}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-emerald-700">Desconto</p>
-                      <p className="font-semibold text-emerald-900">
-                        R$ {(reservaConfirmada.reserva.valor_desconto || 0).toFixed(2)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-emerald-700">Total final</p>
-                      <p className="font-semibold text-emerald-900">
-                        R$ {(reservaConfirmada.reserva.valor_total_com_desconto || reservaConfirmada.reserva.valor_total).toFixed(2)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
               
               {/* Instruções */}
               <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mb-6">
@@ -1444,6 +1367,7 @@ export default function Reservar() {
                   className="flex-1 py-3 border-2 border-blue-600 text-blue-600 rounded-lg font-medium hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
                 >
                   🖨️ Imprimir Comprovante
+                  <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
                 </button>
                 <button
                   onClick={() => {
@@ -1459,10 +1383,12 @@ export default function Reservar() {
                       num_criancas: 0,
                       observacoes: ''
                     })
+                    resetCustomerAuth()
                   }}
                   className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
                 >
                   🏨 Nova Reserva
+                  <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -1472,13 +1398,13 @@ export default function Reservar() {
       </main>
       
       {/* Footer */}
-      <footer className="bg-blue-950 text-white/80 py-8 mt-12">
+      <footer className="relative z-30 mt-auto border-t border-[#d4af37]/15 bg-[#090504]/70 py-8 text-white/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-4 text-center">
           <div className="flex items-center justify-center gap-3 mb-4">
             <span className="text-3xl">🏨</span>
             <div>
               <h3 className="text-xl font-bold text-white">Hotel Real Cabo Frio</h3>
-              <p className="text-yellow-400 text-sm">O melhor da região</p>
+              <p className="text-sm text-yellow-400">O melhor da região</p>
             </div>
           </div>
           <p className="text-sm">Av. Beira Mar, 1000 - Cabo Frio, RJ</p>
@@ -1499,7 +1425,37 @@ export default function Reservar() {
         pauseOnHover
         theme="colored"
       />
+
+      <style jsx global>{`
+        button[aria-label="Abrir configurações de acessibilidade"] {
+          display: none !important;
+        }
+
+        input[type='date']::-webkit-datetime-edit,
+        input[type='date']::-webkit-datetime-edit-text,
+        input[type='date']::-webkit-datetime-edit-month-field,
+        input[type='date']::-webkit-datetime-edit-day-field,
+        input[type='date']::-webkit-datetime-edit-year-field,
+        input[type='date']::-webkit-calendar-picker-indicator,
+        select {
+          color: #f3dfab;
+        }
+
+        .royal-date-input::-webkit-calendar-picker-indicator {
+          cursor: pointer;
+          filter: invert(76%) sepia(74%) saturate(567%) hue-rotate(358deg) brightness(99%) contrast(91%);
+        }
+
+        select {
+          background-color: #080604;
+        }
+
+        @media (max-width: 430px) {
+          .Toastify {
+            font-size: 0.86rem;
+          }
+        }
+      `}</style>
     </div>
   )
 }
-

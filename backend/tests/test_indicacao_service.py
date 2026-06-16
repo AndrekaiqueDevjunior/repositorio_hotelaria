@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.services.indicacao_service import IndicacaoService
+from app.services.indicacao_service import IndicacaoService, PONTOS_CONVITE_REAL
 
 
 class FakeModel:
@@ -82,6 +82,71 @@ class FakeDbForCheckoutDuplicado:
         ])
 
 
+class FakeTransacaoPontosCredito:
+    def __init__(self):
+        self.created_data = None
+
+    async def find_first(self, **kwargs):
+        return None
+
+    async def create(self, data):
+        self.created_data = data
+        return SimpleNamespace(id=123)
+
+
+class FakeUsuarioPontosCredito:
+    async def create(self, data):
+        return SimpleNamespace(id=55, saldo=data["saldo"])
+
+
+class FakeTxForCheckoutCredito:
+    def __init__(self):
+        self.query_calls = 0
+        self.execute_calls = []
+        self.transacaopontos = FakeTransacaoPontosCredito()
+        self.usuariopontos = FakeUsuarioPontosCredito()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def query_raw(self, *args):
+        self.query_calls += 1
+        if self.query_calls == 1:
+            return [
+                {
+                    "id": 7,
+                    "cliente_indicador_id": 1,
+                    "pontos_creditados": False,
+                }
+            ]
+        return [{"id": 55, "saldo": 12}]
+
+    async def execute_raw(self, *args):
+        self.execute_calls.append(args)
+        return None
+
+
+class FakeDbForCheckoutCredito:
+    def __init__(self):
+        self.tx_context = FakeTxForCheckoutCredito()
+        self.reserva = FakeModel(
+            find_unique_result=SimpleNamespace(
+                id=10,
+                clienteId=2,
+                codigoReserva="RCF-1",
+                checkoutReal=None,
+                cliente=SimpleNamespace(documento="22233344455"),
+                hospedagem=SimpleNamespace(checkoutRealizadoEm=None),
+            )
+        )
+
+    def tx(self):
+        return self.tx_context
+
+
 class FakeDbForStatus:
     def __init__(self):
         self.cliente = FakeModel(find_unique_result=SimpleNamespace(id=1, documento="12345678909", nivelFidelidade=0))
@@ -136,6 +201,30 @@ async def test_checkout_duplicado_nao_credita_novamente():
     assert resultado["success"] is True
     assert resultado["creditado"] is False
     assert resultado["idempotente"] is True
+
+
+@pytest.mark.asyncio
+async def test_checkout_credita_50_pontos_para_indicador():
+    assert PONTOS_CONVITE_REAL == 50
+    db = FakeDbForCheckoutCredito()
+    service = IndicacaoService(db)
+
+    resultado = await service.processar_credito_indicacao_apos_checkout(10, funcionario_id=9)
+
+    assert resultado["success"] is True
+    assert resultado["creditado"] is True
+    assert resultado["pontos"] == 50
+    assert resultado["saldo_anterior"] == 12
+    assert resultado["saldo_posterior"] == 62
+
+    transacao = db.tx_context.transacaopontos.created_data
+    assert transacao["clienteId"] == 1
+    assert transacao["funcionarioId"] == 9
+    assert transacao["reservaId"] == 10
+    assert transacao["origem"] == "CONVITE_REAL"
+    assert transacao["pontos"] == 50
+    assert transacao["saldoAnterior"] == 12
+    assert transacao["saldoPosterior"] == 62
 
 
 @pytest.mark.asyncio

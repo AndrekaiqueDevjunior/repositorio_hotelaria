@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from app.core.database import get_db
 from app.core.security import get_current_user, User
+from app.middleware.auth_middleware import require_admin_or_manager
 from app.services.notification_service import NotificationService
 from app.repositories.notificacao_repo import NotificacaoRepository
 from pydantic import BaseModel
@@ -205,3 +206,12 @@ async def limpar_notificacoes_antigas(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao limpar notificações: {str(e)}")
+
+
+@router.post("/jornada/premios-proximos", response_model=dict)
+async def disparar_premios_proximos_jornada(
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(require_admin_or_manager),
+):
+    """Rotina administrativa para avisar clientes próximos de prêmio."""
+    return await NotificationService.varrer_premios_proximos(get_db(), limit=limit)

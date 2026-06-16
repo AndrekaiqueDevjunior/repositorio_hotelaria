@@ -32,15 +32,15 @@ NIVEIS_FIDELIDADE = [
         "codigo": NIVEL_EXPERIENCIA,
         "nome": "EXPERIENCIA",
         "pontos_minimos": PONTOS_EXPERIENCIA,
-        "bonus_percentual": 0,
-        "multiplicador": 1.0,
+        "bonus_percentual": 20,
+        "multiplicador": 1.2,
     },
     {
         "codigo": NIVEL_REAL,
         "nome": "REAL",
         "pontos_minimos": PONTOS_REAL,
-        "bonus_percentual": 0,
-        "multiplicador": 1.0,
+        "bonus_percentual": 40,
+        "multiplicador": 1.4,
     },
 ]
 
@@ -120,6 +120,8 @@ class ProgramaPontosService:
 
         proximo_premio = await self.obter_proximo_premio(saldo_atual)
         barra_premio = self._montar_barra_premio(saldo_atual, proximo_premio)
+        progresso_premios = await self._calcular_progresso_premios(saldo_atual)
+        barra_premio.update(progresso_premios)
         premio_proximo = self._is_premio_proximo(barra_premio)
 
         return {
@@ -129,6 +131,8 @@ class ProgramaPontosService:
             "saldo_atual": saldo_atual,
             "total_pontos_nivel": total_pontos_nivel,
             "total_resgatado": total_resgatado,
+            "rewards_unlocked": progresso_premios["rewards_unlocked"],
+            "rewards_total": progresso_premios["rewards_total"],
             "barra_nivel": barra_nivel,
             "barra_premios": barra_premio,
             "proximo_premio": proximo_premio,
@@ -180,6 +184,28 @@ class ProgramaPontosService:
             cliente_id,
         )
         return int(rows[0]["total"] or 0) if rows else 0
+
+    async def _calcular_progresso_premios(self, saldo_atual: int) -> Dict[str, int]:
+        saldo = int(saldo_atual or 0)
+        rows = await self.db.query_raw(
+            """
+            SELECT
+                COUNT(*)::int AS rewards_total,
+                COUNT(*) FILTER (WHERE preco_em_pontos <= $1)::int AS rewards_unlocked
+            FROM premios
+            WHERE ativo = TRUE
+              AND (estoque IS NULL OR estoque > 0)
+            """,
+            saldo,
+        )
+        if not rows:
+            return {"rewards_unlocked": 0, "rewards_total": 0}
+
+        row = rows[0]
+        return {
+            "rewards_unlocked": int(row.get("rewards_unlocked") or 0),
+            "rewards_total": int(row.get("rewards_total") or 0),
+        }
 
     async def _obter_niveis_configurados(self) -> List[Dict[str, Any]]:
         if self._niveis_cache is not None:

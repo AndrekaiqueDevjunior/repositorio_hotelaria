@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.database import get_db
 from app.core.security import User
 from app.middleware.auth_middleware import require_staff
 from app.middleware.rate_limit import rate_limit_moderate, rate_limit_strict
 from app.repositories.premio_repo_atomic import PremioRepositoryAtomic
+from app.tasks.jornada_tasks import invalidar_codigos_vencidos_jornada
 
 router = APIRouter(prefix="/codigos", tags=["codigos-resgate"])
 
@@ -54,3 +55,29 @@ async def utilizar_codigo_resgate(
     if not resultado.get("success"):
         raise HTTPException(status_code=400, detail=resultado.get("error"))
     return resultado
+
+
+@router.post("/resgates/{resgate_id}/renovar", response_model=dict)
+async def renovar_codigo_resgate(
+    resgate_id: int,
+    dias_validade: int = Query(30, ge=1, le=365),
+    repo: PremioRepositoryAtomic = Depends(get_repo),
+    current_user: User = Depends(require_staff),
+    _rate_limit: None = Depends(rate_limit_strict),
+):
+    resultado = await repo.renovar_codigo_resgate(
+        resgate_id=resgate_id,
+        funcionario_id=current_user.id if hasattr(current_user, "id") else None,
+        dias_validade=dias_validade,
+    )
+    if not resultado.get("success"):
+        raise HTTPException(status_code=400, detail=resultado.get("error"))
+    return resultado
+
+
+@router.post("/maintenance/invalidar-vencidos", response_model=dict)
+async def invalidar_codigos_vencidos(
+    current_user: User = Depends(require_staff),
+    _rate_limit: None = Depends(rate_limit_strict),
+):
+    return await invalidar_codigos_vencidos_jornada()

@@ -3,7 +3,8 @@ Serviço de Notificações
 Gerencia a criação automática de notificações para eventos do sistema
 """
 
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from app.repositories.notificacao_repo import NotificacaoRepository
 from app.utils.datetime_utils import now_utc
@@ -83,6 +84,48 @@ class NotificationService:
                 where["urlAcao"] = url_acao
             existente = await self.db.notificacao.find_first(where=where)
             return existente is not None
+        except Exception:
+            return False
+
+    async def registrar_log_jornada(
+        self,
+        cliente_id: Optional[int],
+        acao: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        try:
+            await self.db.execute_raw(
+                """
+                INSERT INTO logs_jornada (cliente_id, acao, payload, created_at)
+                VALUES ($1, $2, CAST($3 AS JSONB), NOW())
+                """,
+                cliente_id,
+                acao,
+                json.dumps(payload),
+            )
+        except Exception as exc:
+            print(f"[JORNADA LOG] Erro ao registrar {acao}: {exc}")
+
+    async def existe_log_premio_proximo_hoje(self, cliente_id: int, premio_id: Optional[int]) -> bool:
+        if not premio_id:
+            return False
+        inicio_dia = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+        try:
+            rows = await self.db.query_raw(
+                """
+                SELECT id
+                FROM logs_jornada
+                WHERE cliente_id = $1
+                  AND acao = 'premio_proximo_whatsapp'
+                  AND payload->>'premio_id' = $2
+                  AND created_at >= $3::timestamptz
+                LIMIT 1
+                """,
+                cliente_id,
+                str(premio_id),
+                inicio_dia,
+            )
+            return bool(rows)
         except Exception:
             return False
 
@@ -318,6 +361,7 @@ class NotificationService:
         faltam = programa.get("faltam_pontos_para_proximo_premio")
         proximo = programa.get("proximo_premio") or {}
         saldo = int(programa.get("saldo_atual") or 0)
+        premio_id = proximo.get("id")
         if faltam is None:
             return None
 
@@ -328,11 +372,7 @@ class NotificationService:
         cliente_nome = getattr(cliente, "nomeCompleto", "Cliente") if cliente else "Cliente"
         documento = getattr(cliente, "documento", None) if cliente else None
         url_acao = f"/consultar-pontos?documento={documento}" if documento else f"/pontos-rp?cliente_id={cliente_id}"
-        if await service.existe_notificacao_categoria_reserva(
-            "premio_proximo",
-            reserva_id=reserva_id,
-            url_acao=url_acao if reserva_id is None else None,
-        ):
+        if await service.existe_log_premio_proximo_hoje(cliente_id, premio_id):
             return None
 
         if int(faltam) <= 0:
@@ -356,9 +396,24 @@ class NotificationService:
 
         try:
             if cliente and int(faltam) > 0:
-                await get_whatsapp_service().enviar_aviso_premio_proximo(
+                whatsapp_result = await get_whatsapp_service().enviar_aviso_premio_proximo(
                     cliente_telefone=getattr(cliente, "telefone", None),
                     documento=documento,
+                    cliente_nome=cliente_nome,
+                    premio_nome=proximo.get("nome"),
+                    saldo_atual=saldo,
+                    pontos_faltantes=int(faltam),
+                )
+                await service.registrar_log_jornada(
+                    cliente_id,
+                    "premio_proximo_whatsapp",
+                    {
+                        "premio_id": premio_id,
+                        "premio_nome": proximo.get("nome"),
+                        "saldo_atual": saldo,
+                        "pontos_faltantes": int(faltam),
+                        "whatsapp_success": bool(whatsapp_result.get("success")),
+                    },
                 )
         except Exception as exc:
             print(f"[WHATSAPP] Erro ao enviar aviso de premio proximo: {exc}")
@@ -366,11 +421,44 @@ class NotificationService:
         return notificacao
 
     @staticmethod
+    async def varrer_premios_proximos(db, limit: int = 100):
+        limite = max(1, min(int(limit or 100), 500))
+        rows = await db.query_raw(
+            """
+            SELECT c.id
+            FROM clientes c
+            JOIN usuarios_pontos up ON up.cliente_id = c.id
+            WHERE COALESCE(c.status, 'ATIVO') = 'ATIVO'
+              AND COALESCE(up.saldo, 0) > 0
+            ORDER BY up.saldo DESC, c.id ASC
+            LIMIT $1
+            """,
+            limite,
+        )
+        enviados = []
+        avaliados = 0
+        for row in rows:
+            avaliados += 1
+            cliente_id = int(row["id"])
+            notificacao = await NotificationService.notificar_premio_proximo(db, cliente_id)
+            if notificacao:
+                enviados.append({"cliente_id": cliente_id, "notificacao_id": notificacao.get("id")})
+        return {
+            "success": True,
+            "clientes_avaliados": avaliados,
+            "notificacoes_enviadas": len(enviados),
+            "enviados": enviados,
+        }
+
+    @staticmethod
     async def notificar_checkout_pendente(db, reserva_row: Dict[str, Any]):
         service = NotificationService(db)
         reserva_id = int(reserva_row["id"])
-        if await service.existe_notificacao_categoria_reserva("checkout_pendente", reserva_id=reserva_id):
-            return None
+        existente = await db.notificacao.find_first(
+            where={"categoria": "checkout_pendente", "reservaId": reserva_id, "lida": False}
+        )
+        if existente:
+            return service.repo._serialize(existente)
         quarto = reserva_row.get("quarto_numero")
         cliente = reserva_row.get("cliente_nome") or "Cliente"
         return await service.criar_notificacao(

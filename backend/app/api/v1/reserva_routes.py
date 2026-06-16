@@ -15,6 +15,7 @@ from app.middleware.idempotency import check_idempotency, store_idempotency_resu
 from app.core.cache import redis_lock
 from app.core.validators import ReservaValidator, QuartoValidator
 from app.services.cupom_service import CupomService
+from app.services.notification_service import NotificationService
 from typing import Optional
 from starlette.responses import JSONResponse
 from datetime import datetime
@@ -99,7 +100,6 @@ async def listar_checkouts_pendentes_alerta(
     """Listar hospedagens com horario de check-out vencido para aviso sonoro na recepcao."""
     try:
         db = get_db()
-        from app.utils.datetime_utils import now_utc
 
         rows = await db.query_raw(
             """
@@ -113,7 +113,7 @@ async def listar_checkouts_pendentes_alerta(
                 h.status_hospedagem
             FROM reservas r
             LEFT JOIN hospedagens h ON h.reserva_id = r.id
-            WHERE r.checkout_previsto <= $1
+            WHERE r.checkout_previsto <= NOW()
               AND r.checkout_real IS NULL
               AND COALESCE(h.status_hospedagem, r.status_reserva) IN (
                 'CHECKIN_REALIZADO',
@@ -122,9 +122,8 @@ async def listar_checkouts_pendentes_alerta(
                 'EM_ANDAMENTO'
               )
             ORDER BY r.checkout_previsto ASC
-            LIMIT $2
+            LIMIT $1
             """,
-            now_utc(),
             limit,
         )
 

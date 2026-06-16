@@ -14,7 +14,7 @@ from app.services.programa_pontos_service import ProgramaPontosService
 from app.utils.datetime_utils import now_utc
 
 
-PONTOS_CONVITE_REAL = 3
+PONTOS_CONVITE_REAL = 5
 ORIGEM_CONVITE_REAL = "CONVITE_REAL"
 
 
