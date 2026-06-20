@@ -455,7 +455,7 @@ class PontosRepository:
 
             rows = await self.db.query_raw(
                 """
-                SELECT c.nome_completo,
+                SELECT c."nomeCompleto" AS nome_completo,
                        c.telefone,
                        c.documento,
                        r.codigo_reserva
