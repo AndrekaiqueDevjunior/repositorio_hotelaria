@@ -321,6 +321,8 @@ class PremioRepositoryAtomic:
             from app.services.whatsapp_service import get_whatsapp_service
 
             whatsapp_service = get_whatsapp_service()
+
+            # Notificacao operacional para o hotel (quem vai entregar o premio)
             notificacao_result = await whatsapp_service.enviar_notificacao_resgate_premio(
                 cliente_nome=cliente_nome,
                 cliente_telefone=cliente_telefone,
@@ -331,8 +333,22 @@ class PremioRepositoryAtomic:
             )
             if notificacao_result.get("success"):
                 security_logger.info(
-                    "Notificacao WhatsApp enviada - "
+                    "Notificacao WhatsApp (hotel) enviada - "
                     f"Resgate: {result.get('resgate_id')}, SID: {notificacao_result.get('message_sid')}"
+                )
+
+            # Confirmacao ao cliente com o codigo de resgate
+            confirmacao_result = await whatsapp_service.enviar_confirmacao_resgate_cliente(
+                cliente_telefone=cliente_telefone,
+                premio_nome=premio_nome,
+                codigo_resgate=codigo_resgate,
+                pontos_usados=custo,
+                valido_ate=result.get("valido_ate"),
+            )
+            if confirmacao_result.get("success"):
+                security_logger.info(
+                    "Confirmacao WhatsApp (cliente) enviada - "
+                    f"Resgate: {result.get('resgate_id')}, SID: {confirmacao_result.get('message_sid')}"
                 )
         except Exception as exc:
             security_logger.error(f"Erro ao enviar notificacao WhatsApp: {exc}")

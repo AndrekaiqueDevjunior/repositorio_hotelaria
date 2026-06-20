@@ -300,6 +300,24 @@ class HospedagemRepository:
                 include={"cliente": True},
             )
             cliente_id = getattr(reserva_cliente, "clienteId", None) if reserva_cliente else None
+            cliente_telefone = getattr(
+                getattr(reserva_cliente, "cliente", None), "telefone", None
+            ) if reserva_cliente else None
+
+            # WhatsApp imediato ao cliente confirmando o checkout
+            if cliente_telefone:
+                try:
+                    from app.services.whatsapp_service import get_whatsapp_service
+                    codigo_reserva = getattr(reserva, "codigoReserva", None) or str(reserva_id)
+                    pontos_checkout = int(resultado_pontos_checkout.get("pontos_checkout") or 0)
+                    await get_whatsapp_service().enviar_confirmacao_checkout_cliente(
+                        cliente_telefone=cliente_telefone,
+                        codigo_reserva=codigo_reserva,
+                        pontos_pendentes=pontos_checkout,
+                    )
+                except Exception as e:
+                    print(f"[POS CHECKOUT] Erro ao enviar WhatsApp de checkout ao cliente: {e}")
+
             if cliente_id:
                 await NotificationService.notificar_premio_proximo(
                     self.db,

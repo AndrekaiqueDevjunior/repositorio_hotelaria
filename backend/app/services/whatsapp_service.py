@@ -443,6 +443,76 @@ class WhatsAppService:
         return await self._send_message(cliente_telefone, mensagem)
 
 
+    async def enviar_confirmacao_resgate_cliente(
+        self,
+        cliente_telefone: Optional[str],
+        premio_nome: str,
+        codigo_resgate: str,
+        pontos_usados: int,
+        valido_ate: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not cliente_telefone:
+            return {"success": False, "error": "Cliente sem telefone"}
+        linhas = [
+            "Seu resgate foi confirmado! 🎁",
+            "",
+            f"Prêmio: {premio_nome}",
+            f"Pontos usados: {pontos_usados}",
+            f"Código: {codigo_resgate}",
+        ]
+        if valido_ate:
+            linhas.append(f"Válido até: {valido_ate}")
+        linhas.extend([
+            "",
+            "Apresente este código para retirar seu prêmio no Hotel Real.",
+        ])
+        return await self._send_message(cliente_telefone, "\n".join(linhas))
+
+    async def enviar_confirmacao_checkout_cliente(
+        self,
+        cliente_telefone: Optional[str],
+        codigo_reserva: str,
+        pontos_pendentes: int = 0,
+    ) -> Dict[str, Any]:
+        if not cliente_telefone:
+            return {"success": False, "error": "Cliente sem telefone"}
+        linhas = [
+            "Obrigado por se hospedar no Hotel Real! 👑",
+            "Seu checkout foi realizado com sucesso.",
+            "",
+            f"Reserva: {codigo_reserva}",
+        ]
+        if pontos_pendentes > 0:
+            linhas.append(
+                f"Seus {pontos_pendentes} pontos da Jornada Real serão liberados em até 48h."
+            )
+        return await self._send_message(cliente_telefone, "\n".join(linhas))
+
+    async def enviar_confirmacao_reserva_cliente(
+        self,
+        cliente_telefone: Optional[str],
+        codigo_reserva: str,
+        checkin: str,
+        checkout: str,
+        tipo_suite: Optional[str] = None,
+        valor_total: float = 0,
+    ) -> Dict[str, Any]:
+        if not cliente_telefone:
+            return {"success": False, "error": "Cliente sem telefone"}
+        linhas = [
+            "Reserva confirmada no Hotel Real Cabo Frio! 🏨",
+            "",
+            f"Código: {codigo_reserva}",
+            f"Check-in: {checkin}",
+            f"Check-out: {checkout}",
+        ]
+        if tipo_suite:
+            linhas.append(f"Suíte: {tipo_suite}")
+        if valor_total > 0:
+            linhas.append(f"Valor total: R$ {float(valor_total):.2f}")
+        return await self._send_message(cliente_telefone, "\n".join(linhas))
+
+
 _whatsapp_service = None
 
 

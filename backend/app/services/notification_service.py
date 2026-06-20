@@ -239,8 +239,8 @@ class NotificationService:
                 )
 
             # Email operacional para a empresa quando houver nova reserva
+            cliente_email_data = None
             try:
-                cliente_email_data = None
                 cliente_id = _get(reserva, "clienteId") or _get(reserva, "cliente_id")
                 if cliente_id:
                     cliente = await db.cliente.find_unique(where={"id": int(cliente_id)})
@@ -269,6 +269,28 @@ class NotificationService:
                 )
             except Exception as email_error:
                 print(f"[EMAIL] Erro ao notificar nova reserva por email: {email_error}")
+
+            # WhatsApp de confirmacao ao cliente
+            try:
+                cliente_telefone = (cliente_email_data or {}).get("telefone")
+                checkout_previsto = _get(reserva, "checkoutPrevisto") or _get(reserva, "checkout_previsto")
+                checkout_str = ""
+                if checkout_previsto:
+                    try:
+                        checkout_str = checkout_previsto.strftime("%d/%m/%Y")
+                    except (AttributeError, ValueError):
+                        checkout_str = str(checkout_previsto)[:10]
+                tipo_suite = _get(reserva, "tipoSuite") or _get(reserva, "tipo_suite")
+                await get_whatsapp_service().enviar_confirmacao_reserva_cliente(
+                    cliente_telefone=cliente_telefone,
+                    codigo_reserva=codigo_reserva,
+                    checkin=checkin_str or "-",
+                    checkout=checkout_str or "-",
+                    tipo_suite=tipo_suite,
+                    valor_total=float(valor_total or 0),
+                )
+            except Exception as wa_error:
+                print(f"[WHATSAPP] Erro ao notificar cliente sobre nova reserva: {wa_error}")
             
             print(f"[NOTIFICAÇÃO] Notificação de nova reserva #{reserva_id} criada com sucesso")
             
