@@ -56,6 +56,16 @@ frontend/.env.*
 .env.production.txt
 .env.backup*
 *.env.backup*
+.env.production.backup*
+.env.local.backup*
+.env.docker.development.backup*
+.env.docker.production.backup*
+
+
+
+
+
+
 
 # Database
 *.db

@@ -6,11 +6,16 @@
 
 version: '3.8'
 
+x-production-env: &production_env
+  env_file:
+    - ./.env.production
+
 services:
   # ============================================================
   # POSTGRESQL - BANCO DE DADOS PRODUÃ‡ÃƒO
   # ============================================================
   postgres:
+    <<: *production_env
     image: postgres:16-alpine
     container_name: hotel_postgres_prod
     restart: unless-stopped
@@ -40,6 +45,7 @@ services:
   # REDIS - CACHE E SESSÃ•ES
   # ============================================================
   redis:
+    <<: *production_env
     image: redis:7-alpine
     container_name: hotel_redis_prod
     restart: unless-stopped
@@ -63,13 +69,14 @@ services:
   # NGINX PROXY (COMO NO DEV) - ACESSO VIA :8080
   # ============================================================
   nginx-proxy:
+    <<: *production_env
     image: nginx:alpine
     container_name: hotel_nginx_proxy_prod
     restart: unless-stopped
     volumes:
       - ./nginx-proxy.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt/archive/hotelrealcabofrio.com/fullchain1.pem:/etc/nginx/ssl/fullchain.pem:ro
-      - /etc/letsencrypt/archive/hotelrealcabofrio.com/privkey1.pem:/etc/nginx/ssl/privkey.pem:ro
+      - ${SSL_CERT_PATH:-./ssl/fullchain.pem}:/etc/nginx/ssl/fullchain.pem:ro
+      - ${SSL_KEY_PATH:-./ssl/privkey.pem}:/etc/nginx/ssl/privkey.pem:ro
     ports:
       - "80:80"
       - "443:443"
@@ -83,6 +90,7 @@ services:
   # BACKEND - FASTAPI PRODUÃ‡ÃƒO
   # ============================================================
   backend:
+    <<: *production_env
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -99,6 +107,7 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
       CORS_ORIGINS: ${CORS_ORIGINS}
       FRONTEND_URL: ${FRONTEND_URL}
       COOKIE_NAME: ${COOKIE_NAME}
@@ -111,6 +120,11 @@ services:
       DEBUG: ${DEBUG}
       ENVIRONMENT: ${ENVIRONMENT}
       API_V1_PREFIX: ${API_V1_PREFIX}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      OTP_HASH_SECRET: ${OTP_HASH_SECRET}
+      RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY}
+      RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY}
       CIELO_MERCHANT_ID: ${CIELO_MERCHANT_ID}
       CIELO_MERCHANT_KEY: ${CIELO_MERCHANT_KEY}
       CIELO_MODE: ${CIELO_MODE}
@@ -118,11 +132,25 @@ services:
       CIELO_TIMEOUT_MS: ${CIELO_TIMEOUT_MS}
       ANTIFRAUDE_RISK_THRESHOLD_AUTO: ${ANTIFRAUDE_RISK_THRESHOLD_AUTO}
       ANTIFRAUDE_RISK_THRESHOLD_REJECT: ${ANTIFRAUDE_RISK_THRESHOLD_REJECT}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL}
+      SENDGRID_FROM_NAME: ${SENDGRID_FROM_NAME}
+      SENDGRID_RESERVAS_TO_EMAIL: ${SENDGRID_RESERVAS_TO_EMAIL}
+      SMS_TWILIO_ACCOUNT_SID: ${SMS_TWILIO_ACCOUNT_SID}
+      SMS_TWILIO_AUTH_TOKEN: ${SMS_TWILIO_AUTH_TOKEN}
+      SMS_TWILIO_FROM_NUMBER: ${SMS_TWILIO_FROM_NUMBER}
+      TWILIO_WHATSAPP_ENABLED: ${TWILIO_WHATSAPP_ENABLED}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM}
+      TWILIO_WHATSAPP_SANDBOX_JOIN_CODE: ${TWILIO_WHATSAPP_SANDBOX_JOIN_CODE}
+      WHATSAPP_NOTIFICACAO_NUMERO: ${WHATSAPP_NOTIFICACAO_NUMERO}
       TEF_AGENTE_URL: ${TEF_AGENTE_URL}
       TEF_AGENTE_MODE: ${TEF_AGENTE_MODE}
       TEF_AGENTE_VERIFY_SSL: ${TEF_AGENTE_VERIFY_SSL}
       TEF_TIMEOUT: ${TEF_TIMEOUT}
       TEF_SESSION_TIMEOUT: ${TEF_SESSION_TIMEOUT}
+      TEF_TIMEZONE: ${TEF_TIMEZONE}
       TEF_SITEF_IP: ${TEF_SITEF_IP}
       TEF_STORE_ID: ${TEF_STORE_ID}
       TEF_TERMINAL_ID: ${TEF_TERMINAL_ID}
@@ -134,6 +162,7 @@ services:
       TEF_CNPJ_ESTAB: ${TEF_CNPJ_ESTAB}
       TEF_CNPJ_AUTOMACAO: ${TEF_CNPJ_AUTOMACAO}
       TEF_PARAMETROS_ADICIONAIS: ${TEF_PARAMETROS_ADICIONAIS}
+      TEF_SUPERVISOR_PASSWORD: ${TEF_SUPERVISOR_PASSWORD}
       TEF_AUTO_RESOLVE_PENDING: ${TEF_AUTO_RESOLVE_PENDING:-true}
       TEF_AUTO_RESOLVE_PENDING_ACTION: ${TEF_AUTO_RESOLVE_PENDING_ACTION:-confirm}
     extra_hosts:
@@ -142,6 +171,8 @@ services:
       - backend_cache_prod:/app/.cache
       - ./uploads:/app/uploads
       - ./media:/app/media
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
     expose:
       - "8000"
     depends_on:
@@ -154,6 +185,7 @@ services:
     command: >
       sh -c "
         echo '[BACKEND] Ambiente: $ENVIRONMENT' &&
+        if [ -n \"$$ADMIN_PASSWORD\" ]; then echo '[BACKEND] ADMIN_PASSWORD detectado'; else echo '[BACKEND] ADMIN_PASSWORD ausente'; fi &&
         echo '[BACKEND] Gerando Prisma Client...' &&
         prisma generate &&
         echo '[BACKEND] Aplicando migrations (deploy)...' &&
@@ -181,6 +213,7 @@ services:
   # FRONTEND - NEXT.JS PRODUÃ‡ÃƒO
   # ============================================================
   frontend:
+    <<: *production_env
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -189,8 +222,16 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
       NEXT_PUBLIC_APP_NAME: Hotel Real Cabo Frio
+      NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+      NEXT_PUBLIC_TEF_TLS_TOKEN: ${NEXT_PUBLIC_TEF_TLS_TOKEN}
+      NEXT_PUBLIC_TEF_IDLE_TIMEOUT_MS: ${NEXT_PUBLIC_TEF_IDLE_TIMEOUT_MS}
+      NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS: ${NEXT_PUBLIC_TEF_REQUEST_TIMEOUT_MS}
       BACKEND_URL: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
     expose:
       - "3000"
     depends_on:
@@ -221,6 +262,7 @@ services:
   # CELERY WORKER - TAREFAS BACKGROUND
   # ============================================================
   celery_worker:
+    <<: *production_env
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -232,6 +274,13 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
       SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      FRONTEND_URL: ${FRONTEND_URL}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
       CIELO_MERCHANT_ID: ${CIELO_MERCHANT_ID}
       CIELO_MERCHANT_KEY: ${CIELO_MERCHANT_KEY}
       CIELO_MODE: ${CIELO_MODE}
@@ -267,6 +316,7 @@ services:
   # CELERY BEAT - AGENDADOR DE TAREFAS PERIODICAS
   # ============================================================
   celery_beat:
+    <<: *production_env
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -278,6 +328,13 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
       SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      FRONTEND_URL: ${FRONTEND_URL}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
       CIELO_MERCHANT_ID: ${CIELO_MERCHANT_ID}
       CIELO_MERCHANT_KEY: ${CIELO_MERCHANT_KEY}
       CIELO_MODE: ${CIELO_MODE}
@@ -311,6 +368,7 @@ services:
   # BACKUP AUTOMÃTICO
   # ============================================================
   backup:
+    <<: *production_env
     image: postgres:16-alpine
     container_name: hotel_backup_prod
     restart: unless-stopped
