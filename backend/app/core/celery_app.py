@@ -26,6 +26,9 @@ celery_app.conf.update(
     task_soft_time_limit=25 * 60,
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
+    # Prisma spawna um subprocesso e precisa de stdout/stderr reais (com fileno).
+    # Celery substitui sys.stdout por LoggingProxy sem fileno — isso quebra o spawn.
+    worker_redirect_stdouts=False,
     beat_schedule={
         "jornada-liberar-pontos-pendentes": {
             "task": "jornada.liberar_pontos_pendentes",
