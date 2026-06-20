@@ -303,7 +303,7 @@ class PontosRepository:
                 "motivo": motivo,
             }
             if metadata is not None:
-                transacao_data["metadata"] = metadata
+                transacao_data["metadata"] = json.dumps(metadata) if isinstance(metadata, dict) else metadata
 
             transacao = await transaction.transacaopontos.create(data=transacao_data)
 

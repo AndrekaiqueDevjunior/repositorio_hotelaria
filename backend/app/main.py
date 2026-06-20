@@ -70,9 +70,18 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
     print(f"[422] errors={exc.errors()}")
     print(f"[422] body_preview={body_preview}")
 
+    def _make_serializable(obj):
+        if isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace")
+        if isinstance(obj, dict):
+            return {k: _make_serializable(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_make_serializable(i) for i in obj]
+        return obj
+
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": _make_serializable(exc.errors())},
     )
 
 app.mount("/media", StaticFiles(directory="media"), name="media")

@@ -2,6 +2,7 @@
 Repository para Hospedagem (Estado Operacional)
 Gerencia check-in, checkout e estado da hospedagem
 """
+import json
 from typing import Dict, Any, Optional
 from datetime import datetime
 from prisma import Client
@@ -117,7 +118,7 @@ class HospedagemRepository:
                 "placaVeiculo": placa_veiculo,
                 "observacoes": observacoes,
                 "assinaturaCheckin": assinatura_checkin,
-                "checkinDados": checkin_dados
+                "checkinDados": json.dumps(checkin_dados) if checkin_dados else None
             }
         )
         
@@ -249,7 +250,7 @@ class HospedagemRepository:
                 "checkoutRealizadoEm": checkout_timestamp,
                 "checkoutRealizadoPor": funcionario_id,
                 "assinaturaCheckout": assinatura_checkout,
-                "checkoutDados": checkout_dados
+                "checkoutDados": json.dumps(checkout_dados) if checkout_dados else None
             }
         )
         

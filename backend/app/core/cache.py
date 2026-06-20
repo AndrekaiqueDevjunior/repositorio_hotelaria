@@ -24,7 +24,9 @@ class CacheManager:
             self.redis = await redis.from_url(
                 redis_url,
                 encoding="utf-8",
-                decode_responses=True
+                decode_responses=True,
+                socket_timeout=3,
+                socket_connect_timeout=3,
             )
             print(f"[CACHE] Conectado ao Redis: {redis_url}")
         except Exception as e:
