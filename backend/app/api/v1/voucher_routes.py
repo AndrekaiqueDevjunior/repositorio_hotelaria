@@ -32,6 +32,8 @@ router = APIRouter(prefix="/vouchers", tags=["vouchers"])
 
 class CheckinRequest(BaseModel):
     funcionario_id: int
+    cpf_titular: str = None
+    confirmar_divergencia_cpf: bool = False
 
 
 def _format_datetime(value: Any) -> str:
@@ -298,10 +300,25 @@ async def realizar_checkout(
     
     # 2. Delegar para fluxo operacional (único caminho autoritativo)
     hospedagem_repo = HospedagemRepository(db)
-    await hospedagem_repo.checkout(
-        reserva_id=voucher_data['reservaId'],
-        funcionario_id=request.funcionario_id
-    )
+    try:
+        await hospedagem_repo.checkout(
+            reserva_id=voucher_data['reservaId'],
+            funcionario_id=request.funcionario_id,
+            cpf_titular=request.cpf_titular,
+            confirmar_divergencia_cpf=request.confirmar_divergencia_cpf,
+        )
+    except ValueError as e:
+        mensagem = str(e)
+        if mensagem.startswith("CPF_DIVERGENTE:"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "codigo": "CPF_DIVERGENTE",
+                    "mensagem": mensagem.replace("CPF_DIVERGENTE: ", ""),
+                    "requer_confirmacao": True,
+                },
+            )
+        raise HTTPException(status_code=400, detail=mensagem)
     reserva = await db.reserva.find_unique(where={"id": voucher_data['reservaId']})
     
     # 3. Atualizar voucher

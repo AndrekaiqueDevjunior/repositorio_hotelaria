@@ -172,7 +172,9 @@ class HospedagemRepository:
         comentario_avaliacao: Optional[str] = None,
         assinatura_checkout: Optional[str] = None,
         checkout_dados: Optional[Dict[str, Any]] = None,
-        funcionario_id: Optional[int] = None
+        funcionario_id: Optional[int] = None,
+        cpf_titular: Optional[str] = None,
+        confirmar_divergencia_cpf: bool = False
     ) -> Dict[str, Any]:
         """
         Realizar checkout
@@ -180,11 +182,14 @@ class HospedagemRepository:
         VALIDAÇÃO CRÍTICA:
         - Hospedagem deve estar CHECKIN_REALIZADO
         - ⚠️ NÃO depende de pagamento (já foi pago antes)
+        - Pontos de fidelidade são creditados para o clienteId da Reserva.
+          Se cpf_titular for informado e divergir do cliente da reserva,
+          o checkout é bloqueado a menos que confirmar_divergencia_cpf=True.
         """
         # Buscar dados completos
         reserva = await self.db.reserva.find_unique(
             where={"id": reserva_id},
-            include={"hospedagem": True, "pagamentos": True}
+            include={"hospedagem": True, "pagamentos": True, "cliente": True}
         )
         
         if not reserva:
@@ -200,6 +205,20 @@ class HospedagemRepository:
         
         if not pode:
             raise ValueError(motivo)
+        
+        if cpf_titular and not confirmar_divergencia_cpf:
+            cpf_informado_limpo = ''.join(filter(str.isdigit, cpf_titular or ""))
+            cpf_cliente_reserva = ''.join(
+                filter(str.isdigit, getattr(reserva.cliente, "documento", "") or "")
+            )
+            if cpf_informado_limpo and cpf_cliente_reserva and cpf_informado_limpo != cpf_cliente_reserva:
+                raise ValueError(
+                    "CPF_DIVERGENTE: O CPF informado no checkout "
+                    f"({cpf_titular}) é diferente do titular cadastrado na reserva "
+                    f"({getattr(reserva.cliente, 'nomeCompleto', 'cliente da reserva')}). "
+                    "Os pontos de fidelidade seriam creditados ao titular da reserva. "
+                    "Confirme explicitamente para prosseguir ou corrija o CPF."
+                )
         
         total_extras = float(consumo_frigobar or 0) + float(servicos_extras or 0)
         if total_extras > 0:

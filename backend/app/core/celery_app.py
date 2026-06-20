@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from app.core.config import settings
 
 celery_app = Celery(
@@ -10,6 +11,7 @@ celery_app = Celery(
         "app.tasks.antifraude_tasks",
         "app.tasks.relatorio_tasks",
         "app.tasks.limpeza_tasks",
+        "app.tasks.jornada_tasks",
     ],
 )
 
@@ -24,4 +26,18 @@ celery_app.conf.update(
     task_soft_time_limit=25 * 60,
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
+    beat_schedule={
+        "jornada-liberar-pontos-pendentes": {
+            "task": "jornada.liberar_pontos_pendentes",
+            "schedule": crontab(minute="*/15"),
+        },
+        "jornada-invalidar-codigos-vencidos": {
+            "task": "jornada.invalidar_codigos_vencidos",
+            "schedule": crontab(minute=0),
+        },
+        "jornada-notificar-premios-proximos": {
+            "task": "jornada.notificar_premios_proximos",
+            "schedule": crontab(minute="0,30"),
+        },
+    },
 )

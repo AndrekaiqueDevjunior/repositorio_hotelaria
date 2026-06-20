@@ -264,6 +264,50 @@ services:
         max-file: "3"
 
   # ============================================================
+  # CELERY BEAT - AGENDADOR DE TAREFAS PERIODICAS
+  # ============================================================
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hotel_celery_beat_prod
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
+      SECRET_KEY: ${SECRET_KEY}
+      CIELO_MERCHANT_ID: ${CIELO_MERCHANT_ID}
+      CIELO_MERCHANT_KEY: ${CIELO_MERCHANT_KEY}
+      CIELO_MODE: ${CIELO_MODE}
+      CIELO_API_URL: ${CIELO_API_URL}
+      ENVIRONMENT: ${ENVIRONMENT}
+    volumes:
+      - backend_cache_prod:/app/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hotel_network
+    command: >
+      sh -c "
+        echo '[CELERY BEAT] Gerando Prisma Client...' &&
+        prisma generate &&
+        echo '[CELERY BEAT] Iniciando scheduler...' &&
+        celery -A app.core.celery_app beat --loglevel=info
+      "
+    healthcheck:
+      disable: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================================
   # BACKUP AUTOMÃTICO
   # ============================================================
   backup:

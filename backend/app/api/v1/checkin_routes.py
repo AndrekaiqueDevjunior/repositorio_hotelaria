@@ -81,6 +81,8 @@ class CheckoutRequest(BaseModel):
     observacoes_checkout: str = None
     assinatura_digital: str = None
     consumos_adicionais: List[ConsumoAdicional] = Field(default_factory=list)
+    cpf_titular: str = None
+    confirmar_divergencia_cpf: bool = False
     
     @validator('avaliacao_hospede')
     def validate_avaliacao(cls, v):
@@ -311,6 +313,8 @@ async def realizar_checkout(
             assinatura_checkout=dados_checkout.assinatura_digital,
             checkout_dados=_model_to_dict(dados_checkout),
             funcionario_id=current_user.id,
+            cpf_titular=dados_checkout.cpf_titular,
+            confirmar_divergencia_cpf=dados_checkout.confirmar_divergencia_cpf,
         )
  
         reserva_atualizada = await db.reserva.find_unique(
@@ -332,7 +336,17 @@ async def realizar_checkout(
             },
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        mensagem = str(e)
+        if mensagem.startswith("CPF_DIVERGENTE:"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "codigo": "CPF_DIVERGENTE",
+                    "mensagem": mensagem.replace("CPF_DIVERGENTE: ", ""),
+                    "requer_confirmacao": True,
+                },
+            )
+        raise HTTPException(status_code=400, detail=mensagem)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
