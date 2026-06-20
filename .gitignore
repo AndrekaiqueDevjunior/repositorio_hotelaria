@@ -172,6 +172,16 @@ static/media/
 *.cer
 *.p12
 *.pfx
+ssl/
+
+# Deploy / VPS (senhas hardcoded)
+deploy_vps.py
+producao.vps.txt
+vps\ password\ excluir.txt
+vps password excluir.txt
+
+# Scripts de teste temporarios
+backend/test_*.py
 
 # Backups
 *.backup
