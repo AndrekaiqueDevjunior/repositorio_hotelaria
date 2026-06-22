@@ -1,6 +1,8 @@
 import './globals.css'
 import Providers from '../components/Providers'
 import AccessibilityManager from '../components/AccessibilityPanel'
+import { ToastContainer } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +39,7 @@ export default function RootLayout({ children }) {
             {children}
           </AccessibilityManager>
         </Providers>
+        <ToastContainer position="top-right" autoClose={6000} newestOnTop />
       </body>
     </html>
   )

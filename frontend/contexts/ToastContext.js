@@ -43,7 +43,8 @@ export function ToastProvider({ children }) {
           atualizada_apos: lastCheck,
           limit: 10,
           order_by: 'data_criacao:desc'
-        }
+        },
+        silentError: true
       })
 
       if (res.data && res.data.data) {
