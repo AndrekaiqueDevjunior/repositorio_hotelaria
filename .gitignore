@@ -11,6 +11,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!frontend/lib/
 lib64/
 parts/
 sdist/
@@ -188,8 +189,12 @@ backend/test_*.py
 *.backup
 *.backup.*
 *_backup.py
+*.dump
 backup/
 backups/
+
+# Scripts temporarios de operacao em VPS (podem conter senha)
+_vps_*.py
 
 # OS específico
 Thumbs.db
