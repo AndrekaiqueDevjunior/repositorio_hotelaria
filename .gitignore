@@ -179,6 +179,7 @@ deploy_vps.py
 producao.vps.txt
 vps\ password\ excluir.txt
 vps password excluir.txt
+COMANDOS_MANUAIS_VPS.txt
 
 # Scripts de teste temporarios
 backend/test_*.py
