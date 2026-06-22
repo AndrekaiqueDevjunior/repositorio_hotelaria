@@ -6,16 +6,17 @@ import { useToast } from '../../../contexts/ToastContext'
 import { api } from '../../../lib/api'
 
 const TEMPORADAS = ['ALTA', 'MEDIA', 'BAIXA']
-const TIPOS_SUITE = ['LUXO', 'MASTER', 'SUITE', 'STANDARD']
+const TIPOS_SUITE = ['LUXO', 'DUPLA', 'MASTER', 'REAL']
 
 export default function TarifasPage() {
   const { user } = useAuth()
   const { addToast } = useToast()
-  
+
   const [tarifas, setTarifas] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editingTarifa, setEditingTarifa] = useState(null)
+  const [feedback, setFeedback] = useState(null) // { tipo: 'sucesso' | 'erro', titulo, mensagem }
   const [formData, setFormData] = useState({
     suite_tipo: 'LUXO',
     temporada: 'ALTA',
@@ -24,6 +25,11 @@ export default function TarifasPage() {
     preco_diaria: '',
     ativo: true
   })
+
+  const mostrarFeedback = (tipo, titulo, mensagem) => {
+    setFeedback({ tipo, titulo, mensagem })
+    addToast({ tipo: tipo === 'sucesso' ? 'success' : 'error', titulo, mensagem })
+  }
 
   useEffect(() => {
     fetchTarifas()
@@ -35,7 +41,7 @@ export default function TarifasPage() {
       const response = await api.get('/tarifas')
       setTarifas(response.data || [])
     } catch (error) {
-      addToast('Erro ao buscar tarifas', 'error')
+      mostrarFeedback('erro', 'Erro ao buscar tarifas', error.response?.data?.detail || 'Nao foi possivel carregar a lista de tarifas.')
       console.error('Erro:', error)
     } finally {
       setLoading(false)
@@ -48,18 +54,22 @@ export default function TarifasPage() {
     try {
       if (editingTarifa) {
         await api.put(`/tarifas/${editingTarifa.id}`, formData)
-        addToast('Tarifa atualizada com sucesso', 'success')
+        mostrarFeedback('sucesso', 'Tarifa atualizada', 'A tarifa foi atualizada com sucesso.')
       } else {
         await api.post('/tarifas', formData)
-        addToast('Tarifa criada com sucesso', 'success')
+        mostrarFeedback('sucesso', 'Tarifa criada', 'A nova tarifa foi criada com sucesso.')
       }
-      
+
       setShowModal(false)
       setEditingTarifa(null)
       resetForm()
       fetchTarifas()
     } catch (error) {
-      addToast(error.response?.data?.detail || 'Erro ao salvar tarifa', 'error')
+      mostrarFeedback(
+        'erro',
+        editingTarifa ? 'Erro ao atualizar tarifa' : 'Erro ao criar tarifa',
+        error.response?.data?.detail || 'Nao foi possivel salvar a tarifa.'
+      )
       console.error('Erro:', error)
     }
   }
@@ -82,10 +92,10 @@ export default function TarifasPage() {
     
     try {
       await api.delete(`/tarifas/${id}`)
-      addToast('Tarifa excluída com sucesso', 'success')
+      mostrarFeedback('sucesso', 'Tarifa excluida', 'A tarifa foi excluida com sucesso.')
       fetchTarifas()
     } catch (error) {
-      addToast('Erro ao excluir tarifa', 'error')
+      mostrarFeedback('erro', 'Erro ao excluir tarifa', error.response?.data?.detail || 'Nao foi possivel excluir a tarifa.')
       console.error('Erro:', error)
     }
   }
@@ -93,10 +103,10 @@ export default function TarifasPage() {
   const toggleStatus = async (id, ativo) => {
     try {
       await api.patch(`/tarifas/${id}`, { ativo: !ativo })
-      addToast(`Tarifa ${!ativo ? 'ativada' : 'desativada'} com sucesso`, 'success')
+      mostrarFeedback('sucesso', !ativo ? 'Tarifa ativada' : 'Tarifa desativada', `A tarifa foi ${!ativo ? 'ativada' : 'desativada'} com sucesso.`)
       fetchTarifas()
     } catch (error) {
-      addToast('Erro ao alterar status da tarifa', 'error')
+      mostrarFeedback('erro', 'Erro ao alterar status', error.response?.data?.detail || 'Nao foi possivel alterar o status da tarifa.')
       console.error('Erro:', error)
     }
   }
@@ -326,6 +336,32 @@ export default function TarifasPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de feedback (sucesso/erro) das acoes de CRUD */}
+      {feedback && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-xl">
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`flex items-center justify-center w-10 h-10 rounded-full text-xl font-bold ${
+                feedback.tipo === 'sucesso' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {feedback.tipo === 'sucesso' ? '✓' : '!'}
+              </div>
+              <h3 className="text-lg font-bold text-gray-900">{feedback.titulo}</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-5">{feedback.mensagem}</p>
+            <button
+              type="button"
+              onClick={() => setFeedback(null)}
+              className={`w-full px-4 py-2 rounded-lg font-semibold text-white ${
+                feedback.tipo === 'sucesso' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+              }`}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
