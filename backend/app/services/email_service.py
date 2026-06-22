@@ -1,3 +1,4 @@
+import html
 import os
 from typing import Any, Dict, Optional
 
@@ -67,18 +68,18 @@ class EmailService:
         html_content = f"""
         <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937">
           <h2 style="margin-bottom:8px">Nova reserva recebida</h2>
-          <p><strong>Codigo:</strong> {codigo}</p>
-          <p><strong>Status:</strong> {status}</p>
-          <p><strong>Quarto:</strong> {quarto}</p>
-          <p><strong>Suite:</strong> {suite}</p>
-          <p><strong>Check-in:</strong> {checkin}</p>
-          <p><strong>Check-out:</strong> {checkout}</p>
+          <p><strong>Codigo:</strong> {html.escape(str(codigo))}</p>
+          <p><strong>Status:</strong> {html.escape(str(status))}</p>
+          <p><strong>Quarto:</strong> {html.escape(str(quarto))}</p>
+          <p><strong>Suite:</strong> {html.escape(str(suite))}</p>
+          <p><strong>Check-in:</strong> {html.escape(str(checkin))}</p>
+          <p><strong>Check-out:</strong> {html.escape(str(checkout))}</p>
           <p><strong>Valor total:</strong> R$ {float(valor_total):.2f}</p>
           <hr style="margin:16px 0" />
-          <p><strong>Cliente:</strong> {cliente_nome}</p>
-          <p><strong>Documento:</strong> {cliente_documento}</p>
-          <p><strong>Email:</strong> {cliente_email}</p>
-          <p><strong>Telefone:</strong> {cliente_telefone}</p>
+          <p><strong>Cliente:</strong> {html.escape(str(cliente_nome))}</p>
+          <p><strong>Documento:</strong> {html.escape(str(cliente_documento))}</p>
+          <p><strong>Email:</strong> {html.escape(str(cliente_email))}</p>
+          <p><strong>Telefone:</strong> {html.escape(str(cliente_telefone))}</p>
         </div>
         """
 
@@ -153,13 +154,13 @@ class EmailService:
         html_content = f"""
         <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937">
           <h2 style="margin-bottom:8px">Comprovante TEF</h2>
-          <p><strong>NSU:</strong> {nsu_texto}</p>
-          <p><strong>Autorizacao:</strong> {autorizacao_texto}</p>
+          <p><strong>NSU:</strong> {html.escape(str(nsu_texto))}</p>
+          <p><strong>Autorizacao:</strong> {html.escape(str(autorizacao_texto))}</p>
           <hr style="margin:16px 0" />
           <h3 style="margin:0 0 8px 0">Cupom Cliente</h3>
-          <pre style="white-space:pre-wrap;font-family:monospace">{cupom_cliente}</pre>
+          <pre style="white-space:pre-wrap;font-family:monospace">{html.escape(str(cupom_cliente))}</pre>
           <h3 style="margin:16px 0 8px 0">Cupom Estabelecimento</h3>
-          <pre style="white-space:pre-wrap;font-family:monospace">{cupom_estabelecimento}</pre>
+          <pre style="white-space:pre-wrap;font-family:monospace">{html.escape(str(cupom_estabelecimento))}</pre>
         </div>
         """
 

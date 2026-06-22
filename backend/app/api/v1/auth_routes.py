@@ -159,18 +159,12 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
     )
     
     if not funcionario:
-        print(f"[AUTH DEBUG] Funcionário não encontrado: {credentials.email}")
         await log_failed_login(credentials.email, ip)
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    
-    print(f"[AUTH DEBUG] Funcionário encontrado: {funcionario.email}")
-    print(f"[AUTH DEBUG] Hash no banco: {funcionario.senha[:20]}...")
-    print(f"[AUTH DEBUG] Senha recebida (len): {len(credentials.password)}")
-    
+
     # Verificar senha
     senha_valida = verify_password(credentials.password, funcionario.senha)
-    print(f"[AUTH DEBUG] Resultado verify_password: {senha_valida}")
-    
+
     if not senha_valida:
         await log_failed_login(credentials.email, ip)
         raise HTTPException(status_code=401, detail="Credenciais inválidas")

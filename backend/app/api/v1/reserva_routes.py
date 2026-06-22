@@ -227,7 +227,8 @@ async def criar_reserva(
 @router.get("/{reserva_id}", response_model=ReservaResponse)
 async def obter_reserva(
     reserva_id: int,
-    service: ReservaService = Depends(get_reserva_service)
+    service: ReservaService = Depends(get_reserva_service),
+    current_user: User = Depends(get_current_active_user)
 ):
     """Obter reserva por ID"""
     return await service.get_by_id(reserva_id)
@@ -287,7 +288,8 @@ async def confirmar_reserva_legacy(
 async def atualizar_reserva(
     reserva_id: int,
     reserva_data: dict,
-    service: ReservaService = Depends(get_reserva_service)
+    service: ReservaService = Depends(get_reserva_service),
+    current_user: User = Depends(get_current_active_user)
 ):
     """Atualizar dados gerais da reserva"""
     return await service.update(reserva_id, reserva_data)
