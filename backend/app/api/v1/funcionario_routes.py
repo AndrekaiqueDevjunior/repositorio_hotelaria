@@ -13,6 +13,20 @@ from app.schemas.funcionario_schema import FuncionarioCreate, FuncionarioUpdate
 
 router = APIRouter()
 
+
+def _perfil_atual(current_user) -> str:
+    """Extrai o valor textual do perfil do usuario logado.
+
+    PerfilUsuario e um Enum(str, Enum) -- str() nele retorna "PerfilUsuario.ADMIN"
+    em vez de "ADMIN" (gotcha conhecido de Enum misturado com str em Python < 3.12
+    sem usar StrEnum). Usar .value evita comparar contra o nome da classe.
+    """
+    valor = getattr(current_user, "perfil", "")
+    if hasattr(valor, "value"):
+        valor = valor.value
+    return str(valor or "").upper()
+
+
 class FuncionarioResponse(BaseModel):
     id: int
     nome: str
@@ -64,7 +78,7 @@ async def criar_funcionario(
     current_user: dict = Depends(get_current_user),
 ):
     """Criar novo funcionário"""
-    perfil = str(getattr(current_user, "perfil", "") or "").upper()
+    perfil = _perfil_atual(current_user)
     if perfil != "ADMIN":
         raise HTTPException(status_code=403, detail="Apenas ADMIN pode criar funcionários")
 
@@ -114,7 +128,7 @@ async def atualizar_funcionario(
     current_user: dict = Depends(get_current_user),
 ):
     """Atualizar funcionário"""
-    perfil = str(getattr(current_user, "perfil", "") or "").upper()
+    perfil = _perfil_atual(current_user)
     if perfil != "ADMIN":
         raise HTTPException(status_code=403, detail="Apenas ADMIN pode editar funcionários")
 
@@ -135,7 +149,7 @@ async def inativar_funcionario(
     current_user: dict = Depends(get_current_user),
 ):
     """Inativar funcionário (soft delete)"""
-    perfil = str(getattr(current_user, "perfil", "") or "").upper()
+    perfil = _perfil_atual(current_user)
     if perfil != "ADMIN":
         raise HTTPException(status_code=403, detail="Apenas ADMIN pode inativar funcionários")
 
