@@ -1241,15 +1241,15 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         onClick={registrarAtividadeTef}
         onTouchStart={registrarAtividadeTef}
       >
-        <div className="w-full max-w-5xl rounded-lg overflow-hidden shadow-xl">
-          <div className="bg-sky-600 text-white px-6 py-5">
+        <div className="w-full max-w-5xl max-h-[90vh] rounded-lg shadow-xl flex flex-col overflow-hidden">
+          <div className="bg-sky-600 text-white px-6 py-5 flex-shrink-0">
             <h2 className="text-3xl font-semibold">TEF - Pagamento da Reserva</h2>
             <p className="mt-1 text-sky-100">
               {selectedTefSaleOption.title} ({selectedTefSaleOption.subtitle}) | Reserva {reserva?.codigo_reserva || `#${reserva?.id}`}
             </p>
           </div>
 
-          <div className="bg-zinc-300 min-h-[420px] p-6">
+          <div className="bg-zinc-300 min-h-[420px] p-6 overflow-y-auto flex-1">
                 <div className="mb-4 rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
                   Siga a mensagem exibida pela CliSiTef. A reserva so sera confirmada apos a finalizacao TEF aprovada e a entrega do comprovante quando houver cupom.
                 </div>
