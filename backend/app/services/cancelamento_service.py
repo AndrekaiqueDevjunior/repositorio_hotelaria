@@ -34,7 +34,7 @@ class CancelamentoService:
         # Verificar status atual
         if reserva.status_reserva in [StatusReserva.CANCELADO, StatusReserva.CHECKED_OUT]:
             raise BusinessRuleViolation(
-                f"Não é possível cancelar reserva com status: {reserva.status_reservva.value}"
+                f"Não é possível cancelar reserva com status: {reserva.status_reserva.value}"
             )
         
         if reserva.status_reserva == StatusReserva.HOSPEDADO:

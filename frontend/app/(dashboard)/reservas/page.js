@@ -418,7 +418,8 @@ export default function Reservas() {
       toast.success('Reserva cancelada')
       await loadReservas()
     } catch (error) {
-      toast.error('Erro ao cancelar')
+      toast.error(error.response?.data?.detail || 'Erro ao cancelar reserva')
+      await loadReservas()
     }
   }
 
