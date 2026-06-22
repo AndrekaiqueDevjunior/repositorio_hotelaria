@@ -31,17 +31,25 @@ def liberar_pontos_pendentes_task(limit: int = 100):
     return asyncio.run(_run_with_db(_fn))
 
 
-@celery_app.task(name="jornada.invalidar_codigos_vencidos")
-def invalidar_codigos_vencidos_task():
+async def _invalidar_codigos_vencidos(db) -> Any:
     from app.repositories.cupom_repo import CupomRepository
     from app.repositories.premio_repo_atomic import PremioRepositoryAtomic
 
-    async def _fn(db):
-        cupons = await CupomRepository(db).processar_invalidacoes_automaticas()
-        codigos = await PremioRepositoryAtomic(db).expirar_codigos_vencidos()
-        return {"success": True, "cupons": cupons, "codigos_resgate": codigos}
+    cupons = await CupomRepository(db).processar_invalidacoes_automaticas()
+    codigos = await PremioRepositoryAtomic(db).expirar_codigos_vencidos()
+    return {"success": True, "cupons": cupons, "codigos_resgate": codigos}
 
-    return asyncio.run(_run_with_db(_fn))
+
+async def invalidar_codigos_vencidos_jornada() -> Any:
+    """Versao para uso direto dentro do processo FastAPI (db ja conectado)."""
+    from app.core.database import get_db
+
+    return await _invalidar_codigos_vencidos(get_db())
+
+
+@celery_app.task(name="jornada.invalidar_codigos_vencidos")
+def invalidar_codigos_vencidos_task():
+    return asyncio.run(_run_with_db(_invalidar_codigos_vencidos))
 
 
 @celery_app.task(name="jornada.notificar_premios_proximos")

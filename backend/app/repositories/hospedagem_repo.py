@@ -141,7 +141,26 @@ class HospedagemRepository:
         # Criar notificação
         from app.services.notification_service import NotificationService
         await NotificationService.notificar_checkin_realizado(self.db, reserva)
-        
+
+        # WhatsApp ao hotel com dados do check-in
+        try:
+            from app.services.whatsapp_service import get_whatsapp_service
+            codigo_reserva = getattr(reserva, "codigoReserva", None) or str(reserva_id)
+            cliente_nome = getattr(reserva, "clienteNome", None) or "Cliente"
+            quarto_atual = (reserva.quartoNumero or "").strip()
+            await get_whatsapp_service().enviar_notificacao_checkin_realizado(
+                codigo_reserva=codigo_reserva,
+                cliente_nome=cliente_nome,
+                quarto_numero=quarto_atual,
+                num_hospedes=num_hospedes,
+                num_criancas=num_criancas,
+                placa_veiculo=placa_veiculo,
+                observacoes=observacoes,
+                reserva_id=reserva_id,
+            )
+        except Exception as e:
+            print(f"[CHECKIN] Erro ao enviar WhatsApp de check-in ao hotel: {e}")
+
         # Registrar auditoria
         if funcionario_id:
             try:

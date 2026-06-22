@@ -8,7 +8,6 @@ from app.repositories.cliente_repo import ClienteRepository
 from app.repositories.quarto_repo import QuartoRepository
 from app.core.validators import ReservaValidator
 from app.services.integrate_notificacoes import (
-    notificar_em_reserva_criada,
     notificar_em_checkin,
     notificar_em_checkout,
     notificar_em_cancelamento
@@ -55,18 +54,8 @@ class ReservaService:
     async def create(self, dados: ReservaCreate) -> Dict[str, Any]:
         """Criar nova reserva com validações"""
         try:
-            # Criar reserva
+            # Criar reserva (ja notifica internamente: dashboard + email + WhatsApp hotel/cliente)
             reserva = await self.reserva_repo.create(dados)
-            
-            # Enviar notificação (em background, não bloquear)
-            try:
-                from app.core.database import get_db
-                db = get_db()
-                await notificar_em_reserva_criada(db, reserva)
-                print(f"[NOTIFICAÇÃO] Nova reserva {reserva.get('codigo_reserva')} notificada")
-            except Exception as e:
-                print(f"[NOTIFICAÇÃO] Erro ao notificar nova reserva: {e}")
-            
             return reserva
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

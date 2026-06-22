@@ -2,6 +2,7 @@
 Servico de notificacao via WhatsApp usando Twilio.
 """
 
+import json
 import logging
 import os
 from typing import Any, Dict, Optional
@@ -29,7 +30,18 @@ class WhatsAppService:
     - TWILIO_WHATSAPP_FROM
     - WHATSAPP_NOTIFICACAO_NUMERO
     - TWILIO_WHATSAPP_ENABLED
+
+    Templates aprovados na Meta (Twilio Content Template Builder), usados para
+    mensagens business-initiated fora da janela de 24h (texto livre nao e
+    entregue nesse caso, ver erro Twilio 63016).
     """
+
+    TEMPLATE_OTP_VERIFICACAO = "HX5224e5dd334ce1e04727b0506dc4a2f1"
+    TEMPLATE_RESERVA_CONFIRMADA = "HXf7faf468de05d8b6687daa8d70089706"
+    TEMPLATE_CHECKOUT_REALIZADO = "HX16be141501348ff38bb8ea9a2a3ec205"
+    TEMPLATE_PONTOS_LIBERADOS = "HX2591833437a282a67ee2b028c7a6131f"
+    TEMPLATE_PREMIO_PROXIMO = "HXa31198da96e972a3d6918d942a135007"
+    TEMPLATE_RESGATE_CONFIRMADO = "HXe3eaeffda34a120a36b37f10baf54c2f"
 
     def __init__(self):
         self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -119,6 +131,46 @@ class WhatsAppService:
                 "error": str(exc),
             }
 
+    async def _send_template(
+        self,
+        to_number: str,
+        content_sid: str,
+        variables: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not self.client:
+            return {
+                "success": False,
+                "error": "Servico WhatsApp nao configurado",
+            }
+
+        try:
+            to_formatted = self._format_phone_number(to_number)
+            message = self.client.messages.create(
+                from_=self.whatsapp_from,
+                to=to_formatted,
+                content_sid=content_sid,
+                content_variables=json.dumps({str(k): str(v) for k, v in variables.items()}),
+            )
+            return {
+                "success": True,
+                "message_sid": message.sid,
+                "status": message.status,
+                "to": to_formatted,
+            }
+        except TwilioRestException as exc:
+            logger.error("Erro Twilio ao enviar template WhatsApp: %s - %s", exc.code, exc.msg)
+            return {
+                "success": False,
+                "error": f"Erro Twilio: {exc.msg}",
+                "error_code": exc.code,
+            }
+        except Exception as exc:
+            logger.error("Erro ao enviar template WhatsApp: %s", exc)
+            return {
+                "success": False,
+                "error": str(exc),
+            }
+
     async def enviar_mensagem_customizada(self, to_number: str, mensagem: str) -> Dict[str, Any]:
         return await self._send_message(to_number, mensagem)
 
@@ -151,12 +203,11 @@ class WhatsAppService:
     async def enviar_otp_verificacao(self, telefone_destino: str, codigo: str) -> Dict[str, Any]:
         if not telefone_destino:
             return {"success": False, "error": "Telefone de destino nao informado"}
-        mensagem = (
-            f"Seu codigo de verificacao e: {codigo}\n"
-            "Valido por 5 minutos.\n"
-            "Nao compartilhe com ninguem."
+        return await self._send_template(
+            telefone_destino,
+            self.TEMPLATE_OTP_VERIFICACAO,
+            {"1": codigo},
         )
-        return await self._send_message(telefone_destino, mensagem)
 
     async def enviar_aviso_premio_proximo(
         self,
@@ -170,23 +221,16 @@ class WhatsAppService:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
 
-        link_pontos = self._build_link("/consultar-pontos", {"documento": documento})
-        linhas = [
-            "Você está a poucos pontos do seu próximo prêmio 😮",
-            "Falta muito pouco…",
-        ]
-        if link_pontos:
-            linhas.append(f"👉 Continue sua jornada: {link_pontos}")
-        if premio_nome:
-            linhas.extend(["", f"Próximo prêmio: {premio_nome}"])
-        if saldo_atual is not None:
-            linhas.append(f"Você tem: {int(saldo_atual or 0)} pontos")
-        if pontos_faltantes is not None:
-            linhas.append(f"Faltam: {int(pontos_faltantes or 0)} pontos")
-        if cliente_nome:
-            linhas.append(f"Cliente: {cliente_nome}")
-        mensagem = "\n".join(linhas)
-        return await self._send_message(cliente_telefone, mensagem)
+        return await self._send_template(
+            cliente_telefone,
+            self.TEMPLATE_PREMIO_PROXIMO,
+            {
+                "1": str(int(pontos_faltantes or 0)),
+                "2": premio_nome or "seu próximo prêmio",
+                "3": str(int(saldo_atual or 0)),
+                "4": (documento or "").strip(),
+            },
+        )
 
     async def enviar_confirmacao_checkin_dinheiro(
         self,
@@ -415,33 +459,55 @@ class WhatsAppService:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
 
-        link_pontos = self._build_link("/consultar-pontos", {"documento": documento})
+        pontos_total_liberados = int(pontos_ganhos_checkout or 0) + int(pontos_bonus_nivel or 0)
+        faltam = int(faltam_pontos_para_proximo_premio) if faltam_pontos_para_proximo_premio is not None else 0
+        premio_nome = proximo_premio_nome or "seu próximo prêmio"
+
+        return await self._send_template(
+            cliente_telefone,
+            self.TEMPLATE_PONTOS_LIBERADOS,
+            {
+                "1": codigo_reserva,
+                "2": str(pontos_total_liberados),
+                "3": str(int(saldo_atual or 0)),
+                "4": str(max(0, faltam)),
+                "5": premio_nome,
+            },
+        )
+
+
+    async def enviar_notificacao_checkin_realizado(
+        self,
+        codigo_reserva: str,
+        cliente_nome: str,
+        quarto_numero: str,
+        num_hospedes: Optional[int] = None,
+        num_criancas: Optional[int] = None,
+        placa_veiculo: Optional[str] = None,
+        observacoes: Optional[str] = None,
+        reserva_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        link_reserva = (
+            self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
+        )
         linhas = [
-            "Seus pontos já foram liberados 👑",
-            "Você avançou na Jornada Real",
+            "Check-in realizado ✅",
+            "",
+            f"Reserva: {codigo_reserva}",
+            f"Cliente: {cliente_nome}",
+            f"Quarto: {quarto_numero}",
         ]
-        if link_pontos:
-            linhas.append(f"👉 Veja seu progresso: {link_pontos}")
-        linhas.extend(["", f"Reserva: {codigo_reserva}"])
-        if pontos_ganhos_checkout:
-            detalhe = f"Pontos liberados nesta estadia: {pontos_ganhos_checkout}"
-            if bonus_percentual and float(bonus_percentual) > 0:
-                detalhe += f" (com seu bonus de +{float(bonus_percentual):g}%)"
-            linhas.append(detalhe)
-        if pontos_bonus_nivel:
-            linhas.append(f"Bonus de nivel: +{int(pontos_bonus_nivel)} pontos")
-        linhas.append(f"Saldo atual: {int(saldo_atual or 0)} pontos")
-
-        if faltam_pontos_para_proximo_premio is not None and proximo_premio_nome:
-            faltam = int(faltam_pontos_para_proximo_premio)
-            if faltam <= 0:
-                linhas.append(f"Você já pode conferir o prêmio: {proximo_premio_nome}.")
-            else:
-                linhas.append(f"Faltam {faltam} pontos para {proximo_premio_nome}.")
-
-        mensagem = "\n".join(linhas)
-        return await self._send_message(cliente_telefone, mensagem)
-
+        if num_hospedes is not None:
+            linhas.append(f"Hospedes: {num_hospedes}")
+        if num_criancas:
+            linhas.append(f"Criancas: {num_criancas}")
+        if placa_veiculo:
+            linhas.append(f"Placa: {placa_veiculo}")
+        if observacoes:
+            linhas.append(f"Observacoes: {observacoes}")
+        if link_reserva:
+            linhas.extend(["", f"Acessar: {link_reserva}"])
+        return await self._send_message(self.notification_number, "\n".join(linhas))
 
     async def enviar_confirmacao_resgate_cliente(
         self,
@@ -453,20 +519,24 @@ class WhatsAppService:
     ) -> Dict[str, Any]:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
-        linhas = [
-            "Seu resgate foi confirmado! 🎁",
-            "",
-            f"Prêmio: {premio_nome}",
-            f"Pontos usados: {pontos_usados}",
-            f"Código: {codigo_resgate}",
-        ]
+
+        valido_ate_fmt = valido_ate or "-"
         if valido_ate:
-            linhas.append(f"Válido até: {valido_ate}")
-        linhas.extend([
-            "",
-            "Apresente este código para retirar seu prêmio no Hotel Real.",
-        ])
-        return await self._send_message(cliente_telefone, "\n".join(linhas))
+            try:
+                from datetime import datetime
+                valido_ate_fmt = datetime.fromisoformat(valido_ate).strftime("%d/%m/%Y")
+            except Exception:
+                valido_ate_fmt = valido_ate
+
+        return await self._send_template(
+            cliente_telefone,
+            self.TEMPLATE_RESGATE_CONFIRMADO,
+            {
+                "1": premio_nome,
+                "2": codigo_resgate,
+                "3": valido_ate_fmt,
+            },
+        )
 
     async def enviar_confirmacao_checkout_cliente(
         self,
@@ -476,17 +546,14 @@ class WhatsAppService:
     ) -> Dict[str, Any]:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
-        linhas = [
-            "Obrigado por se hospedar no Hotel Real! 👑",
-            "Seu checkout foi realizado com sucesso.",
-            "",
-            f"Reserva: {codigo_reserva}",
-        ]
-        if pontos_pendentes > 0:
-            linhas.append(
-                f"Seus {pontos_pendentes} pontos da Jornada Real serão liberados em até 48h."
-            )
-        return await self._send_message(cliente_telefone, "\n".join(linhas))
+        return await self._send_template(
+            cliente_telefone,
+            self.TEMPLATE_CHECKOUT_REALIZADO,
+            {
+                "1": codigo_reserva,
+                "2": str(int(pontos_pendentes or 0)),
+            },
+        )
 
     async def enviar_confirmacao_reserva_cliente(
         self,
@@ -499,18 +566,17 @@ class WhatsAppService:
     ) -> Dict[str, Any]:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
-        linhas = [
-            "Reserva confirmada no Hotel Real Cabo Frio! 🏨",
-            "",
-            f"Código: {codigo_reserva}",
-            f"Check-in: {checkin}",
-            f"Check-out: {checkout}",
-        ]
-        if tipo_suite:
-            linhas.append(f"Suíte: {tipo_suite}")
-        if valor_total > 0:
-            linhas.append(f"Valor total: R$ {float(valor_total):.2f}")
-        return await self._send_message(cliente_telefone, "\n".join(linhas))
+        return await self._send_template(
+            cliente_telefone,
+            self.TEMPLATE_RESERVA_CONFIRMADA,
+            {
+                "1": codigo_reserva,
+                "2": checkin,
+                "3": checkout,
+                "4": tipo_suite or "-",
+                "5": f"{float(valor_total or 0):.2f}",
+            },
+        )
 
 
 _whatsapp_service = None

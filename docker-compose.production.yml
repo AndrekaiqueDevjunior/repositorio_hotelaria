@@ -190,10 +190,8 @@ services:
         prisma generate &&
         echo '[BACKEND] Aplicando migrations (deploy)...' &&
         prisma migrate deploy &&
-        echo '[BACKEND] Aplicando migration Convite Real...' &&
-        psql "$$DATABASE_URL" -f migrations/008_criar_indicacoes_convite_real.sql &&
-        echo '[BACKEND] Aplicando migration Cupom Amigo...' &&
-        psql "$$DATABASE_URL" -f migrations/009_cupom_amigo_programa_pontos.sql &&
+        echo '[BACKEND] Aplicando migrations SQL idempotentes (001-020)...' &&
+        for f in $$(ls migrations/*.sql | sort -V); do echo \"[BACKEND] -> $$f\" && psql \"$$DATABASE_URL\" -f \"$$f\" || exit 1; done &&
         echo '[BACKEND] Iniciando servidor produÃ§Ã£o com Gunicorn...' &&
         gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile -
       "
