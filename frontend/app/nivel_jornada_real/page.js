@@ -86,9 +86,11 @@ export default function NivelJornadaReal() {
   const params = useSearchParams()
   const [showLevelDialog, setShowLevelDialog] = useState(false)
   const [loyaltyData, setLoyaltyData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const cpf = (params.get('cpf') || params.get('documento') || '').replace(/\D/g, '')
   const name = loyaltyData?.customerName || 'Hóspede Real'
-  const points = loyaltyData ? loyaltyData.levelPoints : 72
+  const points = loyaltyData ? loyaltyData.levelPoints : 0
   const previousPoints = points
   const forceCelebrate = params.get('celebrar') === '1' || params.get('up') === '1'
 
@@ -97,28 +99,37 @@ export default function NivelJornadaReal() {
 
     const loadLoyalty = async () => {
       if (!cpf) {
-        setLoyaltyData(null)
+        if (isMounted) {
+          setLoyaltyData(null)
+          setLoadError(true)
+          setLoading(false)
+        }
         return
       }
 
       try {
-        const response = await api.get(`/customers/${cpf}/loyalty`)
+        const response = await api.get(`/customers/${cpf}/loyalty`, { silentError: true })
 
         if (isMounted) {
           setLoyaltyData(normalizeLoyaltyData(response.data))
+          setLoadError(false)
         }
       } catch (primaryError) {
         try {
-          const response = await api.get(`/pontos/consultar/${cpf}`)
+          const response = await api.get(`/pontos/consultar/${cpf}`, { silentError: true })
 
           if (isMounted) {
             setLoyaltyData(normalizeLoyaltyData(response.data))
+            setLoadError(false)
           }
         } catch (error) {
           if (isMounted) {
             setLoyaltyData(null)
+            setLoadError(true)
           }
         }
+      } finally {
+        if (isMounted) setLoading(false)
       }
     }
 
@@ -141,6 +152,33 @@ export default function NivelJornadaReal() {
   const levelProgress = nextLevel ? clamp(((points - levelStart) / (levelEnd - levelStart)) * 100, 0, 100) : 100
   const fullJourneyProgress = clamp((points / 90) * 100, 0, 100)
   const missing = nextLevel ? Math.max(goal - points, 0) : 0
+
+  if (loading) {
+    return (
+      <main className="level-page">
+        <GoldParticles />
+        <section className="level-shell">
+          <p className="level-loading">Carregando seus pontos...</p>
+        </section>
+      </main>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <main className="level-page">
+        <GoldParticles />
+        <Link href={withCpfParam('/consultar-pontos', cpf)} className="back-button" aria-label="Voltar">
+          <ChevronLeft size={42} strokeWidth={2.2} />
+        </Link>
+        <section className="level-shell">
+          <p className="level-loading">
+            Não foi possível carregar seus pontos agora. Volte e valide seu CPF novamente.
+          </p>
+        </section>
+      </main>
+    )
+  }
 
   return (
     <main className="level-page">
@@ -365,6 +403,15 @@ export default function NivelJornadaReal() {
           color: var(--gold);
           background: rgba(0, 0, 0, 0.28);
           box-shadow: 0 0 18px rgba(246, 198, 55, 0.18);
+        }
+
+        .level-loading {
+          margin: 40vh auto 0;
+          color: #fff1d6;
+          font-family: 'Cinzel', serif;
+          font-size: 1.05rem;
+          text-align: center;
+          padding: 0 24px;
         }
 
         .level-shell {
