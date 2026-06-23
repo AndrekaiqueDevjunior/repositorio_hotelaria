@@ -18,6 +18,19 @@ function extrairMensagemErro(error) {
   return 'Ocorreu um erro ao processar a solicitacao.'
 }
 
+const ROTAS_PUBLICAS_JORNADA_REAL = [
+  '/consultar-pontos',
+  '/entrar-jornada-real',
+  '/nivel_jornada_real',
+  '/resgate_dos_premios',
+  '/termos-jornada-real',
+]
+
+function isPaginaPublicaJornadaReal() {
+  if (typeof window === 'undefined') return false
+  return ROTAS_PUBLICAS_JORNADA_REAL.some((rota) => window.location.pathname.startsWith(rota))
+}
+
 export const api = axios.create({
   baseURL,
   withCredentials: true,
@@ -44,10 +57,14 @@ api.interceptors.response.use(
       localStorage.removeItem('token')
     }
 
+    // Paginas publicas do Jornada Real nao tem sessao de funcionario logada;
+    // um 401 ali e normal (sem token de staff) e nao "sessao expirada" pro hospede.
+    const ignorarToken401 = error?.response?.status === 401 && isPaginaPublicaJornadaReal()
+
     // Feedback padrao: toda chamada que falhar mostra um toast com o motivo real,
     // a menos que o chamador passe { silentError: true } na config da requisicao
     // (ex: polling em background que ja trata o erro de outra forma).
-    if (typeof window !== 'undefined' && !error?.config?.silentError) {
+    if (typeof window !== 'undefined' && !error?.config?.silentError && !ignorarToken401) {
       const mensagem = extrairMensagemErro(error)
       if (mensagem) {
         toast.error(mensagem, { toastId: error?.config?.url ? `erro-${error.config.method}-${error.config.url}` : undefined })
