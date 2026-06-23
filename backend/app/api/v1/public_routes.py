@@ -560,7 +560,6 @@ async def criar_reserva_publica(
     Requer autenticacao por OTP/WhatsApp vinculada ao CPF informado.
     """
     try:
-        await _validar_antibot_publico(request, "criar_reserva_publica")
         db = get_db()
         cliente_repo = ClienteRepository(db)
         reserva_repo = ReservaRepository(db)
