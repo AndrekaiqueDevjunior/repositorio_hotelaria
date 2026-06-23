@@ -421,7 +421,9 @@ async def verificar_disponibilidade_quartos(
             "total_quartos_disponiveis": total_quartos_disponiveis,
             "tipos_disponiveis": tipos_disponiveis
         }
-        
+
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de data inválido. Use YYYY-MM-DD")
     except Exception as e:
