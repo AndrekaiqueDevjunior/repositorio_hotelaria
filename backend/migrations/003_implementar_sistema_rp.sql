@@ -234,12 +234,17 @@ COMMENT ON TABLE resgates_rp IS 'Histórico de resgates realizados pelos cliente
 -- ========================================
 -- 10. GRANT DE PERMISSÕES
 -- ========================================
--- Garantir que a aplicação tenha acesso às novas tabelas
-GRANT SELECT, INSERT, UPDATE, DELETE ON clientes_rp TO postgres;
-GRANT SELECT, INSERT, UPDATE, DELETE ON historico_rp TO postgres;
-GRANT SELECT, INSERT, UPDATE, DELETE ON premios_rp TO postgres;
-GRANT SELECT, INSERT, UPDATE, DELETE ON resgates_rp TO postgres;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO postgres;
+-- Em producao a aplicacao pode rodar com usuario diferente de "postgres".
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON clientes_rp TO postgres;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON historico_rp TO postgres;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON premios_rp TO postgres;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON resgates_rp TO postgres;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO postgres;
+    END IF;
+END $$;
 
 -- ========================================
 -- FINALIZAÇÃO

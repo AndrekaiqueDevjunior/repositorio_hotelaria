@@ -28,6 +28,8 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 
 **Spec Driven:** antes de implementar ou marcar um item como completo, seguir `JORNADA_REAL_SPEC_DRIVEN_DEVELOPMENT.md`. Esta checklist registra o status; o spec define o contrato e os critérios de aceite.
 
+**Validação operacional 2026-06-23:** migrations SQL idempotentes da Jornada Real corrigidas para o schema pós-Prisma (`updated_at` sem default), backend rebuildado e `/health` validado em produção local Docker.
+
 ---
 
 ## 1️⃣ Cupom Amigo - CONVITE REAL
@@ -143,6 +145,8 @@ Cada nível concede bônus % de pontos nas reservas.
 ```
 
 **Resultado testes:** 🟡 prisma — `test_programa_pontos_service.py` bloqueado por `prisma.Client` não gerado; lógica de bônus implementada no `PontosCheckoutService`.
+
+**Validação operacional 2026-06-23:** seeds de `niveis_fidelidade` em `010`, `013` e `014` passaram a informar `created_at`/`updated_at`; backend subiu healthy após rebuild.
 
 **Prioridade:** 🔴 ALTA | **Complexidade:** Média | **Est:** 2-3 dias
 

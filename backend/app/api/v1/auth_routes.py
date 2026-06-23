@@ -174,7 +174,7 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
         raise HTTPException(status_code=403, detail="Conta inativa")
     
     # Verificar se é primeiro acesso
-    primeiro_acesso = getattr(funcionario, 'primeiro_acesso', False)
+    primeiro_acesso = getattr(funcionario, "primeiroAcesso", False)
     
     # Gerar tokens
     token_data = {

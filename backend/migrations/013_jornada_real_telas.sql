@@ -95,11 +95,11 @@ CREATE INDEX IF NOT EXISTS idx_codigos_resgate_status
 CREATE INDEX IF NOT EXISTS idx_codigos_resgate_valido_ate
     ON codigos_resgate(valido_ate);
 
-INSERT INTO categorias_premios (nome, slug, descricao, ordem, ativo)
+INSERT INTO categorias_premios (nome, slug, descricao, ordem, ativo, created_at, updated_at)
 VALUES
-    ('Tecnologia Real', 'tecnologia-real', 'Experiencias e premios de tecnologia.', 1, TRUE),
-    ('Rituais do Real', 'rituais-do-real', 'Premios para ampliar a experiencia do hospede.', 2, TRUE),
-    ('O Retorno do Sonho', 'o-retorno-do-sonho', 'Experiencias de hospedagem especial.', 3, TRUE)
+    ('Tecnologia Real', 'tecnologia-real', 'Experiencias e premios de tecnologia.', 1, TRUE, NOW(), NOW()),
+    ('Rituais do Real', 'rituais-do-real', 'Premios para ampliar a experiencia do hospede.', 2, TRUE, NOW(), NOW()),
+    ('O Retorno do Sonho', 'o-retorno-do-sonho', 'Experiencias de hospedagem especial.', 3, TRUE, NOW(), NOW())
 ON CONFLICT (slug) DO UPDATE
 SET nome = EXCLUDED.nome,
     descricao = EXCLUDED.descricao,
@@ -108,12 +108,12 @@ SET nome = EXCLUDED.nome,
     updated_at = NOW();
 
 INSERT INTO niveis_fidelidade (
-    codigo, nome, pontos_minimos, bonus_percentual, beneficios, ordem, ativo
+    codigo, nome, pontos_minimos, bonus_percentual, beneficios, ordem, ativo, created_at, updated_at
 )
 VALUES
-    (0, 'ESSENCIA', 0, 0, '{"descricao": "Entrada na Jornada Real"}', 0, TRUE),
-    (1, 'EXPERIENCIA', 50, 20, '{"descricao": "Beneficios de evolucao da Jornada Real", "pontos_por_reserva": "+20%"}', 1, TRUE),
-    (2, 'REAL', 90, 40, '{"descricao": "Nivel maximo da Jornada Real", "pontos_por_reserva": "+40%"}', 2, TRUE)
+    (0, 'ESSENCIA', 0, 0, '{"descricao": "Entrada na Jornada Real"}', 0, TRUE, NOW(), NOW()),
+    (1, 'EXPERIENCIA', 50, 20, '{"descricao": "Beneficios de evolucao da Jornada Real", "pontos_por_reserva": "+20%"}', 1, TRUE, NOW(), NOW()),
+    (2, 'REAL', 90, 40, '{"descricao": "Nivel maximo da Jornada Real", "pontos_por_reserva": "+40%"}', 2, TRUE, NOW(), NOW())
 ON CONFLICT (codigo) DO UPDATE
 SET nome = EXCLUDED.nome,
     pontos_minimos = EXCLUDED.pontos_minimos,
@@ -123,8 +123,8 @@ SET nome = EXCLUDED.nome,
     ativo = EXCLUDED.ativo,
     updated_at = NOW();
 
-INSERT INTO beneficios_nivel (nivel_id, titulo, descricao, ativo)
-SELECT nf.id, b.titulo, b.descricao, TRUE
+INSERT INTO beneficios_nivel (nivel_id, titulo, descricao, ativo, created_at, updated_at)
+SELECT nf.id, b.titulo, b.descricao, TRUE, NOW(), NOW()
 FROM niveis_fidelidade nf
 JOIN (
     VALUES
@@ -249,10 +249,10 @@ WHERE rp.codigo_resgate IS NOT NULL
   )
 ON CONFLICT DO NOTHING;
 
-INSERT INTO configuracoes_jornada (chave, valor_json, ativo)
+INSERT INTO configuracoes_jornada (chave, valor_json, ativo, created_at, updated_at)
 VALUES
-    ('telas', '{"cta_principal": "Comecar agora", "cta_pontos": "Ver meus pontos", "cta_premios": "Premios exclusivos"}', TRUE),
-    ('regras_legais', '{"pontos_liberados_apos_checkout": true, "prazo_liberacao_horas": 48, "cancelamentos_nao_geram_pontos": true, "fraude_chargeback_estorno_bloqueiam_pontos": true, "premios_sujeitos_disponibilidade": true}', TRUE)
+    ('telas', '{"cta_principal": "Comecar agora", "cta_pontos": "Ver meus pontos", "cta_premios": "Premios exclusivos"}', TRUE, NOW(), NOW()),
+    ('regras_legais', '{"pontos_liberados_apos_checkout": true, "prazo_liberacao_horas": 48, "cancelamentos_nao_geram_pontos": true, "fraude_chargeback_estorno_bloqueiam_pontos": true, "premios_sujeitos_disponibilidade": true}', TRUE, NOW(), NOW())
 ON CONFLICT (chave) DO UPDATE
 SET valor_json = EXCLUDED.valor_json,
     ativo = EXCLUDED.ativo,

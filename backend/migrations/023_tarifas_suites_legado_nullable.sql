@@ -4,5 +4,19 @@
 -- causando falha em POST /api/v1/tarifas. Torna ambas opcionais sem
 -- apagar nada -- os registros legados existentes mantem seus valores.
 
-ALTER TABLE tarifas_suites ALTER COLUMN nome DROP NOT NULL;
-ALTER TABLE tarifas_suites ALTER COLUMN valor_diaria DROP NOT NULL;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tarifas_suites' AND column_name = 'nome'
+    ) THEN
+        ALTER TABLE tarifas_suites ALTER COLUMN nome DROP NOT NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'tarifas_suites' AND column_name = 'valor_diaria'
+    ) THEN
+        ALTER TABLE tarifas_suites ALTER COLUMN valor_diaria DROP NOT NULL;
+    END IF;
+END $$;

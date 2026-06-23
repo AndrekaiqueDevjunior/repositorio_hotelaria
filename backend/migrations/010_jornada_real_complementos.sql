@@ -18,12 +18,12 @@ CREATE INDEX IF NOT EXISTS idx_niveis_fidelidade_ativo_pontos
     ON niveis_fidelidade(ativo, pontos_minimos);
 
 INSERT INTO niveis_fidelidade (
-    codigo, nome, pontos_minimos, bonus_percentual, beneficios, ordem, ativo
+    codigo, nome, pontos_minimos, bonus_percentual, beneficios, ordem, ativo, created_at, updated_at
 )
 VALUES
-    (0, 'INICIAL', 0, 0, '{"descricao": "Entrada na Jornada Real"}', 0, TRUE),
-    (1, 'EXPERIENCIA', 20, 20, '{"pontos_por_reserva": "+20%"}', 1, TRUE),
-    (2, 'REAL', 60, 40, '{"pontos_por_reserva": "+40%"}', 2, TRUE)
+    (0, 'INICIAL', 0, 0, '{"descricao": "Entrada na Jornada Real"}', 0, TRUE, NOW(), NOW()),
+    (1, 'EXPERIENCIA', 20, 20, '{"pontos_por_reserva": "+20%"}', 1, TRUE, NOW(), NOW()),
+    (2, 'REAL', 60, 40, '{"pontos_por_reserva": "+40%"}', 2, TRUE, NOW(), NOW())
 ON CONFLICT (codigo) DO UPDATE
 SET nome = EXCLUDED.nome,
     bonus_percentual = EXCLUDED.bonus_percentual,
@@ -80,4 +80,3 @@ WHERE codigo_resgate IS NULL;
 UPDATE resgates_premios
 SET expira_em = created_at + INTERVAL '30 days'
 WHERE expira_em IS NULL;
-
