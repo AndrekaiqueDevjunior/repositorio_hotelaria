@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import init_db, disconnect_db
 from app.api.v1 import (
     cliente_routes,
     reserva_routes,
@@ -178,6 +178,15 @@ async def startup_event():
             asyncio.create_task(_resolver())
         except Exception as exc:
             print(f"[TEF] Falha ao agendar resolucao de pendencias: {exc}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Sem isso, o processo auxiliar do Prisma (query engine) nao e avisado
+    # para fechar a conexao ao reciclar o worker (gunicorn --max-requests),
+    # e a conexao fica presa no Postgres ate esgotar o max_connections.
+    await disconnect_db()
+    from app.core.cache import cache
+    await cache.disconnect()
 
 @app.get("/")
 async def root():
