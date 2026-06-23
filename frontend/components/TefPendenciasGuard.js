@@ -27,7 +27,10 @@ const formatarHorario = (value) => {
   }
 }
 
+const PERFIS_PERMITIDOS = ['ADMIN', 'GERENTE']
+
 export default function TefPendenciasGuard({ user }) {
+  const podeGerenciarTef = Boolean(user) && PERFIS_PERMITIDOS.includes(user.perfil)
   const { addToast } = useToast()
   const autoRunRef = useRef(false)
   const [checkedAt, setCheckedAt] = useState('')
@@ -39,7 +42,7 @@ export default function TefPendenciasGuard({ user }) {
   const [collapsed, setCollapsed] = useState(false)
 
   const verificarStatus = useCallback(async () => {
-    if (!user) return
+    if (!podeGerenciarTef) return
 
     setChecking(true)
     try {
@@ -59,10 +62,10 @@ export default function TefPendenciasGuard({ user }) {
     } finally {
       setChecking(false)
     }
-  }, [user])
+  }, [podeGerenciarTef])
 
   const processarPendencias = useCallback(async (source = 'dashboard_guard') => {
-    if (!user || processing) return false
+    if (!podeGerenciarTef || processing) return false
 
     setProcessing(true)
     setStatusError('')
@@ -111,23 +114,24 @@ export default function TefPendenciasGuard({ user }) {
     } finally {
       setProcessing(false)
     }
-  }, [addToast, processing, user])
+  }, [addToast, processing, podeGerenciarTef])
 
   useEffect(() => {
+    if (!podeGerenciarTef) return
     setCheckedAt(getTefPendenciasCheckedAt())
     verificarStatus()
-  }, [verificarStatus])
+  }, [verificarStatus, podeGerenciarTef])
 
   useEffect(() => {
-    if (!user || autoRunRef.current) return
+    if (!podeGerenciarTef || autoRunRef.current) return
 
     autoRunRef.current = true
     clearTefPendenciasCheck()
     setCheckedAt('')
     processarPendencias('dashboard_startup')
-  }, [processarPendencias, user])
+  }, [processarPendencias, podeGerenciarTef])
 
-  if (!user || collapsed) {
+  if (!podeGerenciarTef || collapsed) {
     return null
   }
 
