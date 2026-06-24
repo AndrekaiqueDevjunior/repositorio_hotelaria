@@ -19,6 +19,7 @@ services:
     image: postgres:16-alpine
     container_name: hotel_postgres_prod
     restart: unless-stopped
+    command: postgres -c max_connections=200
     environment:
       POSTGRES_DB: hotel_cabo_frio_prod
       POSTGRES_USER: ${DB_USER}
@@ -192,7 +193,7 @@ services:
         echo '[BACKEND] Aplicando migrations SQL idempotentes (001-020)...' &&
         for f in $$(ls migrations/*.sql | sort -V); do echo \"[BACKEND] -> $$f\" && psql \"$$DATABASE_URL\" -f \"$$f\" || exit 1; done &&
         echo '[BACKEND] Iniciando servidor produÃ§Ã£o com Gunicorn...' &&
-        gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile -
+        gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --access-logfile - --error-logfile -
       "
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

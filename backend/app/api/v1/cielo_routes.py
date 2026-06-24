@@ -28,10 +28,6 @@ async def _enriquecer_com_cliente(transacoes):
         return transacoes
 
     db = get_db()
-    try:
-        await db.connect()
-    except Exception:
-        pass
 
     # Cache simples para evitar buscar o mesmo cliente várias vezes
     cliente_cache = {}
