@@ -18,7 +18,9 @@ export function AuthProvider({ children }) {
     try {
       // Verificar autenticação via cookie (não há localStorage)
       // O cookie é enviado automaticamente pelo axios (withCredentials: true)
-      const response = await api.get('/me')
+      // silentError: roda em toda pagina (inclusive publicas); 401 aqui e normal
+      // pra visitante sem sessao de funcionario, nao deve gerar toast global.
+      const response = await api.get('/me', { silentError: true })
       
       if (response.data) {
         setUser(response.data)
