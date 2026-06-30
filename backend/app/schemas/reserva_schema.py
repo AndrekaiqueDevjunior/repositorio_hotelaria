@@ -46,7 +46,7 @@ class ReservaResponse(BaseModel):
     cliente_nome: Optional[str]
     quarto_numero: str
     tipo_suite: TipoSuite
-    status: StatusReserva
+    status: str
     checkin_previsto: Optional[datetime]
     checkout_previsto: Optional[datetime]
     checkin_realizado: Optional[datetime]
