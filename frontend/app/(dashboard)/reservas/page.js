@@ -1,6 +1,7 @@
 ﻿'use client'
 import { useEffect, useState, useMemo } from 'react'
 import { api } from '../../../lib/api'
+import { useAuth } from '../../../contexts/AuthContext'
 import { formatErrorMessage } from '../../../lib/errorHandler'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
@@ -30,6 +31,7 @@ const STATUS_RESERVA_COLORS = {
 }
 
 export default function Reservas() {
+  const { user } = useAuth()
   const [reservas, setReservas] = useState([])
   const [clientes, setClientes] = useState([])
   const [quartos, setQuartos] = useState([])
