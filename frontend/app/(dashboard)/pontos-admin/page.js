@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { toast } from 'react-toastify'
 import { api } from '../../../lib/api'
 import { formatErrorMessage } from '../../../lib/errorHandler'
 import ProtectedRoute from '../../../components/ProtectedRoute'
@@ -78,7 +79,19 @@ function PontosContent() {
     limite_por_cliente: '',
     ativo: true
   })
-  
+
+  // Promo "primeiros N clientes"
+  const [promoStatus, setPromoStatus] = useState(null)
+  const [promoLoading, setPromoLoading] = useState(false)
+  const [promoSaving, setPromoSaving] = useState(false)
+  const [promoError, setPromoError] = useState('')
+  const [promoForm, setPromoForm] = useState({
+    ativo: true,
+    pontos: '',
+    vagas: '10',
+    data_limite: '',
+  })
+
   // Cliente selecionado
   const [clienteId, setClienteId] = useState(null)
 
@@ -119,6 +132,10 @@ function PontosContent() {
 
     if (activeTab === 'cupons') {
       loadCupons()
+    }
+
+    if (activeTab === 'promo') {
+      loadPromo()
     }
 
     if (activeTab === 'validar-resgate') {
@@ -181,6 +198,62 @@ function PontosContent() {
       setCuponsError(formatErrorMessage(err))
     } finally {
       setCuponsLoading(false)
+    }
+  }
+
+  const loadPromo = async () => {
+    if (!canManageRegras) return
+
+    try {
+      setPromoLoading(true)
+      setPromoError('')
+      const res = await api.get('/admin/promocoes/primeiros-clientes')
+      const data = res.data || {}
+      setPromoStatus(data)
+      setPromoForm({
+        ativo: data.ativo ?? true,
+        pontos: data.pontos ? String(data.pontos) : '',
+        vagas: data.vagas ? String(data.vagas) : '10',
+        // ISO -> "YYYY-MM-DDTHH:mm" para o input datetime-local
+        data_limite: data.data_limite ? String(data.data_limite).slice(0, 16) : '',
+      })
+    } catch (err) {
+      setPromoError(formatErrorMessage(err))
+    } finally {
+      setPromoLoading(false)
+    }
+  }
+
+  const savePromo = async () => {
+    if (!canManageRegras) return
+
+    const pontos = Number(promoForm.pontos)
+    const vagas = Number(promoForm.vagas)
+    if (!pontos || pontos <= 0) {
+      setPromoError('Informe um valor de pontos válido (maior que zero)')
+      return
+    }
+    if (!vagas || vagas <= 0) {
+      setPromoError('Informe a quantidade de vagas (maior que zero)')
+      return
+    }
+
+    try {
+      setPromoSaving(true)
+      setPromoError('')
+      const payload = {
+        ativo: !!promoForm.ativo,
+        pontos,
+        vagas,
+        data_limite: promoForm.data_limite ? promoForm.data_limite : null,
+      }
+      const res = await api.put('/admin/promocoes/primeiros-clientes', payload)
+      setPromoStatus(res.data || null)
+      toast.success('Promoção salva com sucesso')
+    } catch (err) {
+      setPromoError(formatErrorMessage(err))
+    } finally {
+      setPromoSaving(false)
     }
   }
 
@@ -1768,6 +1841,127 @@ function PontosContent() {
     </div>
   )
 
+  const renderPromo = () => (
+    <div className="space-y-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 max-w-2xl">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            🎁 Promoção: Primeiros Clientes
+          </h2>
+          {promoLoading ? <span className="text-sm text-gray-500">Carregando...</span> : null}
+        </div>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          Os primeiros <strong>N clientes</strong> (CPFs distintos) que fizerem check-out dentro da
+          validade ganham <strong>X pontos</strong>, uma única vez por cliente.
+        </p>
+
+        {promoError ? (
+          <div className="mb-4 p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">
+            {promoError}
+          </div>
+        ) : null}
+
+        {promoStatus ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+              <div className="text-2xl font-bold text-primary-600">{promoStatus.vagas_usadas ?? 0}</div>
+              <div className="text-xs text-gray-500">Vagas usadas</div>
+            </div>
+            <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+              <div className="text-2xl font-bold text-green-600">{promoStatus.vagas_restantes ?? 0}</div>
+              <div className="text-xs text-gray-500">Vagas restantes</div>
+            </div>
+            <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+              <div className={`text-sm font-semibold ${promoStatus.ativo ? 'text-green-600' : 'text-gray-400'}`}>
+                {promoStatus.ativo ? 'Ativa' : 'Inativa'}
+              </div>
+              <div className="text-xs text-gray-500">Status</div>
+            </div>
+            <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+              <div className={`text-sm font-semibold ${(promoStatus.esgotada || promoStatus.encerrada_por_data) ? 'text-red-600' : 'text-green-600'}`}>
+                {promoStatus.esgotada ? 'Esgotada' : promoStatus.encerrada_por_data ? 'Encerrada' : 'Em andamento'}
+              </div>
+              <div className="text-xs text-gray-500">Situação</div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="space-y-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!promoForm.ativo}
+              onChange={(e) => setPromoForm(prev => ({ ...prev, ativo: e.target.checked }))}
+              className="h-4 w-4"
+            />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Promoção ativa</span>
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Pontos por cliente (X)
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={promoForm.pontos}
+                onChange={(e) => setPromoForm(prev => ({ ...prev, pontos: e.target.value }))}
+                placeholder="Ex: 100"
+                className="w-full p-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Quantidade de vagas (N)
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={promoForm.vagas}
+                onChange={(e) => setPromoForm(prev => ({ ...prev, vagas: e.target.value }))}
+                placeholder="Ex: 10"
+                className="w-full p-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Data limite (opcional)
+            </label>
+            <input
+              type="datetime-local"
+              value={promoForm.data_limite}
+              onChange={(e) => setPromoForm(prev => ({ ...prev, data_limite: e.target.value }))}
+              className="w-full p-2 border border-gray-300 rounded-lg"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              A promoção encerra ao atingir as vagas OU nesta data, o que vier primeiro. Deixe em branco para sem data limite.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={loadPromo}
+              disabled={promoLoading || promoSaving}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Recarregar
+            </button>
+            <button
+              onClick={savePromo}
+              disabled={promoSaving}
+              className="px-4 py-2 rounded-lg bg-primary-600 text-white font-medium hover:bg-primary-700 disabled:opacity-50"
+            >
+              {promoSaving ? 'Salvando...' : 'Salvar promoção'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   const renderRegras = () => (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold mb-4">Regras de Pontuacao</h3>
@@ -2280,6 +2474,16 @@ function PontosContent() {
                 Cupons
               </button>
             ) : null}
+            {canManageRegras ? (
+              <button
+                onClick={() => setActiveTab('promo')}
+                className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
+                  activeTab === 'promo' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                🎁 Promoção
+              </button>
+            ) : null}
             <button
               onClick={() => setActiveTab('validar-resgate')}
               className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
@@ -2302,6 +2506,8 @@ function PontosContent() {
           renderPrecos()
         ) : activeTab === 'cupons' ? (
           renderCupons()
+        ) : activeTab === 'promo' ? (
+          renderPromo()
         ) : activeTab === 'validar-resgate' ? (
           renderValidarResgate()
         ) : clienteId ? (

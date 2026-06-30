@@ -264,14 +264,7 @@ export default function ResgateDosPremios() {
     }
   }, [])
 
-  const prizes = useMemo(() => {
-    if (!apiPrizes.length) return prizeDefaults
-
-    const apiSlugs = new Set(apiPrizes.map((prize) => prize.slug))
-    const missingDefaults = prizeDefaults.filter((prize) => !apiSlugs.has(prize.slug))
-
-    return [...apiPrizes, ...missingDefaults]
-  }, [apiPrizes])
+  const prizes = apiPrizes
 
   const orderedPrizes = useMemo(() => {
     if (!selectedSlug) return prizes

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.security import User
-from app.middleware.auth_middleware import get_current_active_user
+from app.middleware.auth_middleware import get_current_active_user, require_admin_or_manager
 from app.middleware.rate_limit import rate_limit_moderate, rate_limit_strict
 from app.repositories.cliente_repo import ClienteRepository
 from app.repositories.premio_repo_atomic import PremioRepositoryAtomic
@@ -24,6 +24,13 @@ class RewardRedeemRequest(BaseModel):
     customer_id: Optional[int] = None
     customer_document: Optional[str] = None
     cpf: Optional[str] = None
+
+
+class PromoPrimeirosConfigRequest(BaseModel):
+    ativo: bool = True
+    pontos: int
+    vagas: int
+    data_limite: Optional[str] = None  # ISO 8601, ex: "2026-07-31T23:59:59Z"
 
 
 def get_jornada_service() -> JornadaService:
@@ -237,6 +244,36 @@ async def obter_config_jornada(
     service: JornadaService = Depends(get_jornada_service),
 ):
     return await service.get_config()
+
+
+@router.get("/admin/promocoes/primeiros-clientes", response_model=dict)
+async def obter_promo_primeiros_clientes(
+    current_user: User = Depends(require_admin_or_manager),
+):
+    from app.services.pontos_checkout_service import obter_status_promo_primeiros
+
+    return await obter_status_promo_primeiros(get_db())
+
+
+@router.put("/admin/promocoes/primeiros-clientes", response_model=dict)
+async def salvar_promo_primeiros_clientes(
+    payload: PromoPrimeirosConfigRequest,
+    current_user: User = Depends(require_admin_or_manager),
+):
+    from app.services.pontos_checkout_service import salvar_config_promo_primeiros
+
+    if payload.pontos <= 0:
+        raise HTTPException(status_code=400, detail="pontos deve ser maior que zero")
+    if payload.vagas <= 0:
+        raise HTTPException(status_code=400, detail="vagas deve ser maior que zero")
+
+    return await salvar_config_promo_primeiros(
+        get_db(),
+        ativo=payload.ativo,
+        pontos=payload.pontos,
+        vagas=payload.vagas,
+        data_limite=payload.data_limite,
+    )
 
 
 @router.get("/jornada/regras", response_model=dict)

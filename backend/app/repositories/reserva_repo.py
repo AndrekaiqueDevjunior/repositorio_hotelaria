@@ -485,6 +485,7 @@ class ReservaRepository:
         try:
             from app.services.pontos_checkout_service import (
                 creditar_bonus_cupom_no_checkout,
+                creditar_bonus_promo_primeiros_no_checkout,
                 creditar_rp_no_checkout,
             )
 
@@ -502,9 +503,16 @@ class ReservaRepository:
                 funcionario_id=None,
             )
             pontos_bonus_cupom = int(resultado_bonus.get("pontos", 0) or 0) if resultado_bonus.get("creditado") else 0
+            resultado_promo = await creditar_bonus_promo_primeiros_no_checkout(
+                self.db,
+                reserva_id=reserva_id,
+                funcionario_id=None,
+            )
+            pontos_bonus_promo = int(resultado_promo.get("pontos", 0) or 0) if resultado_promo.get("creditado") else 0
         except Exception as e:
             pontos_ganhos = 0
             pontos_bonus_cupom = 0
+            pontos_bonus_promo = 0
             print(f"[CHECKOUT] Erro ao creditar pontos: {e}")
 
         pontos_indicacao = 0
@@ -535,14 +543,16 @@ class ReservaRepository:
             detalhe=(
                 f"Pontos ganhos: {pontos_ganhos or 0} | "
                 f"Bonus cupom: {pontos_bonus_cupom or 0} | "
+                f"Bonus promo: {pontos_bonus_promo or 0} | "
                 f"Convite Real: {pontos_indicacao or 0}"
             )
         )
-        
+
         # Retornar reserva com informaÃ§Ãµes de pontos
         resultado = self._serialize_reserva(updated_reserva)
         resultado["pontos_ganhos"] = pontos_ganhos if pontos_ganhos > 0 else 0
         resultado["pontos_bonus_cupom"] = pontos_bonus_cupom if pontos_bonus_cupom > 0 else 0
+        resultado["pontos_bonus_promo"] = pontos_bonus_promo if pontos_bonus_promo > 0 else 0
         resultado["pontos_convite_real"] = pontos_indicacao if pontos_indicacao > 0 else 0
         
         return resultado

@@ -366,6 +366,7 @@ class HospedagemRepository:
         """
         from app.services.pontos_checkout_service import (
             creditar_bonus_cupom_no_checkout,
+            creditar_bonus_promo_primeiros_no_checkout,
             creditar_rp_no_checkout,
         )
 
@@ -403,14 +404,29 @@ class HospedagemRepository:
                 print(f"[CHECKOUT CUPOM] Bônus creditado: {bonus_result.get('pontos', 0)}")
             elif bonus_result.get("motivo"):
                 print(f"[CHECKOUT CUPOM] Sem bônus: {bonus_result.get('motivo')}")
+
+            promo_result = await creditar_bonus_promo_primeiros_no_checkout(
+                self.db,
+                reserva_id=reserva_id,
+                funcionario_id=funcionario_id,
+            )
+            if promo_result.get("creditado"):
+                print(
+                    f"[CHECKOUT PROMO] Bônus primeiros clientes creditado: "
+                    f"{promo_result.get('pontos', 0)} (posição {promo_result.get('posicao')}/{promo_result.get('vagas')})"
+                )
+            elif promo_result.get("motivo"):
+                print(f"[CHECKOUT PROMO] Sem bônus de promo: {promo_result.get('motivo')}")
             return {
                 "success": True,
                 "pontos_checkout": int(result.get("pontos", 0) or 0) if result.get("creditado") else 0,
                 "pontos_status": result.get("status"),
                 "pontos_liberar_em": result.get("liberar_em"),
                 "pontos_bonus_cupom": int(bonus_result.get("pontos", 0) or 0) if bonus_result.get("creditado") else 0,
+                "pontos_bonus_promo": int(promo_result.get("pontos", 0) or 0) if promo_result.get("creditado") else 0,
                 "checkout": result,
                 "cupom": bonus_result,
+                "promo": promo_result,
             }
         except Exception as e:
             print(f"[CHECKOUT RP] Erro ao creditar pontos: {str(e)}")

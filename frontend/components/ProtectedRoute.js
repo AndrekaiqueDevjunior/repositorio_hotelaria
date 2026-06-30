@@ -9,7 +9,7 @@ export const PAGE_PERMISSIONS = {
   '/reservas': ['ADMIN', 'GERENTE', 'RECEPCAO', 'FUNCIONARIO'],
   '/clientes': ['ADMIN', 'GERENTE', 'RECEPCAO'],
   '/pagamentos': ['ADMIN', 'GERENTE', 'RECEPCAO'],
-  '/pontos': ['ADMIN'],
+  '/pontos-admin': ['ADMIN'],
   '/tarifas': ['ADMIN', 'GERENTE'],
   '/antifraude': ['ADMIN', 'GERENTE'],
   '/notificacoes': ['ADMIN', 'GERENTE', 'RECEPCAO', 'FUNCIONARIO'],

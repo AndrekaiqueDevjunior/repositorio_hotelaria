@@ -722,7 +722,7 @@ export default function Dashboard() {
           </Link>
           
           <Link
-            href="/pontos"
+            href="/pontos-admin"
             className="flex flex-col items-center gap-2 p-4 bg-yellow-50 rounded-xl hover:bg-yellow-100 transition-all"
           >
             <span className="text-2xl">🎯</span>

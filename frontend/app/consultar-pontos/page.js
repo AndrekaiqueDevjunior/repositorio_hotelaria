@@ -330,14 +330,7 @@ export default function ConsultarPontos() {
     }
   }, [cpf])
 
-  const rewards = useMemo(() => {
-    if (!apiRewards.length) return rewardDefaults
-
-    const apiSlugs = new Set(apiRewards.map((reward) => reward.slug))
-    const missingDefaults = rewardDefaults.filter((reward) => !apiSlugs.has(reward.slug))
-
-    return [...apiRewards, ...missingDefaults]
-  }, [apiRewards])
+  const rewards = apiRewards
 
   return (
     <main className="points-page">

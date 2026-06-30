@@ -251,3 +251,217 @@ async def creditar_bonus_cupom_no_checkout(
         "pontos": pontos_bonus if result.get("success") else 0,
         "transacao": result,
     }
+
+
+# ---------------------------------------------------------------------------
+# Promo de lancamento: primeiros N clientes (CPFs distintos) que fizerem
+# check-out dentro da validade ganham X pontos, uma unica vez por cliente.
+# Configuravel em ConfiguracaoJornada (chave PROMO_PRIMEIROS_CLIENTES).
+# ---------------------------------------------------------------------------
+PROMO_PRIMEIROS_CHAVE = "PROMO_PRIMEIROS_CLIENTES"
+PROMO_PRIMEIROS_ORIGEM = "BONUS_PROMO_PRIMEIROS"
+
+
+def _parse_data_limite(valor: Any) -> Optional[datetime]:
+    if not valor:
+        return None
+    if isinstance(valor, datetime):
+        dt = valor
+    else:
+        try:
+            dt = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+async def obter_config_promo_primeiros(db) -> Optional[Dict[str, Any]]:
+    """Le a configuracao da promo 'primeiros N clientes' em ConfiguracaoJornada.
+
+    valor_json esperado:
+        {"pontos": 100, "vagas": 10, "data_limite": "2026-07-31T23:59:59Z"}
+    Retorna None se nao existir ou estiver inativa.
+    """
+    try:
+        config = await db.configuracaojornada.find_unique(
+            where={"chave": PROMO_PRIMEIROS_CHAVE}
+        )
+    except Exception:
+        return None
+    if not config or not getattr(config, "ativo", False):
+        return None
+    valor = getattr(config, "valorJson", None) or {}
+    if not isinstance(valor, dict):
+        return None
+    return {
+        "pontos": int(valor.get("pontos", 0) or 0),
+        "vagas": int(valor.get("vagas", 0) or 0),
+        "data_limite": _parse_data_limite(valor.get("data_limite")),
+    }
+
+
+async def creditar_bonus_promo_primeiros_no_checkout(
+    db,
+    reserva_id: int,
+    funcionario_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    config = await obter_config_promo_primeiros(db)
+    if not config:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Promo inativa ou nao configurada"}
+
+    pontos_promo = config["pontos"]
+    vagas = config["vagas"]
+    data_limite = config["data_limite"]
+    if pontos_promo <= 0 or vagas <= 0:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Promo sem pontos/vagas configurados"}
+
+    if data_limite and now_utc() > data_limite:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Promo encerrada (data limite)"}
+
+    reserva = await db.reserva.find_unique(where={"id": reserva_id})
+    if not reserva:
+        return {"success": False, "error": "Reserva nao encontrada"}
+
+    cliente_id = getattr(reserva, "clienteId", None)
+    if not cliente_id:
+        return {"success": False, "error": "Reserva sem clienteId"}
+
+    status_reserva = (getattr(reserva, "statusReserva", None) or "").upper().strip()
+    if status_reserva in {"CANCELADA", "CANCELADO", "NO_SHOW", "NO-SHOW"}:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Reserva cancelada nao gera promo"}
+
+    # Idempotencia por CPF: 1 bonus por cliente, independente de quantas reservas
+    ja_contemplado = await db.transacaopontos.find_first(
+        where={
+            "clienteId": cliente_id,
+            "tipo": "CREDITO",
+            "origem": PROMO_PRIMEIROS_ORIGEM,
+        }
+    )
+    if ja_contemplado:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cliente ja contemplado na promo"}
+
+    # Vagas: conta CPFs distintos ja contemplados
+    contemplados = await db.transacaopontos.find_many(
+        where={"tipo": "CREDITO", "origem": PROMO_PRIMEIROS_ORIGEM},
+        distinct=["clienteId"],
+    )
+    vagas_usadas = len(contemplados)
+    if vagas_usadas >= vagas:
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Vagas da promo esgotadas"}
+
+    posicao = vagas_usadas + 1
+    codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
+    motivo = f"Promo primeiros {vagas} clientes - posicao {posicao}/{vagas} - reserva {codigo}"
+    metadata = {
+        "programa": "JORNADA_REAL",
+        "origem": PROMO_PRIMEIROS_ORIGEM,
+        "promo": PROMO_PRIMEIROS_CHAVE,
+        "posicao": posicao,
+        "vagas": vagas,
+        "pontos": pontos_promo,
+        "data_limite": data_limite.isoformat() if data_limite else None,
+    }
+
+    pontos_repo = PontosRepository(db)
+    result = await pontos_repo.criar_transacao_pontos(
+        cliente_id=cliente_id,
+        pontos=pontos_promo,
+        tipo="CREDITO",
+        origem=PROMO_PRIMEIROS_ORIGEM,
+        motivo=motivo,
+        reserva_id=reserva_id,
+        funcionario_id=funcionario_id,
+        metadata=metadata,
+    )
+
+    if result.get("idempotente"):
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Bonus da promo ja creditado", "transacao": result}
+
+    return {
+        "success": bool(result.get("success")),
+        "creditado": bool(result.get("success")),
+        "pontos": pontos_promo if result.get("success") else 0,
+        "posicao": posicao,
+        "vagas": vagas,
+        "transacao": result,
+        "metadata": metadata,
+    }
+
+
+async def contar_vagas_promo_usadas(db) -> int:
+    """Conta CPFs distintos ja contemplados pela promo de primeiros clientes."""
+    contemplados = await db.transacaopontos.find_many(
+        where={"tipo": "CREDITO", "origem": PROMO_PRIMEIROS_ORIGEM},
+        distinct=["clienteId"],
+    )
+    return len(contemplados)
+
+
+async def obter_status_promo_primeiros(db) -> Dict[str, Any]:
+    """Status completo da promo para o admin (inclui config inativa)."""
+    try:
+        config = await db.configuracaojornada.find_unique(
+            where={"chave": PROMO_PRIMEIROS_CHAVE}
+        )
+    except Exception:
+        config = None
+
+    valor: Dict[str, Any] = {}
+    ativo = False
+    if config:
+        ativo = bool(getattr(config, "ativo", False))
+        raw = getattr(config, "valorJson", None)
+        if isinstance(raw, dict):
+            valor = raw
+
+    pontos = int(valor.get("pontos", 0) or 0)
+    vagas = int(valor.get("vagas", 0) or 0)
+    data_limite = _parse_data_limite(valor.get("data_limite"))
+    vagas_usadas = await contar_vagas_promo_usadas(db)
+    return {
+        "configurada": config is not None,
+        "ativo": ativo,
+        "pontos": pontos,
+        "vagas": vagas,
+        "data_limite": data_limite.isoformat() if data_limite else None,
+        "vagas_usadas": vagas_usadas,
+        "vagas_restantes": max(vagas - vagas_usadas, 0),
+        "esgotada": vagas > 0 and vagas_usadas >= vagas,
+        "encerrada_por_data": bool(data_limite and now_utc() > data_limite),
+    }
+
+
+async def salvar_config_promo_primeiros(
+    db,
+    *,
+    ativo: bool,
+    pontos: int,
+    vagas: int,
+    data_limite: Optional[str],
+) -> Dict[str, Any]:
+    """Cria/atualiza a configuracao da promo de primeiros clientes."""
+    from prisma import Json as PrismaJson
+
+    valor = {
+        "pontos": int(pontos or 0),
+        "vagas": int(vagas or 0),
+        "data_limite": data_limite or None,
+    }
+    await db.configuracaojornada.upsert(
+        where={"chave": PROMO_PRIMEIROS_CHAVE},
+        data={
+            "create": {
+                "chave": PROMO_PRIMEIROS_CHAVE,
+                "valorJson": PrismaJson(valor),
+                "ativo": bool(ativo),
+            },
+            "update": {
+                "valorJson": PrismaJson(valor),
+                "ativo": bool(ativo),
+            },
+        },
+    )
+    return await obter_status_promo_primeiros(db)
