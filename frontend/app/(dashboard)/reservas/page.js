@@ -423,6 +423,20 @@ export default function Reservas() {
     }
   }
 
+  const handleVoucher = async (reserva) => {
+    try {
+      // Gera o voucher (idempotente: se já existe retorna o existente)
+      const res = await api.post(`/vouchers/gerar/${reserva.id}`, { funcionario_id: user?.id || 1 })
+      const codigo = res.data?.data?.codigo
+      if (!codigo) throw new Error('Código de voucher não retornado')
+      // Abre PDF em nova aba
+      window.open(`/api/v1/vouchers/${codigo}/pdf`, '_blank')
+    } catch (error) {
+      const detail = error.response?.data?.detail || error.message || 'Erro ao gerar voucher'
+      toast.error(`Voucher: ${detail}`)
+    }
+  }
+
   // Funções para gestão de quartos
   const handleCreateQuarto = async () => {
     try {
@@ -1205,6 +1219,15 @@ export default function Reservas() {
                                   title="Check-in já realizado"
                                 >
                                   ✅ Check-in feito
+                                </button>
+                              )}
+                              {['CONFIRMADA', 'HOSPEDADO', 'CHECKIN_REALIZADO', 'CHECKOUT_REALIZADO', 'CHECKED_OUT'].includes(r.status) && (
+                                <button
+                                  onClick={() => handleVoucher(r)}
+                                  className="text-xs px-2 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200"
+                                  title="Gerar e imprimir voucher de hospedagem"
+                                >
+                                  🎫 Voucher
                                 </button>
                               )}
                               {podeCheckout(r) && (
