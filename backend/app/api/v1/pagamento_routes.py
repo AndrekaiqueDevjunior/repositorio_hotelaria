@@ -227,7 +227,7 @@ async def iniciar_fluxo_tef(
 async def iniciar_funcao_tef(
     payload: dict,
     service: PagamentoService = Depends(get_pagamento_service),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(get_current_active_user)
 ):
     function_id = payload.get("function_id")
     if function_id is None:
@@ -374,7 +374,7 @@ async def cancelar_pagamento_tef_nsu(
 async def resolver_pendencias_tef(
     payload: dict,
     service: PagamentoService = Depends(get_pagamento_service),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(get_current_active_user)
 ):
     confirmar_payload = payload.get("confirmar")
     if confirmar_payload is None:

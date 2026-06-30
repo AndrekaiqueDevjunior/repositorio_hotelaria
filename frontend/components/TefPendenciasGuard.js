@@ -27,7 +27,7 @@ const formatarHorario = (value) => {
   }
 }
 
-const PERFIS_PERMITIDOS = ['ADMIN', 'GERENTE']
+const PERFIS_PERMITIDOS = ['ADMIN', 'GERENTE', 'RECEPCAO', 'FUNCIONARIO']
 
 export default function TefPendenciasGuard({ user }) {
   const podeGerenciarTef = Boolean(user) && PERFIS_PERMITIDOS.includes(user.perfil)
