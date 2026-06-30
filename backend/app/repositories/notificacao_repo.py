@@ -1,6 +1,16 @@
-from typing import List, Optional
+from typing import List, Optional, Set
 from datetime import datetime, timedelta
 from app.utils.datetime_utils import now_utc
+
+# RECEPCIONISTA e RECEPCAO são aliases do mesmo perfil no sistema
+_PERFIL_ALIASES = {
+    "RECEPCIONISTA": {"RECEPCAO"},
+    "RECEPCAO": {"RECEPCIONISTA"},
+}
+
+def _expand_perfil(perfil: str) -> Set[str]:
+    """Retorna o perfil e seus aliases para queries inclusivas."""
+    return {perfil} | _PERFIL_ALIASES.get(perfil, set())
 
 class NotificacaoRepository:
     def __init__(self, db):
@@ -50,24 +60,19 @@ class NotificacaoRepository:
         or_conditions = []
         
         if perfil:
-            # Buscar notificações sem perfil (para todos)
             or_conditions.append({"perfil": None})
-            # Buscar notificações com perfil exato
-            or_conditions.append({"perfil": perfil})
-            # Buscar notificações com perfil que contém o perfil do usuário
-            or_conditions.append({"perfil": {"contains": perfil}})
+            for p in _expand_perfil(perfil):
+                or_conditions.append({"perfil": p})
+                or_conditions.append({"perfil": {"contains": p}})
         else:
-            # Se não tem perfil, busca apenas notificações sem perfil específico
             or_conditions.append({"perfil": None})
-        
+
         if or_conditions:
             where_conditions["OR"] = or_conditions
-        
-        # Filtrar não lidas
+
         if apenas_nao_lidas:
             where_conditions["lida"] = False
-        
-        # Buscar notificações
+
         notificacoes = await self.db.notificacao.find_many(
             where=where_conditions,
             order={"dataCriacao": "desc"},
@@ -81,27 +86,22 @@ class NotificacaoRepository:
     async def count_nao_lidas(self, usuario_id: int, perfil: Optional[str] = None) -> int:
         """Contar notificações não lidas"""
         where_conditions = {"lida": False}
-        
-        # Usar a mesma lógica de filtragem por perfil
+
         or_conditions = []
-        
         if perfil:
-            # Buscar notificações sem perfil (para todos)
             or_conditions.append({"perfil": None})
-            # Buscar notificações com perfil exato
-            or_conditions.append({"perfil": perfil})
-            # Buscar notificações com perfil que contém o perfil do usuário
-            or_conditions.append({"perfil": {"contains": perfil}})
+            for p in _expand_perfil(perfil):
+                or_conditions.append({"perfil": p})
+                or_conditions.append({"perfil": {"contains": p}})
         else:
-            # Se não tem perfil, busca apenas notificações sem perfil específico
             or_conditions.append({"perfil": None})
-        
+
         if or_conditions:
             where_conditions["OR"] = or_conditions
-        
+
         notificacoes = await self.db.notificacao.find_many(where=where_conditions)
         return len(notificacoes)
-    
+
     async def mark_as_read(self, notificacao_id: int) -> bool:
         """Marcar notificação como lida"""
         notificacao = await self.db.notificacao.find_unique(where={"id": notificacao_id})
@@ -112,25 +112,20 @@ class NotificacaoRepository:
             )
             return True
         return False
-    
+
     async def mark_all_as_read(self, usuario_id: int, perfil: Optional[str] = None) -> int:
         """Marcar todas as notificações como lidas"""
         where_conditions = {"lida": False}
-        
-        # Usar a mesma lógica de filtragem por perfil
+
         or_conditions = []
-        
         if perfil:
-            # Buscar notificações sem perfil (para todos)
             or_conditions.append({"perfil": None})
-            # Buscar notificações com perfil exato
-            or_conditions.append({"perfil": perfil})
-            # Buscar notificações com perfil que contém o perfil do usuário
-            or_conditions.append({"perfil": {"contains": perfil}})
+            for p in _expand_perfil(perfil):
+                or_conditions.append({"perfil": p})
+                or_conditions.append({"perfil": {"contains": p}})
         else:
-            # Se não tem perfil, busca apenas notificações sem perfil específico
             or_conditions.append({"perfil": None})
-        
+
         if or_conditions:
             where_conditions["OR"] = or_conditions
         
