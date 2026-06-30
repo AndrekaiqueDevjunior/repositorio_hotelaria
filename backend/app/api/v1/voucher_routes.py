@@ -424,11 +424,10 @@ async def listar_vouchers(
 
 @router.get("/{codigo}/pdf")
 async def gerar_pdf_voucher(codigo: str):
-    """Gerar PDF do voucher para impressão/download"""
-    
+    """Gerar PDF do voucher no formato padrao do Hotel Real"""
+
     db = get_db()
-    
-    # Buscar voucher completo
+
     voucher = await db.voucher.find_first(
         where={'codigo': codigo.upper()},
         include={
@@ -441,195 +440,158 @@ async def gerar_pdf_voucher(codigo: str):
             }
         }
     )
-    
+
     if not voucher:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Voucher {codigo} não encontrado"
-        )
-    
-    # Criar PDF em memória
+        raise HTTPException(status_code=404, detail=f"Voucher {codigo} nao encontrado")
+
+    reserva = voucher.reserva
+    hospedagem = getattr(reserva, "hospedagem", None)
+
+    # Dados da reserva
+    responsavel = getattr(reserva, "responsavelNome", None) or reserva.clienteNome or "-"
+    quarto = reserva.quartoNumero or "-"
+    tipo_suite = reserva.tipoSuite or "-"
+    obs = getattr(reserva, "observacoes", None) or "Particular"
+    valor = _valor_total_reserva(reserva)
+    valor_fmt = f"R${valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def fmt_date_only(val):
+        s = _format_datetime(val)
+        return s.split(" ")[0] if " " in s else s
+
+    def fmt_time_only(val):
+        s = _format_datetime(val)
+        parts = s.split(" ")
+        return parts[1] if len(parts) > 1 else "-"
+
+    checkin_data = fmt_date_only(reserva.checkinPrevisto)
+    checkout_data = fmt_date_only(reserva.checkoutPrevisto)
+
+    checkin_realizado_em = getattr(hospedagem, "checkinRealizadoEm", None) or getattr(voucher, "checkinRealizadoEm", None)
+    checkout_realizado_em = getattr(hospedagem, "checkoutRealizadoEm", None) or getattr(voucher, "checkoutRealizadoEm", None)
+    horario_checkin = fmt_time_only(checkin_realizado_em) if checkin_realizado_em else "-"
+
+    guest_name = reserva.clienteNome or (reserva.cliente.nomeCompleto if reserva.cliente else "-")
+
+    # --- Build PDF ---
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=2*cm, bottomMargin=2*cm)
-    
-    # Estilos
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        topMargin=2*cm, bottomMargin=2*cm,
+        leftMargin=2.5*cm, rightMargin=2.5*cm
+    )
+
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        spaceAfter=30,
-        alignment=1,  # center
-        textColor=colors.darkblue
-    )
-    
-    code_style = ParagraphStyle(
-        'CodeStyle',
-        parent=styles['Heading2'],
-        fontSize=32,
-        spaceAfter=20,
-        alignment=1,
-        textColor=colors.red,
-        borderWidth=2,
-        borderColor=colors.red,
-        borderRadius=10,
-        backColor=colors.lightgrey
-    )
-    
-    # Conteúdo do PDF
+
+    s_hotel_name = ParagraphStyle('HN', parent=styles['Normal'],
+        fontSize=16, fontName='Helvetica-Bold', spaceAfter=4)
+    s_info = ParagraphStyle('HI', parent=styles['Normal'],
+        fontSize=9, fontName='Helvetica-Bold', leading=14)
+    s_title = ParagraphStyle('TI', parent=styles['Normal'],
+        fontSize=14, fontName='Helvetica-Bold', alignment=1,
+        spaceBefore=18, spaceAfter=14)
+    s_field = ParagraphStyle('FI', parent=styles['Normal'],
+        fontSize=10, fontName='Helvetica', leading=16)
+    s_bold = ParagraphStyle('FB', parent=styles['Normal'],
+        fontSize=10, fontName='Helvetica-Bold', leading=16)
+    s_guest_label = ParagraphStyle('GL', parent=styles['Normal'],
+        fontSize=11, fontName='Helvetica-Bold', spaceBefore=14, spaceAfter=2)
+    s_guest_name = ParagraphStyle('GN', parent=styles['Normal'],
+        fontSize=11, fontName='Helvetica', spaceAfter=20)
+    s_section = ParagraphStyle('SC', parent=styles['Normal'],
+        fontSize=11, fontName='Helvetica-Bold', spaceBefore=14, spaceAfter=6)
+    s_line = ParagraphStyle('LN', parent=styles['Normal'],
+        fontSize=10, fontName='Helvetica', spaceAfter=6)
+
     story = []
-    
-    # Cabeçalho
-    story.append(Paragraph("🏨 Hotel Real - Cabo Frio", title_style))
-    story.append(Spacer(1, 20))
-    
-    # Código do Voucher (CENTRALIZADO E DESTACADO)
-    story.append(Paragraph("VOUCHER DE CONFIRMAÇÃO", styles['Heading2']))
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(f"<b>{voucher.codigo}</b>", code_style))
-    story.append(Spacer(1, 20))
-    
-    # Status
-    status_color = {
-        'EMITIDO': colors.green,
-        'CHECKIN_REALIZADO': colors.blue,
-        'FINALIZADO': colors.grey,
-        'CANCELADO': colors.red
-    }.get(voucher.status, colors.black)
-    
-    status_style = ParagraphStyle(
-        'StatusStyle',
-        parent=styles['Normal'],
-        fontSize=14,
-        alignment=1,
-        textColor=status_color,
-        borderWidth=1,
-        borderColor=status_color,
-        borderRadius=5,
-        backColor=colors.lightgrey
-    )
-    
-    story.append(Paragraph(f"<b>STATUS: {voucher.status}</b>", status_style))
-    story.append(Spacer(1, 20))
-    
-    # Dados da Reserva
-    story.append(Paragraph("DADOS DA RESERVA", styles['Heading2']))
-    story.append(Spacer(1, 12))
-    
-    reserva_data = [
-        ['Reserva feita por:', getattr(voucher.reserva, "responsavelNome", None) or "-"],
-        ['Origem:', getattr(voucher.reserva, "origem", None) or "-"],
-        ['Observacao:', getattr(voucher.reserva, "observacoes", None) or "-"],
-        ['Código Reserva:', voucher.reserva.codigoReserva],
-        ['Hóspede:', voucher.reserva.clienteNome],
-        ['Tipo Suíte:', voucher.reserva.tipoSuite],
-        ['Quarto:', voucher.reserva.quartoNumero],
-        ['Check-in:', _format_datetime(voucher.reserva.checkinPrevisto)],
-        ['Check-out:', _format_datetime(voucher.reserva.checkoutPrevisto)],
-        ['Forma de pagamento:', _forma_pagamento_reserva(voucher.reserva)],
-        ['Valor Total:', f"R$ {_valor_total_reserva(voucher.reserva):.2f}"],
+
+    # ── CABECALHO ──
+    story.append(Paragraph("Hotel Real", s_hotel_name))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("<b>Endereco:</b> Rua Enfermeiro Ricardo Sanches- 22", s_info))
+    story.append(Paragraph("<b>Bairro:</b> Braga- <b>Cidade:</b> Cabo Frio- <b>Estado:</b> RJ", s_info))
+    story.append(Paragraph("<b>CEP:</b> 28.908-040  <b>CNPJ:</b> 29.269.359/0001-40", s_info))
+    story.append(Paragraph("<b>Fone:</b> (22) 2648-5900", s_info))
+    story.append(Paragraph("<b>E-mail:</b> Contato@hotelrealcabofrio.com.br", s_info))
+
+    # ── TITULO ──
+    story.append(Paragraph("Informacoes referentes a reserva individual", s_title))
+
+    # ── DADOS DA RESERVA (layout em tabela 2 colunas para alinhar Apto a direita) ──
+    page_w = A4[0] - 5*cm  # largura util
+    col_left = page_w * 0.7
+    col_right = page_w * 0.3
+
+    row1 = [
+        Paragraph(f"<b>Reserva feita por:</b> {responsavel}", s_field),
+        Paragraph(f"<b>Apto:</b> {quarto}", s_field),
     ]
-    
-    tabela_reserva = Table(reserva_data, colWidths=[4*cm, 8*cm])
-    tabela_reserva.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.lightgrey),
-        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+    row2 = [
+        Paragraph(f"<b>Tipo de suite:</b> {tipo_suite}", s_field),
+        Paragraph("", s_field),
+    ]
+    row3 = [
+        Paragraph(f"<b>Entrada:</b> {checkin_data}    <b>Saida:</b> {checkout_data}", s_field),
+        Paragraph("", s_field),
+    ]
+    row4 = [
+        Paragraph(f"<b>Valor Total:</b> {valor_fmt}", s_field),
+        Paragraph("", s_field),
+    ]
+    row5 = [
+        Paragraph(f"<b>Obs:</b> {obs}", s_field),
+        Paragraph("", s_field),
+    ]
+    row6 = [
+        Paragraph(f"Check-in Por:                          Horario: {horario_checkin}", s_field),
+        Paragraph("", s_field),
+    ]
+
+    tbl = Table([row1, row2, row3, row4, row5, row6], colWidths=[col_left, col_right])
+    tbl.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(tbl)
+
+    # ── HOSPEDE ──
+    story.append(Paragraph("<b>Hospede:</b>", s_guest_label))
+    story.append(Paragraph(guest_name, s_guest_name))
+
+    # ── CARRO ──
+    car_data = [
+        [Paragraph("Carro  □ Sim  □ Nao", s_field)],
+        [Paragraph("Placa________________", s_field)],
+    ]
+    car_tbl = Table(car_data, colWidths=[8*cm])
+    car_tbl.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
     ]))
-    
-    story.append(tabela_reserva)
-    story.append(Spacer(1, 20))
-    
-    # Dados do Cliente
-    if voucher.reserva.cliente:
-        story.append(Paragraph("DADOS DO HÓSPEDE", styles['Heading2']))
-        story.append(Spacer(1, 12))
-        
-        cliente_data = [
-            ['Nome Completo:', voucher.reserva.cliente.nomeCompleto],
-            ['Email:', _email_contato(voucher.reserva) or "-"],
-            ['Telefone:', _telefone_contato(voucher.reserva) or "-"],
-        ]
-        
-        tabela_cliente = Table(cliente_data, colWidths=[4*cm, 8*cm])
-        tabela_cliente.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.lightblue),
-            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 8),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        
-        story.append(tabela_cliente)
-        story.append(Spacer(1, 20))
-    
-    # Controle de Check-in/Check-out
-    story.append(Paragraph("CONTROLE DE ACESSO", styles['Heading2']))
-    story.append(Spacer(1, 12))
-    
-    hospedagem = getattr(voucher.reserva, "hospedagem", None)
-    checkin_realizado = getattr(hospedagem, "checkinRealizadoEm", None) or getattr(voucher, "checkinRealizadoEm", None)
-    checkout_realizado = getattr(hospedagem, "checkoutRealizadoEm", None) or getattr(voucher, "checkoutRealizadoEm", None)
-    controle_data = [
-        ['Emissao:', _format_datetime(voucher.dataEmissao)],
-        ['Check-in:', _format_datetime(checkin_realizado) if checkin_realizado else 'Aguardando'],
-        ['Assinatura check-in:', 'Registrada' if getattr(hospedagem, "assinaturaCheckin", None) else 'Pendente'],
-        ['Check-out:', _format_datetime(checkout_realizado) if checkout_realizado else 'Aguardando'],
-        ['Assinatura check-out:', 'Registrada' if getattr(hospedagem, "assinaturaCheckout", None) else 'Pendente'],
-    ]
-    
-    tabela_controle = Table(controle_data, colWidths=[4*cm, 8*cm])
-    tabela_controle.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.lightgreen),
-        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-    ]))
-    
-    story.append(tabela_controle)
-    story.append(Spacer(1, 30))
-    
-    # Rodapé
-    story.append(Paragraph("📍 Endereço: Av. do Mar, 1234 - Cabo Frio, RJ", styles['Normal']))
-    story.append(Paragraph("📞 Telefone: (22) 1234-5678 | 📧 contato@hotelreal.com.br", styles['Normal']))
-    story.append(Spacer(1, 10))
-    story.append(Paragraph("Este voucher é válido apenas para a reserva identificada acima.", styles['Normal']))
-    story.append(Paragraph("Apresente este voucher no momento do check-in.", styles['Normal']))
-    
-    # Gerar PDF
+    story.append(car_tbl)
+
+    # ── CHECK-IN ──
+    story.append(Paragraph("<b>Check-in</b>", s_section))
+    story.append(Paragraph("Ass:______________________________________________________________________________", s_line))
+    story.append(Paragraph("Data:___/___/_____", s_line))
+    story.append(Spacer(1, 14))
+
+    # ── CHECK-OUT ──
+    story.append(Paragraph("<b>Check-out</b>", s_section))
+    story.append(Paragraph("Ass:______________________________________________________________________________", s_line))
+    story.append(Paragraph("Data:___/___/_____    Hora: ___:___", s_line))
+
     doc.build(story)
-    
-    # Preparar resposta
     buffer.seek(0)
-    
+
     return Response(
         content=buffer.getvalue(),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename=voucher_{voucher.codigo}.pdf"
-        }
+        headers={"Content-Disposition": f"inline; filename=voucher_{reserva.codigoReserva}.pdf"}
     )
