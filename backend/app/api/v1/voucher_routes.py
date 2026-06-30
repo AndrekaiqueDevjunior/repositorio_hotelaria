@@ -363,7 +363,7 @@ async def realizar_checkout(
 @router.post("/gerar/{reserva_id}")
 async def gerar_voucher_manual(
     reserva_id: int,
-    funcionario_id: int = Body(...),
+    funcionario_id: int = Body(..., embed=True),
     current_user: User = Depends(get_current_active_user)
 ):
     """
