@@ -1171,7 +1171,7 @@ export default function Reservas() {
                             <StatusBadge status={r.status} />
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-wrap gap-1 max-w-[220px]">
                               <button
                                 onClick={() => handleDetalhes(r)}
                                 className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
