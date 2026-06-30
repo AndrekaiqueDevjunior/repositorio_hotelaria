@@ -602,7 +602,8 @@ export default function Reservas() {
       toast.success('🔑 Check-in realizado com sucesso!')
       setShowCheckinModal(false)
       await loadReservas()
-      
+      await loadQuartos()
+
     } catch (error) {
       const msg = error.response?.data?.detail || 'Erro ao realizar check-in'
       toast.error(`❌ ${msg}`)
@@ -724,7 +725,13 @@ export default function Reservas() {
   }
 
   const podePagar = (reserva) => {
-    return STATUS_PODE_PAGAR.includes(reserva.status)
+    if (!STATUS_PODE_PAGAR.includes(reserva.status)) return false
+
+    // Se já existe pagamento aprovado, não mostrar opção de pagar novamente
+    const temPagamentoAprovado = (reserva.pagamentos || []).some(pg =>
+      ['PAGO', 'APROVADO', 'CONFIRMADO', 'CAPTURED', 'AUTHORIZED'].includes((pg.status || '').toUpperCase())
+    )
+    return !temPagamentoAprovado
   }
 
   const temPagamentoEmAndamento = (reserva) => {
@@ -771,7 +778,8 @@ export default function Reservas() {
       toast.success('Check-out realizado com sucesso!')
       setShowCheckoutModal(false)
       await loadReservas()
-      
+      await loadQuartos()
+
     } catch (error) {
       const msg = error.response?.data?.detail || 'Erro ao realizar check-out'
       toast.error(msg)
