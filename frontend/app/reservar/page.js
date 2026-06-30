@@ -1203,51 +1203,9 @@ export default function Reservar() {
                     <span className="text-3xl">🏦</span>
                     <div>
                       <p className="font-bold text-gray-800">Pagamento no Balcão</p>
-                      <p className="text-sm text-gray-600">Pague no check-in ou antecipadamente no balcão</p>
+                      <p className="text-sm text-gray-600">Pague no check-in</p>
                     </div>
                     {metodoPagamento === 'balcao' && <span className="ml-auto text-green-600 font-bold">✓</span>}
-                  </div>
-                </label>
-                
-                <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                  metodoPagamento === 'credit_card' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
-                }`}>
-                  <input
-                    type="radio"
-                    name="pagamento"
-                    value="credit_card"
-                    checked={metodoPagamento === 'credit_card'}
-                    onChange={(e) => setMetodoPagamento(e.target.value)}
-                    className="hidden"
-                  />
-                  <div className="flex items-center gap-4">
-                    <span className="text-3xl">💳</span>
-                    <div>
-                      <p className="font-bold text-gray-800">Cartão de Crédito</p>
-                      <p className="text-sm text-gray-600">Pague agora em até 6x</p>
-                    </div>
-                    {metodoPagamento === 'credit_card' && <span className="ml-auto text-green-600 font-bold">✓</span>}
-                  </div>
-                </label>
-                
-                <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                  metodoPagamento === 'pix' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
-                }`}>
-                  <input
-                    type="radio"
-                    name="pagamento"
-                    value="pix"
-                    checked={metodoPagamento === 'pix'}
-                    onChange={(e) => setMetodoPagamento(e.target.value)}
-                    className="hidden"
-                  />
-                  <div className="flex items-center gap-4">
-                    <span className="text-3xl">📱</span>
-                    <div>
-                      <p className="font-bold text-gray-800">PIX</p>
-                      <p className="text-sm text-gray-600">Aprovação instantânea</p>
-                    </div>
-                    {metodoPagamento === 'pix' && <span className="ml-auto text-green-600 font-bold">✓</span>}
                   </div>
                 </label>
               </div>

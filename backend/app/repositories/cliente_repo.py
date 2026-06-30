@@ -73,14 +73,27 @@ class ClienteRepository:
                 print(f"[VALIDAÇÃO CLIENTE] ⚠️ {warning}")
         
         # Criar cliente
-        novo_cliente = await self.db.cliente.create(
-            data={
-                "nomeCompleto": cliente.nome_completo,
-                "documento": ValidacaoClienteService.limpar_cpf(cliente.documento),
-                "telefone": cliente.telefone,
-                "email": cliente.email,
-            }
-        )
+        from datetime import datetime, date, time
+        data_create = {
+            "nomeCompleto": cliente.nome_completo,
+            "documento": ValidacaoClienteService.limpar_cpf(cliente.documento),
+            "telefone": cliente.telefone,
+            "email": cliente.email,
+            "nacionalidade": cliente.nacionalidade,
+            "enderecoCompleto": cliente.endereco_completo,
+            "cidade": cliente.cidade,
+            "estado": cliente.estado,
+            "pais": cliente.pais,
+            "observacoes": cliente.observacoes,
+        }
+        # dataNascimento e DateTime no Prisma; o form envia date
+        if cliente.data_nascimento:
+            dn = cliente.data_nascimento
+            data_create["dataNascimento"] = dn if isinstance(dn, datetime) else datetime.combine(dn, time.min)
+        # Remover chaves None para usar os defaults/null do schema
+        data_create = {k: v for k, v in data_create.items() if v is not None}
+
+        novo_cliente = await self.db.cliente.create(data=data_create)
         
         print(f"[VALIDAÇÃO CLIENTE] ✅ Cliente criado: {novo_cliente.nomeCompleto} (CPF: {novo_cliente.documento})")
         
@@ -165,6 +178,26 @@ class ClienteRepository:
             update_data["email"] = data["email"]
         if "status" in data:
             update_data["status"] = data["status"]
+        if "nacionalidade" in data:
+            update_data["nacionalidade"] = data["nacionalidade"]
+        if "endereco_completo" in data:
+            update_data["enderecoCompleto"] = data["endereco_completo"]
+        if "cidade" in data:
+            update_data["cidade"] = data["cidade"]
+        if "estado" in data:
+            update_data["estado"] = data["estado"]
+        if "pais" in data:
+            update_data["pais"] = data["pais"]
+        if "observacoes" in data:
+            update_data["observacoes"] = data["observacoes"]
+        if data.get("data_nascimento"):
+            from datetime import datetime, time
+            dn = data["data_nascimento"]
+            if isinstance(dn, str):
+                dn = datetime.fromisoformat(dn)
+            elif not isinstance(dn, datetime):
+                dn = datetime.combine(dn, time.min)
+            update_data["dataNascimento"] = dn
         
         # Atualizar cliente
         cliente_atualizado = await self.db.cliente.update(
@@ -213,6 +246,13 @@ class ClienteRepository:
             "documento": cliente.documento,
             "telefone": cliente.telefone,
             "email": cliente.email,
+            "data_nascimento": cliente.dataNascimento.isoformat() if getattr(cliente, "dataNascimento", None) else None,
+            "nacionalidade": getattr(cliente, "nacionalidade", None),
+            "endereco_completo": getattr(cliente, "enderecoCompleto", None),
+            "cidade": getattr(cliente, "cidade", None),
+            "estado": getattr(cliente, "estado", None),
+            "pais": getattr(cliente, "pais", None),
+            "observacoes": getattr(cliente, "observacoes", None),
             "status": cliente.status,
             "created_at": cliente.createdAt.isoformat() if cliente.createdAt else None
         }

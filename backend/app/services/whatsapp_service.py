@@ -47,7 +47,12 @@ class WhatsAppService:
         self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
         self.whatsapp_from = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
-        self.notification_number = os.getenv("WHATSAPP_NOTIFICACAO_NUMERO", "+5511968029600")
+        # Aceita um ou varios numeros separados por virgula (todos recebem as
+        # notificacoes internas do hotel: nova reserva, checkout, etc.)
+        _raw_numeros = os.getenv("WHATSAPP_NOTIFICACAO_NUMERO", "+5511968029600")
+        self.notification_numbers = [n.strip() for n in _raw_numeros.split(",") if n.strip()]
+        # Numero principal (compatibilidade com codigo existente)
+        self.notification_number = self.notification_numbers[0] if self.notification_numbers else ""
         self.enabled = os.getenv("TWILIO_WHATSAPP_ENABLED", "true").lower() == "true"
         self.frontend_base_url = (os.getenv("FRONTEND_BASE_URL") or "").strip().rstrip("/")
 
@@ -130,6 +135,25 @@ class WhatsAppService:
                 "success": False,
                 "error": str(exc),
             }
+
+    async def _send_notification(self, mensagem: str) -> Dict[str, Any]:
+        """Envia a mensagem para TODOS os numeros de notificacao configurados.
+
+        Retorna o resultado do primeiro envio (compatibilidade) e a lista
+        completa de resultados em `resultados`.
+        """
+        numeros = self.notification_numbers or ([self.notification_number] if self.notification_number else [])
+        if not numeros:
+            return {"success": False, "error": "Nenhum numero de notificacao configurado"}
+
+        resultados = []
+        for numero in numeros:
+            resultados.append(await self._send_message(numero, mensagem))
+
+        principal = resultados[0]
+        principal["resultados"] = resultados
+        principal["success"] = any(r.get("success") for r in resultados)
+        return principal
 
     async def _send_template(
         self,
@@ -261,7 +285,7 @@ class WhatsAppService:
             linhas.append(f"Comprovante: {link_comprovante}")
         if link_aprovacao:
             linhas.append(f"Confirmar: {link_aprovacao}")
-        return await self._send_message(self.notification_number, "\n".join(linhas))
+        return await self._send_notification("\n".join(linhas))
 
     async def enviar_notificacao_resgate_premio(
         self,
@@ -283,7 +307,7 @@ class WhatsAppService:
             f"Pontos usados: {pontos_usados}\n"
             f"Codigo do resgate: {codigo_resgate}"
         )
-        return await self._send_message(self.notification_number, mensagem)
+        return await self._send_notification(mensagem)
 
     async def enviar_notificacao_nova_reserva(
         self,
@@ -311,7 +335,7 @@ class WhatsAppService:
         )
         if link_reservas:
             mensagem += f"\n\nAcessar: {link_reservas}"
-        return await self._send_message(self.notification_number, mensagem)
+        return await self._send_notification(mensagem)
 
     async def enviar_notificacao_pagamento(
         self,
@@ -360,7 +384,7 @@ class WhatsAppService:
         if link_comprovantes:
             linhas.append(f"Acessar comprovantes: {link_comprovantes}")
         mensagem = "\n".join(linhas)
-        return await self._send_message(self.notification_number, mensagem)
+        return await self._send_notification(mensagem)
 
     async def enviar_notificacao_evento_reserva(
         self,
@@ -441,7 +465,7 @@ class WhatsAppService:
         if link_reservas:
             linhas.extend(["", f"Acessar: {link_reservas}"])
         mensagem = "\n".join(linhas)
-        return await self._send_message(self.notification_number, mensagem)
+        return await self._send_notification(mensagem)
 
     async def enviar_pontos_pos_checkout(
         self,
@@ -507,7 +531,7 @@ class WhatsAppService:
             linhas.append(f"Observacoes: {observacoes}")
         if link_reserva:
             linhas.extend(["", f"Acessar: {link_reserva}"])
-        return await self._send_message(self.notification_number, "\n".join(linhas))
+        return await self._send_notification("\n".join(linhas))
 
     async def enviar_confirmacao_resgate_cliente(
         self,

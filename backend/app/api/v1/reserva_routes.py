@@ -271,7 +271,7 @@ async def listar_reservas_cliente(
 async def cancelar_reserva_legacy(
     reserva_id: int,
     service: ReservaService = Depends(get_reserva_service),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(get_current_active_user)
 ):
     """[DEPRECATED] Use PATCH /{reserva_id} com status='CANCELADO'"""
     return await service.cancelar(reserva_id)

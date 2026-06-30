@@ -39,11 +39,11 @@ const isTefPaymentMode = (reserva) => normalizePaymentMode(reserva?.forma_pagame
 
 const TEF_SALE_OPTIONS = [
   {
-    id: 'menu',
-    functionId: 0,
-    title: 'Venda TEF',
-    subtitle: 'Menu geral da CliSiTef',
-    description: 'Deixa a CliSiTef conduzir a escolha da modalidade no PinPad ou na tela.'
+    id: 'pix',
+    functionId: 122,
+    title: 'Pagamento via PIX',
+    subtitle: 'Funcao 122 - QR Code',
+    description: 'Inicia uma cobranca PIX (QR Code) direto na maquina TEF.'
   },
   {
     id: 'debito',
@@ -284,7 +284,7 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
 
   const [showTefFlow, setShowTefFlow] = useState(false)
   const [showTefLaunch, setShowTefLaunch] = useState(() => isTefPaymentMode(reserva))
-  const [tefFunctionId, setTefFunctionId] = useState(0)
+  const [tefFunctionId, setTefFunctionId] = useState(122)
   const [tefSessionId, setTefSessionId] = useState(null)
   const [tefPrompt, setTefPrompt] = useState(null)
   const [tefInput, setTefInput] = useState('')
