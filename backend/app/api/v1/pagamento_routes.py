@@ -204,8 +204,8 @@ async def iniciar_fluxo_tef(
         function_id_value = int(function_id)
     except Exception:
         raise HTTPException(status_code=400, detail="function_id invalido")
-    if function_id_value not in {0, 2, 3}:
-        raise HTTPException(status_code=400, detail="function_id invalido para /tef/iniciar. Use 0, 2 ou 3")
+    if function_id_value not in {0, 2, 3, 122}:
+        raise HTTPException(status_code=400, detail="function_id invalido para /tef/iniciar. Use 0, 2, 3 ou 122 (PIX/QR Code)")
 
     cupom_fiscal, data_fiscal, hora_fiscal = _normalize_tef_fiscal_payload(payload)
 
