@@ -474,24 +474,33 @@ class NotificationService:
 
     @staticmethod
     async def notificar_checkout_pendente(db, reserva_row: Dict[str, Any]):
-        service = NotificationService(db)
-        reserva_id = int(reserva_row["id"])
-        existente = await db.notificacao.find_first(
-            where={"categoria": "checkout_pendente", "reservaId": reserva_id, "lida": False}
-        )
-        if existente:
-            return service.repo._serialize(existente)
-        quarto = reserva_row.get("quarto_numero")
-        cliente = reserva_row.get("cliente_nome") or "Cliente"
-        return await service.criar_notificacao(
-            titulo="Check-out pendente",
-            mensagem=f"Quarto {quarto} | {cliente}",
-            tipo="warning",
-            categoria="checkout_pendente",
-            perfil="RECEPCAO",
-            reserva_id=reserva_id,
-            url_acao=f"/reservas?id={reserva_id}",
-        )
+        # A persistencia da notificacao e um efeito colateral nao-critico: o
+        # alerta de check-out pendente deve continuar funcionando mesmo que a
+        # tabela `notificacoes` esteja indisponivel/dessincronizada. Por isso
+        # qualquer falha aqui e engolida (igual `criar_notificacao` ja faz),
+        # para nao derrubar o endpoint que apenas lista os check-outs vencidos.
+        try:
+            service = NotificationService(db)
+            reserva_id = int(reserva_row["id"])
+            existente = await db.notificacao.find_first(
+                where={"categoria": "checkout_pendente", "reservaId": reserva_id, "lida": False}
+            )
+            if existente:
+                return service.repo._serialize(existente)
+            quarto = reserva_row.get("quarto_numero")
+            cliente = reserva_row.get("cliente_nome") or "Cliente"
+            return await service.criar_notificacao(
+                titulo="Check-out pendente",
+                mensagem=f"Quarto {quarto} | {cliente}",
+                tipo="warning",
+                categoria="checkout_pendente",
+                perfil="RECEPCAO",
+                reserva_id=reserva_id,
+                url_acao=f"/reservas?id={reserva_id}",
+            )
+        except Exception as e:
+            print(f"[NOTIFICAÇÃO] Erro ao notificar check-out pendente: {e}")
+            return None
     
     @staticmethod
     async def notificar_reserva_cancelada(db, reserva):
