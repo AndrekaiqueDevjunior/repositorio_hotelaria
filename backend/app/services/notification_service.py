@@ -291,7 +291,24 @@ class NotificationService:
                 )
             except Exception as wa_error:
                 print(f"[WHATSAPP] Erro ao notificar cliente sobre nova reserva: {wa_error}")
-            
+
+            # WhatsApp de alerta para o(s) numero(s) do hotel/admin.
+            # Fica aqui (e nao em cada chamador) para garantir que todo fluxo
+            # que notifica o cliente tambem avisa o admin, sem depender de
+            # cada caller lembrar de parear as duas chamadas.
+            try:
+                await get_whatsapp_service().enviar_notificacao_nova_reserva_admin(
+                    codigo_reserva=codigo_reserva,
+                    cliente_nome=cliente_nome,
+                    quarto_numero=quarto_numero,
+                    tipo_suite=tipo_suite,
+                    checkin_previsto=checkin_str or "-",
+                    checkout_previsto=checkout_str or "-",
+                    valor_total=float(valor_total or 0),
+                )
+            except Exception as wa_admin_error:
+                print(f"[WHATSAPP] Erro ao notificar admin sobre nova reserva: {wa_admin_error}")
+
             print(f"[NOTIFICAÇÃO] Notificação de nova reserva #{reserva_id} criada com sucesso")
             
         except Exception as e:

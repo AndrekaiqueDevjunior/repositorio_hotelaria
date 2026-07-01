@@ -693,8 +693,9 @@ async def criar_reserva_publica(
             reserva_criada = await reserva_repo.get_by_id(reserva_criada["id"])
             reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
             if reserva_model:
+                # O alerta WhatsApp para o admin ja acontece dentro de
+                # notificar_nova_reserva (garantido para todo caller).
                 await NotificationService.notificar_nova_reserva(db, reserva_model)
-                await reserva_repo.notificar_whatsapp_por_id(reserva_criada["id"], "criada")
 
         return {
             "success": True,

@@ -333,8 +333,9 @@ class ReservaRepository:
                 where={"id": nova_reserva.id},
                 include=self._default_include(),
             )
+            # O alerta WhatsApp para o admin ja acontece dentro de
+            # notificar_nova_reserva (garantido para todo caller, nao so este).
             await NotificationService.notificar_nova_reserva(self.db, reserva_notificacao or nova_reserva)
-            await self._notificar_whatsapp_reserva(reserva_notificacao or nova_reserva, "criada")
 
         try:
             from app.services.indicacao_service import IndicacaoService

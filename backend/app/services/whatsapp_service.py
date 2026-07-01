@@ -386,6 +386,46 @@ class WhatsAppService:
         mensagem = "\n".join(linhas)
         return await self._send_notification(mensagem)
 
+    async def enviar_notificacao_nova_reserva_admin(
+        self,
+        codigo_reserva: str,
+        cliente_nome: str,
+        quarto_numero: str,
+        tipo_suite: Optional[str],
+        checkin_previsto: str,
+        checkout_previsto: str,
+        valor_total: float,
+    ) -> Dict[str, Any]:
+        """Alerta interno de nova reserva para os numeros de notificacao do hotel.
+
+        Mensagem de texto livre business-initiated fora da janela de 24h cai em
+        undelivered (erro Twilio 63016) no WhatsApp Business real -- confirmado
+        via Twilio API que todos os alertas recentes para o numero do hotel
+        estavam nesse estado. Reaproveita o Content Template ja aprovado pela
+        Meta 'reserva_confirmada' (TEMPLATE_RESERVA_CONFIRMADA), que so tem 5
+        variaveis fixas (codigo/checkin/checkout/suite/valor) -- nome do
+        cliente e numero do quarto sao combinados nos slots existentes.
+        """
+        numeros = self.notification_numbers or ([self.notification_number] if self.notification_number else [])
+        if not numeros:
+            return {"success": False, "error": "Nenhum numero de notificacao configurado"}
+
+        variables = {
+            "1": f"{codigo_reserva} - {cliente_nome}",
+            "2": checkin_previsto,
+            "3": checkout_previsto,
+            "4": f"{tipo_suite or '-'} (Quarto {quarto_numero or '-'})",
+            "5": f"{float(valor_total or 0):.2f}",
+        }
+        resultados = [
+            await self._send_template(numero, self.TEMPLATE_RESERVA_CONFIRMADA, variables)
+            for numero in numeros
+        ]
+        principal = resultados[0]
+        principal["resultados"] = resultados
+        principal["success"] = any(r.get("success") for r in resultados)
+        return principal
+
     async def enviar_notificacao_evento_reserva(
         self,
         evento: str,
@@ -413,6 +453,17 @@ class WhatsAppService:
         updated_at: Optional[str] = None,
         criado_por: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if evento == "criada":
+            return await self.enviar_notificacao_nova_reserva_admin(
+                codigo_reserva=codigo_reserva,
+                cliente_nome=cliente_nome,
+                quarto_numero=quarto_numero,
+                tipo_suite=tipo_suite,
+                checkin_previsto=checkin_previsto,
+                checkout_previsto=checkout_previsto,
+                valor_total=valor_total,
+            )
+
         linhas = [
             f"Reserva {evento}",
             "",
