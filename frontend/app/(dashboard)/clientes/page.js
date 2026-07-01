@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { api } from '../../../lib/api'
+import { useAuth } from '../../../contexts/AuthContext'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 
@@ -32,6 +33,8 @@ const formatErrorMessage = (error) => {
 }
 
 export default function Clientes() {
+  const { user } = useAuth()
+  const isAdmin = user?.perfil === 'ADMIN'
   const [clientes, setClientes] = useState([])
   const [funcionarios, setFuncionarios] = useState([])
   const [showForm, setShowForm] = useState(false)
@@ -112,14 +115,14 @@ export default function Clientes() {
   useEffect(() => {
     if (activeTab === 'clientes') {
       loadClientes()
-    } else if (activeTab === 'funcionarios') {
+    } else if (activeTab === 'funcionarios' && isAdmin) {
       loadFuncionarios()
     } else if (activeTab === 'admin-pontos') {
       loadClientesPontos()
     } else if (activeTab === 'antifraude') {
       loadHistoricoAntifraude()
     }
-  }, [activeTab, pagination.page, filters])
+  }, [activeTab, pagination.page, filters, isAdmin])
 
   const loadClientesPontos = async () => {
     try {
@@ -665,11 +668,11 @@ export default function Clientes() {
       <div className="glass-card p-1">
         <nav className="flex flex-col sm:flex-row gap-1" role="tablist">
           {[
-            { id: 'funcionarios', label: 'Funcionários', icon: '👔', count: funcionarios.length },
+            isAdmin && { id: 'funcionarios', label: 'Funcionários', icon: '👔', count: funcionarios.length },
             { id: 'clientes', label: 'Clientes', icon: '🧳', count: clientes.length },
             { id: 'admin-pontos', label: 'Admin Pontos', icon: '🎯', count: clientesPontos.length },
             { id: 'antifraude', label: 'Antifraude', icon: '🛡️', count: historicoAntifraude.length },
-          ].map((tab) => (
+          ].filter(Boolean).map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -1342,7 +1345,7 @@ export default function Clientes() {
         </>
       )}
 
-      {activeTab === 'funcionarios' && (
+      {activeTab === 'funcionarios' && isAdmin && (
         <>
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-semibold text-real-blue">Funcionários</h2>

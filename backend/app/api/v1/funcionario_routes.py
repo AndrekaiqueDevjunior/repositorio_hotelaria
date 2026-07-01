@@ -48,6 +48,10 @@ async def listar_funcionarios(
     offset: int = Query(0, ge=0)
 ):
     """Listar todos os funcionários"""
+    perfil = _perfil_atual(current_user)
+    if perfil != "ADMIN":
+        raise HTTPException(status_code=403, detail="Apenas ADMIN pode listar funcionários")
+
     try:
         funcionarios = await db.funcionario.find_many(
             take=limit,
@@ -98,6 +102,10 @@ async def obter_funcionario(
     current_user: dict = Depends(get_current_user)
 ):
     """Obter funcionário por ID"""
+    perfil = _perfil_atual(current_user)
+    if perfil != "ADMIN":
+        raise HTTPException(status_code=403, detail="Apenas ADMIN pode consultar funcionários")
+
     try:
         funcionario = await db.funcionario.find_unique(where={'id': funcionario_id})
         
