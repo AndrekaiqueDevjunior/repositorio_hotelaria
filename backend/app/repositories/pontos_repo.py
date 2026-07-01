@@ -1,6 +1,6 @@
 import json
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from prisma import Client
 from fastapi import HTTPException
 from app.utils.datetime_utils import to_utc
@@ -388,6 +388,20 @@ class PontosRepository:
                     usuario_pontos_id,
                 )
                 if not usuario_rows:
+                    # 48h e o teto maximo de tentativas (RF01/RF02): se passou
+                    # desse prazo e ainda nao da pra resolver (inconsistencia
+                    # de dados), escalona para "falha" em vez de ficar preso
+                    # em pendente para sempre.
+                    criado_em = to_utc(transacao.get("created_at"))
+                    if criado_em and (agora_ref - criado_em) > timedelta(hours=48):
+                        await transaction.execute_raw(
+                            """
+                            UPDATE transacoes_pontos
+                            SET status = 'falha'
+                            WHERE id = $1
+                            """,
+                            transacao_id,
+                        )
                     continue
 
                 saldo_anterior = int(usuario_rows[0]["saldo"] or 0)

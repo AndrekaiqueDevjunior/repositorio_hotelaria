@@ -639,7 +639,18 @@ class ReservaRepository:
                 "statusReserva": "CANCELADO"
             }
         )
-        
+
+        # Pontos agora sao creditados na hora do checkout (nao mais so apos
+        # 48h), entao um cancelamento pode acontecer depois que os pontos ja
+        # viraram saldo disponivel -- estorna automaticamente. Nunca bloqueia
+        # o cancelamento se o estorno falhar (ex: cliente ja resgatou).
+        estorno_pontos = {"success": True, "estornado": False}
+        try:
+            from app.services.pontos_checkout_service import estornar_pontos_cancelamento
+            estorno_pontos = await estornar_pontos_cancelamento(self.db, reserva_id)
+        except Exception as e:
+            print(f"[PONTOS ESTORNO] Erro ao estornar pontos da reserva {reserva_id} cancelada: {e}")
+
         # CORREÃ‡ÃƒO CRÃTICA: Liberar quarto independente do status da reserva
         # Se estava HOSPEDADO, CONFIRMADA ou qualquer outro status ativo, liberar o quarto
         if reserva.statusReserva in STATUS_RESERVA_HOSPEDADO | {"CONFIRMADA"} | STATUS_RESERVA_PENDENTES:
@@ -677,7 +688,8 @@ class ReservaRepository:
             "total_estornado": sum(e["valor"] for e in estornos_processados),
             "total_pendente": sum(e["valor"] for e in estornos_pendentes)
         }
-        
+        resultado["estorno_pontos"] = estorno_pontos
+
         return resultado
     
     async def _pode_processar_estorno(self, pagamento) -> Dict[str, Any]:

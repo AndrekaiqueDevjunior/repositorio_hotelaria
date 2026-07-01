@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -183,7 +184,7 @@ class FakeDbCheckout(FakeDbPontos):
 
 
 @pytest.mark.asyncio
-async def test_checkout_cria_pontos_pendentes_com_liberar_em():
+async def test_checkout_credita_pontos_imediatamente():
     from datetime import datetime, timezone
 
     db = FakeDbCheckout()
@@ -192,16 +193,56 @@ async def test_checkout_cria_pontos_pendentes_com_liberar_em():
     resultado = await creditar_rp_no_checkout(db, reserva_id=10, checkout_datetime=checkout_em)
 
     assert resultado["success"] is True
-    assert resultado["status"] == "pendente"
+    assert resultado["status"] == "liberado"
+    assert resultado["liberar_em"] is None
     assert resultado["pontos"] == 4
     assert resultado["pontos_base"] == 4
     assert resultado["pontos_bonus_nivel"] == 0
-    assert resultado["liberar_em"].startswith("2026-05-03T10:00:00")
+    assert db._tx.transacaopontos.created_data["status"] == "liberado"
+    metadata = json.loads(db._tx.transacaopontos.created_data["metadata"])
+    assert metadata["pontos_base"] == 4
+    assert metadata["bonus_percentual"] == 0
+    assert metadata["pontos_bonus_nivel"] == 0
+    assert metadata["pontos_total"] == 4
+
+
+@pytest.mark.asyncio
+async def test_checkout_cai_para_pendente_se_credito_imediato_falhar():
+    from datetime import datetime, timezone
+
+    class FakeTxFalhaPrimeiraVez(FakeTx):
+        def __init__(self):
+            super().__init__()
+            self.tentativas = 0
+
+        async def query_raw(self, *args):
+            sql = args[0]
+            if "FROM usuarios_pontos" in sql:
+                self.tentativas += 1
+                if self.tentativas == 1:
+                    raise RuntimeError("falha simulada de integracao")
+                return [{"id": 7, "saldo": 72}]
+            return []
+
+    class FakeDbCheckoutFalha(FakeDbCheckout):
+        def __init__(self):
+            super().__init__()
+            self._tx = FakeTxFalhaPrimeiraVez()
+
+        def tx(self):
+            return self._tx
+
+    db = FakeDbCheckoutFalha()
+    checkout_em = datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+    resultado = await creditar_rp_no_checkout(db, reserva_id=10, checkout_datetime=checkout_em)
+
+    assert resultado["success"] is True
+    assert resultado["status"] == "pendente"
+    assert resultado["liberar_em"] is not None
     assert db._tx.transacaopontos.created_data["status"] == "pendente"
-    assert db._tx.transacaopontos.created_data["metadata"]["pontos_base"] == 4
-    assert db._tx.transacaopontos.created_data["metadata"]["bonus_percentual"] == 0
-    assert db._tx.transacaopontos.created_data["metadata"]["pontos_bonus_nivel"] == 0
-    assert db._tx.transacaopontos.created_data["metadata"]["pontos_total"] == 4
+    metadata = json.loads(db._tx.transacaopontos.created_data["metadata"])
+    assert metadata["erro_credito_imediato"]
 
 
 @pytest.mark.asyncio
@@ -219,7 +260,7 @@ async def test_checkout_aplica_bonus_nivel_experiencia():
     assert resultado["pontos"] == 5
     assert resultado["nivel"]["nome"] == "EXPERIENCIA"
     assert db._tx.transacaopontos.created_data["pontos"] == 5
-    metadata = db._tx.transacaopontos.created_data["metadata"]
+    metadata = json.loads(db._tx.transacaopontos.created_data["metadata"])
     assert metadata["programa"] == "JORNADA_REAL"
     assert metadata["origem"] == "CHECKOUT"
     assert metadata["pontos_base"] == 4

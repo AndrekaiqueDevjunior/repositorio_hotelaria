@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.repositories.pontos_repo import PontosRepository
@@ -123,7 +123,6 @@ async def creditar_rp_no_checkout(
         motivo = f"{motivo} - Bonus nivel {nivel.get('nome')} +{bonus_percentual}% ({pontos_base}+{pontos_bonus_nivel})"
     motivo = f"{motivo} ({motivo_calculo})"
 
-    liberar_em = checkout_dt + timedelta(hours=48)
     bonus_percentual = float(nivel.get("bonus_percentual") or 0)
     metadata = {
         "programa": "JORNADA_REAL",
@@ -144,18 +143,48 @@ async def creditar_rp_no_checkout(
         },
     }
     pontos_repo = PontosRepository(db)
-    result = await pontos_repo.criar_transacao_pontos(
-        cliente_id=cliente_id,
-        pontos=pontos,
-        tipo="CREDITO",
-        origem="CHECKOUT",
-        motivo=motivo,
-        reserva_id=reserva_id,
-        funcionario_id=funcionario_id,
-        status="pendente",
-        liberar_em=liberar_em,
-        metadata=metadata,
-    )
+
+    # Caminho normal: credita na hora (status "liberado"). 48h so entra em
+    # cena como teto de seguranca se o credito imediato falhar por algum
+    # motivo excepcional (falha de integracao, inconsistencia de dados) --
+    # nesse caso cai como "pendente" com liberar_em=agora, para o job
+    # liberar_pontos_pendentes (a cada 15min) reprocessar o quanto antes.
+    status_final = "liberado"
+    liberar_em_final: Optional[datetime] = None
+    try:
+        result = await pontos_repo.criar_transacao_pontos(
+            cliente_id=cliente_id,
+            pontos=pontos,
+            tipo="CREDITO",
+            origem="CHECKOUT",
+            motivo=motivo,
+            reserva_id=reserva_id,
+            funcionario_id=funcionario_id,
+            status="liberado",
+            metadata=metadata,
+        )
+    except Exception as exc_imediato:
+        print(f"[PONTOS CHECKOUT] Falha ao creditar pontos imediatamente da reserva {reserva_id}: {exc_imediato}")
+        try:
+            status_final = "pendente"
+            liberar_em_final = now_utc()
+            metadata_fallback = dict(metadata)
+            metadata_fallback["erro_credito_imediato"] = str(exc_imediato)
+            result = await pontos_repo.criar_transacao_pontos(
+                cliente_id=cliente_id,
+                pontos=pontos,
+                tipo="CREDITO",
+                origem="CHECKOUT",
+                motivo=motivo,
+                reserva_id=reserva_id,
+                funcionario_id=funcionario_id,
+                status="pendente",
+                liberar_em=liberar_em_final,
+                metadata=metadata_fallback,
+            )
+        except Exception as exc_fallback:
+            print(f"[PONTOS CHECKOUT] Falha tambem ao registrar pontos pendentes da reserva {reserva_id}: {exc_fallback}")
+            return {"success": False, "error": f"Falha ao processar pontos da reserva: {exc_fallback}"}
 
     if result.get("idempotente"):
         return {
@@ -173,10 +202,69 @@ async def creditar_rp_no_checkout(
         "pontos_base": pontos_base,
         "pontos_bonus_nivel": pontos_bonus_nivel,
         "nivel": nivel,
-        "status": "pendente",
-        "liberar_em": liberar_em.isoformat(),
+        "status": status_final,
+        "liberar_em": liberar_em_final.isoformat() if liberar_em_final else None,
         "transacao": result,
         "metadata": metadata,
+    }
+
+
+async def estornar_pontos_cancelamento(db, reserva_id: int) -> Dict[str, Any]:
+    """Estorna pontos ja liberados de uma reserva cancelada.
+
+    Com o credito de pontos agora acontecendo na hora do checkout (em vez de
+    so depois de 48h), fica mais provavel que uma reserva seja cancelada
+    depois que os pontos dela ja viraram saldo disponivel -- entao o
+    cancelamento precisa desfazer esse credito explicitamente. Nunca levanta
+    excecao: se o debito falhar (ex: cliente ja resgatou os pontos e o saldo
+    ficaria negativo), o cancelamento da reserva nao deve travar por isso.
+    """
+    transacoes = await db.transacaopontos.find_many(
+        where={
+            "reservaId": reserva_id,
+            "tipo": {"in": ["CREDITO", "AJUSTE"]},
+            "status": "liberado",
+            "pontos": {"gt": 0},
+        }
+    )
+    if not transacoes:
+        return {"success": True, "estornado": False, "motivo": "Sem pontos liberados para estornar"}
+
+    pontos_repo = PontosRepository(db)
+    estornados = []
+    pendentes = []
+    for transacao in transacoes:
+        origem_estorno = f"ESTORNO_{transacao.origem}"
+        ja_estornado = await db.transacaopontos.find_first(
+            where={
+                "reservaId": reserva_id,
+                "tipo": "ESTORNO",
+                "origem": origem_estorno,
+                "motivo": {"contains": f"#{transacao.id}"},
+            }
+        )
+        if ja_estornado:
+            continue
+        try:
+            result = await pontos_repo.criar_transacao_pontos(
+                cliente_id=transacao.clienteId,
+                pontos=-int(transacao.pontos),
+                tipo="ESTORNO",
+                origem=origem_estorno,
+                motivo=f"Estorno da transacao #{transacao.id} - reserva {reserva_id} cancelada",
+                reserva_id=reserva_id,
+                status="estornado",
+            )
+            estornados.append({"transacao_original_id": transacao.id, **result})
+        except Exception as exc:
+            print(f"[PONTOS ESTORNO] Falha ao estornar transacao {transacao.id} da reserva {reserva_id}: {exc}")
+            pendentes.append({"transacao_original_id": transacao.id, "erro": str(exc)})
+
+    return {
+        "success": True,
+        "estornado": bool(estornados),
+        "transacoes_estornadas": estornados,
+        "transacoes_pendentes": pendentes,
     }
 
 
