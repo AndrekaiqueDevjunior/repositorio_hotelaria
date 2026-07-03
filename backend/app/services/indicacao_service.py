@@ -231,21 +231,25 @@ class IndicacaoService:
                 usuario_pontos = usuario_pontos_rows[0]
                 usuario_pontos_id = int(usuario_pontos["id"])
                 saldo_anterior = int(usuario_pontos["saldo"])
+                pontos_nivel_anterior = int(usuario_pontos.get("pontos_nivel") or 0)
             else:
                 novo_usuario_pontos = await transaction.usuariopontos.create(
                     data={"clienteId": cliente_indicador_id, "saldo": 0}
                 )
                 usuario_pontos_id = novo_usuario_pontos.id
                 saldo_anterior = 0
+                pontos_nivel_anterior = 0
 
             saldo_posterior = saldo_anterior + PONTOS_CONVITE_REAL
+            pontos_nivel_posterior = pontos_nivel_anterior + PONTOS_CONVITE_REAL
             await transaction.execute_raw(
                 """
                 UPDATE usuarios_pontos
-                SET saldo = $1, updated_at = NOW()
-                WHERE id = $2
+                SET saldo = $1, pontos_nivel = $2, updated_at = NOW()
+                WHERE id = $3
                 """,
                 saldo_posterior,
+                pontos_nivel_posterior,
                 usuario_pontos_id,
             )
 

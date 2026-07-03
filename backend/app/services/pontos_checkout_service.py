@@ -63,7 +63,7 @@ async def creditar_rp_no_checkout(
     checkout_dt = checkout_datetime or getattr(reserva, "checkoutReal", None) or now_utc()
     regra = await buscar_regra_ativa(db, tipo_suite, checkout_dt.date())
 
-    pontos, detalhe = RealPointsService.calcular_rp_oficial(tipo_suite, num_diarias, 0)
+    pontos_base, detalhe = RealPointsService.calcular_rp_oficial(tipo_suite, num_diarias, 0)
     motivo_calculo = f"Tabela oficial Jornada Real: {detalhe}"
 
     # A migration 013 formaliza as regras do banco com diarias_base = 1.
@@ -73,21 +73,29 @@ async def creditar_rp_no_checkout(
         diarias_base = int(getattr(regra, "diariasBase", 1) or 1)
         rp_por_base = int(getattr(regra, "rpPorBase", 0) or 0)
         if diarias_base == 1 and rp_por_base > 0:
-            pontos = num_diarias * rp_por_base
+            pontos_base = num_diarias * rp_por_base
             motivo_calculo = (
                 f"Regra ativa pontos_regras: {num_diarias} diaria(s) "
-                f"x {rp_por_base} RP = {pontos} RP"
+                f"x {rp_por_base} RP = {pontos_base} RP"
             )
 
-    if pontos <= 0:
+    if pontos_base <= 0:
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Sem pontos a creditar"}
 
     programa_service = ProgramaPontosService(db)
     nivel = await programa_service.obter_nivel_efetivo_cliente(cliente_id)
-    calculo_nivel = programa_service.aplicar_bonus_nivel(pontos, nivel)
-    pontos_base = calculo_nivel["pontos_base"]
-    pontos_bonus_nivel = calculo_nivel["pontos_bonus_nivel"]
-    pontos = calculo_nivel["pontos_total"]
+    pontos_n_antes = await programa_service.obter_total_pontos_nivel(cliente_id)
+
+    # Pontos N = sempre a pontuacao-base da suite, sem multiplicador. Pontos R
+    # recebem o multiplicador do nivel atual do cliente (1x/2x/4x).
+    calculo_nivel = programa_service.aplicar_bonus_nivel(pontos_base, nivel)
+    pontos_n = calculo_nivel["pontos_n"]
+    multiplicador_r = calculo_nivel["multiplicador_r"]
+    pontos_r = calculo_nivel["pontos_r"]
+
+    pontos_n_depois = pontos_n_antes + pontos_n
+    nivel_depois = await programa_service.nivel_por_total_pontos_nivel(pontos_n_depois)
+    progrediu_nivel = int(nivel_depois.get("codigo") or 0) > int(nivel.get("codigo") or 0)
 
     transacao_existente = await db.transacaopontos.find_first(
         where={
@@ -115,27 +123,33 @@ async def creditar_rp_no_checkout(
 
     codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
     temporada = getattr(regra, "temporada", None) if regra else None
-    motivo = f"Checkout reserva {codigo} - Suite {tipo_suite} - {num_diarias} diarias - {pontos} RP"
+    motivo = f"Checkout reserva {codigo} - Suite {tipo_suite} - {num_diarias} diarias - {pontos_n}N + {pontos_r}R"
     if temporada:
         motivo = f"{motivo} - Temporada {temporada}"
-    if pontos_bonus_nivel > 0:
-        bonus_percentual = nivel.get("bonus_percentual") or 0
-        motivo = f"{motivo} - Bonus nivel {nivel.get('nome')} +{bonus_percentual}% ({pontos_base}+{pontos_bonus_nivel})"
+    if multiplicador_r > 1:
+        motivo = f"{motivo} - Multiplicador nivel {nivel.get('nome')} {multiplicador_r:g}x sobre Pontos R"
     motivo = f"{motivo} ({motivo_calculo})"
 
-    bonus_percentual = float(nivel.get("bonus_percentual") or 0)
     metadata = {
         "programa": "JORNADA_REAL",
         "origem": "CHECKOUT",
         "pontos_base": pontos_base,
-        "bonus_percentual": bonus_percentual,
-        "pontos_bonus_nivel": pontos_bonus_nivel,
-        "pontos_total": pontos,
-        "nivel": {
+        "pontos_n": pontos_n,
+        "multiplicador_r": multiplicador_r,
+        "pontos_r": pontos_r,
+        "pontos_n_antes": pontos_n_antes,
+        "pontos_n_depois": pontos_n_depois,
+        "nivel_antes": {
             "codigo": nivel.get("codigo"),
             "nome": nivel.get("nome"),
             "pontos_minimos": nivel.get("pontos_minimos"),
         },
+        "nivel_depois": {
+            "codigo": nivel_depois.get("codigo"),
+            "nome": nivel_depois.get("nome"),
+            "pontos_minimos": nivel_depois.get("pontos_minimos"),
+        },
+        "progrediu_nivel": progrediu_nivel,
         "calculo": {
             "suite_tipo": tipo_suite,
             "num_diarias": num_diarias,
@@ -154,7 +168,8 @@ async def creditar_rp_no_checkout(
     try:
         result = await pontos_repo.criar_transacao_pontos(
             cliente_id=cliente_id,
-            pontos=pontos,
+            pontos=pontos_r,
+            pontos_nivel=pontos_n,
             tipo="CREDITO",
             origem="CHECKOUT",
             motivo=motivo,
@@ -172,7 +187,8 @@ async def creditar_rp_no_checkout(
             metadata_fallback["erro_credito_imediato"] = str(exc_imediato)
             result = await pontos_repo.criar_transacao_pontos(
                 cliente_id=cliente_id,
-                pontos=pontos,
+                pontos=pontos_r,
+                pontos_nivel=pontos_n,
                 tipo="CREDITO",
                 origem="CHECKOUT",
                 motivo=motivo,
@@ -198,10 +214,14 @@ async def creditar_rp_no_checkout(
     return {
         "success": bool(result.get("success")),
         "creditado": bool(result.get("success")),
-        "pontos": pontos if result.get("success") else 0,
+        "pontos": pontos_r if result.get("success") else 0,
+        "pontos_n": pontos_n if result.get("success") else 0,
+        "pontos_r": pontos_r if result.get("success") else 0,
         "pontos_base": pontos_base,
-        "pontos_bonus_nivel": pontos_bonus_nivel,
+        "multiplicador_r": multiplicador_r,
         "nivel": nivel,
+        "nivel_depois": nivel_depois,
+        "progrediu_nivel": progrediu_nivel,
         "status": status_final,
         "liberar_em": liberar_em_final.isoformat() if liberar_em_final else None,
         "transacao": result,

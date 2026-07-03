@@ -184,9 +184,8 @@ async def test_pontos_liberados_disparam_whatsapp_pos_checkout(monkeypatch):
         "origem": "CHECKOUT",
         "pontos": 60,
         "saldo_posterior": 132,
-        "metadata": {"bonus_percentual": 20, "pontos_bonus_nivel": 10},
+        "metadata": {"multiplicador_r": 2, "pontos_n": 30, "pontos_r": 60},
     })
 
     assert fake_whatsapp.calls[0]["pontos_ganhos_checkout"] == 60
-    assert fake_whatsapp.calls[0]["bonus_percentual"] == 20
     assert any(call[2] == "pontos_pos_checkout_whatsapp" for call in db.execute_calls)

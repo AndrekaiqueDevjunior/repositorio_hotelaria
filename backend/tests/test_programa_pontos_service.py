@@ -25,7 +25,7 @@ class FakeModel:
 class FakeDbPrograma:
     def __init__(self):
         self.cliente = FakeModel(find_unique_result=SimpleNamespace(id=1, nivelFidelidade=0))
-        self.usuariopontos = FakeModel(find_unique_result=SimpleNamespace(saldo=72))
+        self.usuariopontos = FakeModel(find_unique_result=SimpleNamespace(saldo=72, pontosNivel=72))
         self.premio = FakeModel(find_first_result=SimpleNamespace(id=10, nome="iPhone 16", precoEmPontos=90, categoria="Tecnologia Real"))
         self.query_calls = 0
 
@@ -42,22 +42,48 @@ class FakeDbPrograma:
         return [{"total": 2}]
 
 
-def test_aplica_bonus_nivel_experiencia():
+def test_aplica_bonus_nivel_nao_multiplica_pontos_n():
+    # CT01/CT03/CT05: Pontos N sao sempre a pontuacao-base, nunca multiplicados.
+    for codigo in (0, 1, 2):
+        nivel = ProgramaPontosService.nivel_por_codigo(codigo)
+        calculo = ProgramaPontosService.aplicar_bonus_nivel(3, nivel)
+        assert calculo["pontos_n"] == 3
+
+
+def test_aplica_bonus_nivel_1x_no_nivel_inicial():
+    # CT01/CT02: nivel 1 (0-49N) nao multiplica Pontos R.
+    nivel = ProgramaPontosService.nivel_por_codigo(0)
+
+    luxo = ProgramaPontosService.aplicar_bonus_nivel(1, nivel)
+    real = ProgramaPontosService.aplicar_bonus_nivel(3, nivel)
+
+    assert luxo["multiplicador_r"] == 1
+    assert luxo["pontos_n"] == 1 and luxo["pontos_r"] == 1
+    assert real["pontos_n"] == 3 and real["pontos_r"] == 3
+
+
+def test_aplica_bonus_nivel_2x_no_segundo_nivel():
+    # CT03/CT04: nivel 2 (50-89N) dobra Pontos R.
     nivel = ProgramaPontosService.nivel_por_codigo(1)
-    calculo = ProgramaPontosService.aplicar_bonus_nivel(5, nivel)
 
-    assert calculo["pontos_base"] == 5
-    assert calculo["pontos_bonus_nivel"] == 1
-    assert calculo["pontos_total"] == 6
+    luxo = ProgramaPontosService.aplicar_bonus_nivel(1, nivel)
+    real = ProgramaPontosService.aplicar_bonus_nivel(3, nivel)
+
+    assert luxo["multiplicador_r"] == 2
+    assert luxo["pontos_n"] == 1 and luxo["pontos_r"] == 2
+    assert real["pontos_n"] == 3 and real["pontos_r"] == 6
 
 
-def test_aplica_bonus_nivel_real():
+def test_aplica_bonus_nivel_4x_no_terceiro_nivel():
+    # CT05/CT06/CT10: nivel 3 (90N+) aplica 4x sobre Pontos R, nunca sobre N.
     nivel = ProgramaPontosService.nivel_por_codigo(2)
-    calculo = ProgramaPontosService.aplicar_bonus_nivel(5, nivel)
 
-    assert calculo["pontos_base"] == 5
-    assert calculo["pontos_bonus_nivel"] == 2
-    assert calculo["pontos_total"] == 7
+    luxo = ProgramaPontosService.aplicar_bonus_nivel(1, nivel)
+    real = ProgramaPontosService.aplicar_bonus_nivel(3, nivel)
+
+    assert luxo["multiplicador_r"] == 4
+    assert luxo["pontos_n"] == 1 and luxo["pontos_r"] == 4
+    assert real["pontos_n"] == 3 and real["pontos_r"] == 12
 
 
 @pytest.mark.asyncio
@@ -178,7 +204,7 @@ class FakeDbCheckout(FakeDbPontos):
             codigoReserva="R10",
         ))
         self.cliente = FakeModelValue(SimpleNamespace(id=1, nivelFidelidade=0))
-        self.usuariopontos = FakeModelValue(SimpleNamespace(saldo=saldo_nivel))
+        self.usuariopontos = FakeModelValue(SimpleNamespace(saldo=saldo_nivel, pontosNivel=saldo_nivel))
         self.pontosregra = FakeModelValue(SimpleNamespace(diariasBase=1, rpPorBase=2, temporada=None))
         self.transacaopontos = FakeTransacaoModel()
 
@@ -197,13 +223,15 @@ async def test_checkout_credita_pontos_imediatamente():
     assert resultado["liberar_em"] is None
     assert resultado["pontos"] == 4
     assert resultado["pontos_base"] == 4
-    assert resultado["pontos_bonus_nivel"] == 0
+    assert resultado["pontos_n"] == 4
+    assert resultado["pontos_r"] == 4
+    assert resultado["multiplicador_r"] == 1
     assert db._tx.transacaopontos.created_data["status"] == "liberado"
     metadata = json.loads(db._tx.transacaopontos.created_data["metadata"])
     assert metadata["pontos_base"] == 4
-    assert metadata["bonus_percentual"] == 0
-    assert metadata["pontos_bonus_nivel"] == 0
-    assert metadata["pontos_total"] == 4
+    assert metadata["pontos_n"] == 4
+    assert metadata["multiplicador_r"] == 1
+    assert metadata["pontos_r"] == 4
 
 
 @pytest.mark.asyncio
@@ -256,18 +284,23 @@ async def test_checkout_aplica_bonus_nivel_experiencia():
 
     assert resultado["success"] is True
     assert resultado["pontos_base"] == 4
-    assert resultado["pontos_bonus_nivel"] == 1
-    assert resultado["pontos"] == 5
+    assert resultado["pontos_n"] == 4
+    assert resultado["pontos_r"] == 8
+    assert resultado["multiplicador_r"] == 2
+    assert resultado["pontos"] == 8
     assert resultado["nivel"]["nome"] == "EXPERIENCIA"
-    assert db._tx.transacaopontos.created_data["pontos"] == 5
+    assert resultado["progrediu_nivel"] is False
+    assert db._tx.transacaopontos.created_data["pontos"] == 8
     metadata = json.loads(db._tx.transacaopontos.created_data["metadata"])
     assert metadata["programa"] == "JORNADA_REAL"
     assert metadata["origem"] == "CHECKOUT"
     assert metadata["pontos_base"] == 4
-    assert metadata["bonus_percentual"] == 20
-    assert metadata["pontos_bonus_nivel"] == 1
-    assert metadata["pontos_total"] == 5
-    assert metadata["nivel"]["nome"] == "EXPERIENCIA"
+    assert metadata["pontos_n"] == 4
+    assert metadata["multiplicador_r"] == 2
+    assert metadata["pontos_r"] == 8
+    assert metadata["pontos_n_antes"] == 72
+    assert metadata["pontos_n_depois"] == 76
+    assert metadata["nivel_antes"]["nome"] == "EXPERIENCIA"
     assert metadata["calculo"]["suite_tipo"] == "MASTER"
 
 

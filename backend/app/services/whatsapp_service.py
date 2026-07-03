@@ -526,15 +526,16 @@ class WhatsAppService:
         codigo_reserva: str,
         saldo_atual: int,
         pontos_ganhos_checkout: int = 0,
-        bonus_percentual: Optional[float] = None,
-        pontos_bonus_nivel: Optional[int] = None,
         faltam_pontos_para_proximo_premio: Optional[int] = None,
         proximo_premio_nome: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not cliente_telefone:
             return {"success": False, "error": "Cliente sem telefone"}
 
-        pontos_total_liberados = int(pontos_ganhos_checkout or 0) + int(pontos_bonus_nivel or 0)
+        # pontos_ganhos_checkout ja e o total de Pontos R creditados na
+        # transacao (pontuacao-base * multiplicador do nivel), nao soma bonus
+        # separado por cima para evitar contar o multiplicador em dobro.
+        pontos_total_liberados = int(pontos_ganhos_checkout or 0)
         faltam = int(faltam_pontos_para_proximo_premio) if faltam_pontos_para_proximo_premio is not None else 0
         premio_nome = proximo_premio_nome or "seu próximo prêmio"
 

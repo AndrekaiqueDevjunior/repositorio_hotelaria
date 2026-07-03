@@ -172,20 +172,26 @@ class PontosRepository:
         funcionario_id: int = None,
         status: str = "liberado",
         liberar_em: Optional[datetime] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        pontos_nivel: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Criar transação de pontos completa com todos os relacionamentos
-        
+
         Args:
             cliente_id: ID do cliente
-            pontos: Quantidade de pontos (pode ser negativo para débito)
+            pontos: Quantidade de Pontos R (saldo resgatavel); pode ser negativo para debito
             tipo: CREDITO, DEBITO, AJUSTE, ESTORNO
             origem: RESERVA, AJUSTE_MANUAL, CONVITE, etc
             motivo: Descrição da transação
             reserva_id: ID da reserva relacionada (se aplicável)
             funcionario_id: ID do funcionário que fez ajuste (se aplicável)
             metadata: Dados estruturados para auditoria da transação
+            pontos_nivel: Quantidade de Pontos N (nivel) a creditar, quando
+                difere de `pontos` (ex.: reserva com multiplicador de nivel
+                aplicado so aos Pontos R). Se None, usa `pontos` quando
+                positivo (comportamento legado para origens sem multiplicador).
+                Nunca reduz Pontos N, mesmo se um valor negativo for passado.
         """
         # VALIDAÇÃO DE SEGURANÇA: Limites de pontos
         if pontos == 0:
@@ -244,12 +250,14 @@ class PontosRepository:
                 usuario_pontos_data = usuario_pontos_raw[0]
                 usuario_pontos_id = int(usuario_pontos_data["id"])
                 saldo_anterior = int(usuario_pontos_data["saldo"])
+                pontos_nivel_anterior = int(usuario_pontos_data.get("pontos_nivel") or 0)
             else:
                 usuario_pontos = await transaction.usuariopontos.create(
                     data={"clienteId": cliente_id, "saldo": 0}
                 )
                 usuario_pontos_id = usuario_pontos.id
                 saldo_anterior = 0
+                pontos_nivel_anterior = 0
 
             if reserva_id and origem_norm in ORIGENS_IDEMPOTENTES_POR_RESERVA:
                 transacao_existente = await transaction.transacaopontos.find_first(
@@ -277,14 +285,24 @@ class PontosRepository:
             if saldo_posterior < 0:
                 raise ValueError("Saldo insuficiente para esta transação")
 
+            # Pontos N (nivel) so crescem em creditos aplicados; resgate/debito
+            # nunca reduz este valor, pois representa progressao permanente.
+            pontos_nivel_delta = pontos if pontos_nivel is None else pontos_nivel
+            pontos_nivel_posterior = (
+                pontos_nivel_anterior + pontos_nivel_delta
+                if aplicar_saldo and pontos_nivel_delta > 0
+                else pontos_nivel_anterior
+            )
+
             if aplicar_saldo:
                 await transaction.execute_raw(
                     """
                     UPDATE usuarios_pontos
-                    SET saldo = $1, updated_at = NOW()
-                    WHERE id = $2
+                    SET saldo = $1, pontos_nivel = $2, updated_at = NOW()
+                    WHERE id = $3
                     """,
                     saldo_posterior,
+                    pontos_nivel_posterior,
                     usuario_pontos_id,
                 )
 
@@ -317,6 +335,27 @@ class PontosRepository:
                 "liberar_em": liberar_em.isoformat() if liberar_em else None,
                 "metadata": metadata,
             }
+
+    @staticmethod
+    def _extrair_pontos_n_metadata(metadata_raw: Any, default: int) -> int:
+        """Le pontos_n gravado na metadata da transacao (reserva com nivel/multiplicador).
+
+        Origens sem multiplicador (cupom, promo, indicacao, ajuste manual) nao
+        gravam pontos_n na metadata; nesses casos Pontos N == Pontos R, entao
+        cai no `default` (o proprio valor de pontos da transacao).
+        """
+        metadata = metadata_raw
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, ValueError):
+                metadata = None
+        if isinstance(metadata, dict) and metadata.get("pontos_n") is not None:
+            try:
+                return int(metadata["pontos_n"])
+            except (TypeError, ValueError):
+                return default
+        return default
 
     async def liberar_pontos_pendentes(
         self,
@@ -406,14 +445,18 @@ class PontosRepository:
 
                 saldo_anterior = int(usuario_rows[0]["saldo"] or 0)
                 saldo_posterior = saldo_anterior + pontos
+                pontos_nivel_anterior = int(usuario_rows[0].get("pontos_nivel") or 0)
+                pontos_n_credito = self._extrair_pontos_n_metadata(transacao.get("metadata"), default=pontos)
+                pontos_nivel_posterior = pontos_nivel_anterior + max(0, pontos_n_credito)
 
                 await transaction.execute_raw(
                     """
                     UPDATE usuarios_pontos
-                    SET saldo = $1, updated_at = NOW()
-                    WHERE id = $2
+                    SET saldo = $1, pontos_nivel = $2, updated_at = NOW()
+                    WHERE id = $3
                     """,
                     saldo_posterior,
+                    pontos_nivel_posterior,
                     usuario_pontos_id,
                 )
                 await transaction.execute_raw(
@@ -499,8 +542,6 @@ class PontosRepository:
                 codigo_reserva=row.get("codigo_reserva") or str(reserva_id or transacao_id),
                 saldo_atual=int(transacao.get("saldo_posterior") or programa.get("saldo_atual") or 0),
                 pontos_ganhos_checkout=int(transacao.get("pontos") or 0),
-                bonus_percentual=metadata.get("bonus_percentual") if isinstance(metadata, dict) else None,
-                pontos_bonus_nivel=metadata.get("pontos_bonus_nivel") if isinstance(metadata, dict) else None,
                 faltam_pontos_para_proximo_premio=programa.get("faltam_pontos_para_proximo_premio"),
                 proximo_premio_nome=proximo_premio.get("nome"),
             )

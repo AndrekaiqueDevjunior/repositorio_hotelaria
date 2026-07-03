@@ -250,14 +250,15 @@ model OperacaoAntifraude {
 }
 
 model UsuarioPontos {
-  id         Int               @id @default(autoincrement())
-  clienteId  Int               @unique @map("cliente_id")
-  saldo      Int               @default(0)
-  createdAt  DateTime          @default(now()) @map("created_at")
-  updatedAt  DateTime          @updatedAt @map("updated_at")
-  historico  HistoricoPontos[]
-  transacoes TransacaoPontos[]
-  cliente    Cliente           @relation(fields: [clienteId], references: [id])
+  id          Int               @id @default(autoincrement())
+  clienteId   Int               @unique @map("cliente_id")
+  saldo       Int               @default(0)
+  pontosNivel Int               @default(0) @map("pontos_nivel")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  historico   HistoricoPontos[]
+  transacoes  TransacaoPontos[]
+  cliente     Cliente           @relation(fields: [clienteId], references: [id])
 
   @@map("usuarios_pontos")
 }

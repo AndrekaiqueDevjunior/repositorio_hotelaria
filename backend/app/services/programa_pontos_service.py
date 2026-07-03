@@ -32,15 +32,15 @@ NIVEIS_FIDELIDADE = [
         "codigo": NIVEL_EXPERIENCIA,
         "nome": "EXPERIENCIA",
         "pontos_minimos": PONTOS_EXPERIENCIA,
-        "bonus_percentual": 20,
-        "multiplicador": 1.2,
+        "bonus_percentual": 100,
+        "multiplicador": 2.0,
     },
     {
         "codigo": NIVEL_REAL,
         "nome": "REAL",
         "pontos_minimos": PONTOS_REAL,
-        "bonus_percentual": 40,
-        "multiplicador": 1.4,
+        "bonus_percentual": 300,
+        "multiplicador": 4.0,
     },
 ]
 
@@ -69,22 +69,28 @@ class ProgramaPontosService:
 
     @staticmethod
     def aplicar_bonus_nivel(pontos_base: int, nivel: Dict[str, Any]) -> Dict[str, Any]:
+        """Calcula Pontos N e Pontos R de uma reserva a partir da pontuacao-base da suite.
+
+        Pontos N (nivel) sao sempre a pontuacao-base, sem multiplicador. Somente
+        Pontos R (resgate) recebem o multiplicador do nivel atual do cliente.
+        """
         pontos_base = int(pontos_base or 0)
+        multiplicador = float(nivel.get("multiplicador") or 1.0)
         if pontos_base <= 0:
             return {
                 "pontos_base": 0,
-                "pontos_bonus_nivel": 0,
-                "pontos_total": 0,
+                "pontos_n": 0,
+                "multiplicador_r": multiplicador,
+                "pontos_r": 0,
                 "nivel": nivel,
             }
 
-        multiplicador = float(nivel.get("multiplicador") or 1.0)
-        pontos_total = math.ceil(pontos_base * multiplicador)
-        pontos_bonus = max(0, pontos_total - pontos_base)
+        pontos_r = math.ceil(pontos_base * multiplicador)
         return {
             "pontos_base": pontos_base,
-            "pontos_bonus_nivel": pontos_bonus,
-            "pontos_total": pontos_total,
+            "pontos_n": pontos_base,
+            "multiplicador_r": multiplicador,
+            "pontos_r": pontos_r,
             "nivel": nivel,
         }
 
@@ -93,7 +99,7 @@ class ProgramaPontosService:
         if not cliente:
             return self.nivel_por_codigo(0)
 
-        total_pontos_nivel = await self._obter_saldo(cliente_id)
+        total_pontos_nivel = await self._obter_pontos_nivel(cliente_id)
         niveis = await self._obter_niveis_configurados()
         nivel_por_pontos = self._nivel_por_pontos_configurado(total_pontos_nivel, niveis)
         nivel_cadastrado = self._nivel_por_codigo_configurado(getattr(cliente, "nivelFidelidade", 0), niveis)
@@ -108,7 +114,7 @@ class ProgramaPontosService:
             return {"success": False, "error": "Cliente nao encontrado"}
 
         saldo_atual = await self._obter_saldo(cliente_id)
-        total_pontos_nivel = saldo_atual
+        total_pontos_nivel = await self._obter_pontos_nivel(cliente_id)
         total_resgatado = await self._calcular_total_resgatado(cliente_id)
 
         niveis = await self._obter_niveis_configurados()
@@ -160,18 +166,18 @@ class ProgramaPontosService:
             return 0
         return int(getattr(usuario_pontos, "saldo", 0) or 0)
 
-    async def _calcular_total_pontos_nivel(self, cliente_id: int) -> int:
-        rows = await self.db.query_raw(
-            """
-            SELECT COALESCE(SUM(pontos), 0) AS total
-            FROM transacoes_pontos
-            WHERE cliente_id = $1
-              AND pontos > 0
-              AND COALESCE(status, 'liberado') = 'liberado'
-            """,
-            cliente_id,
-        )
-        return int(rows[0]["total"] or 0) if rows else 0
+    async def _obter_pontos_nivel(self, cliente_id: int) -> int:
+        usuario_pontos = await self.db.usuariopontos.find_unique(where={"clienteId": cliente_id})
+        if not usuario_pontos:
+            return 0
+        return int(getattr(usuario_pontos, "pontosNivel", 0) or 0)
+
+    async def obter_total_pontos_nivel(self, cliente_id: int) -> int:
+        return await self._obter_pontos_nivel(cliente_id)
+
+    async def nivel_por_total_pontos_nivel(self, total_pontos_nivel: int) -> Dict[str, Any]:
+        niveis = await self._obter_niveis_configurados()
+        return self._nivel_por_pontos_configurado(total_pontos_nivel, niveis)
 
     async def _calcular_total_resgatado(self, cliente_id: int) -> int:
         rows = await self.db.query_raw(

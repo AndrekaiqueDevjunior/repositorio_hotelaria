@@ -11,6 +11,7 @@ import {
   Gift,
   Info,
   LockKeyhole,
+  MapPin,
   ShieldCheck,
   Sparkles,
   Ticket,
@@ -104,6 +105,8 @@ const formatDate = (value) => {
 
   return date.toLocaleDateString('pt-BR')
 }
+
+const ONBOARDING_STORAGE_KEY = 'jr_resgate_onboarding_visto'
 
 const withCpfParam = (href, cpf) => {
   if (!cpf) return href
@@ -234,6 +237,26 @@ export default function ResgateDosPremios() {
   const [isLoadingPrizes, setIsLoadingPrizes] = useState(true)
   const [isRedeeming, setIsRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+
+  useEffect(() => {
+    try {
+      if (!window.localStorage.getItem(ONBOARDING_STORAGE_KEY)) {
+        setShowOnboarding(true)
+      }
+    } catch (error) {
+      setShowOnboarding(true)
+    }
+  }, [])
+
+  const dismissOnboarding = () => {
+    setShowOnboarding(false)
+    try {
+      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, '1')
+    } catch (error) {
+      // localStorage indisponivel (modo privado etc) -- sem problema, so reaparece na proxima visita
+    }
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -348,6 +371,57 @@ export default function ResgateDosPremios() {
         </div>
       )}
 
+      {showOnboarding && !redeemedPrize && (
+        <section className="onboarding-backdrop" role="dialog" aria-modal="true" aria-label="Como funciona o resgate">
+          <article className="onboarding-card">
+            <p className="onboarding-kicker">
+              <Crown size={15} strokeWidth={1.9} />
+              Como funciona o resgate
+              <Crown size={15} strokeWidth={1.9} />
+            </p>
+
+            <ol className="onboarding-steps">
+              <li>
+                <span className="onboarding-step-icon">
+                  <Sparkles size={19} strokeWidth={1.8} />
+                </span>
+                <div>
+                  <h3>1. Escolha e confirme</h3>
+                  <p>Escolha um prêmio disponível e confirme o resgate com seus pontos acumulados.</p>
+                </div>
+              </li>
+              <li>
+                <span className="onboarding-step-icon">
+                  <Ticket size={19} strokeWidth={1.8} />
+                </span>
+                <div>
+                  <h3>2. Receba seu código</h3>
+                  <p>Um código exclusivo é gerado na hora, aparece nesta tela e também chega no seu WhatsApp.</p>
+                </div>
+              </li>
+              <li>
+                <span className="onboarding-step-icon">
+                  <MapPin size={19} strokeWidth={1.8} />
+                </span>
+                <div>
+                  <h3>3. Apresente na recepção</h3>
+                  <p>Mostre o código na recepção do Hotel Real para retirar seu prêmio. Ele é pessoal, intransferível e tem validade.</p>
+                </div>
+              </li>
+            </ol>
+
+            <p className="onboarding-note">
+              <ShieldCheck size={16} strokeWidth={1.9} />
+              O código é gerado e validado com segurança pelo hotel — não compartilhe com ninguém.
+            </p>
+
+            <button type="button" className="onboarding-confirm" onClick={dismissOnboarding}>
+              Entendi
+            </button>
+          </article>
+        </section>
+      )}
+
       {!redeemedPrize && (
         <section className="redeem-shell">
           <header className="redeem-header">
@@ -361,6 +435,15 @@ export default function ResgateDosPremios() {
             </button>
 
             <img src="/images/logo-jornada-real.png" alt="Hotel Real Cabo Frio" />
+
+            <button
+              type="button"
+              className="back-button"
+              aria-label="Como funciona o resgate"
+              onClick={() => setShowOnboarding(true)}
+            >
+              <Info size={20} strokeWidth={1.9} />
+            </button>
           </header>
 
           <div className="title-area">
@@ -622,6 +705,124 @@ export default function ResgateDosPremios() {
           background: linear-gradient(180deg, #ffe07a 0%, #d9981b 58%, #aa6405 100%);
           font-family: 'Cinzel', serif;
           font-size: 0.62rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          cursor: pointer;
+        }
+
+        .onboarding-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          display: grid;
+          place-items: center;
+          padding: 18px;
+          background: rgba(2, 3, 2, 0.82);
+          backdrop-filter: blur(6px);
+          animation: successFade 220ms ease-out both;
+        }
+
+        .onboarding-card {
+          width: min(100%, 380px);
+          max-height: calc(100svh - 24px);
+          overflow-y: auto;
+          padding: 18px 16px;
+          color: #fff4df;
+          border: 1.3px solid rgba(246, 198, 55, 0.72);
+          border-radius: 14px;
+          background:
+            linear-gradient(180deg, rgba(22, 15, 4, 0.97), rgba(5, 5, 4, 0.98)),
+            #050403;
+          box-shadow: 0 22px 60px rgba(0, 0, 0, 0.72), inset 0 0 30px rgba(246, 198, 55, 0.06);
+          text-align: left;
+          animation: successRise 300ms cubic-bezier(0.2, 0.9, 0.2, 1.1) both;
+        }
+
+        .onboarding-kicker {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          margin: 0 0 14px;
+          color: var(--gold);
+          font-family: 'Cinzel', serif;
+          font-size: 0.8rem;
+          font-weight: 700;
+          text-align: center;
+          text-transform: uppercase;
+        }
+
+        .onboarding-steps {
+          display: grid;
+          gap: 12px;
+          margin: 0 0 14px;
+          padding: 0;
+          list-style: none;
+        }
+
+        .onboarding-steps li {
+          display: grid;
+          grid-template-columns: 34px 1fr;
+          gap: 10px;
+          align-items: start;
+        }
+
+        .onboarding-step-icon {
+          display: grid;
+          place-items: center;
+          width: 34px;
+          height: 34px;
+          color: var(--gold);
+          border: 1px solid rgba(246, 198, 55, 0.55);
+          border-radius: 50%;
+          background: rgba(246, 198, 55, 0.08);
+        }
+
+        .onboarding-steps h3 {
+          margin: 0 0 2px;
+          color: var(--gold-soft);
+          font-family: 'Cinzel', serif;
+          font-size: 0.82rem;
+        }
+
+        .onboarding-steps p {
+          margin: 0;
+          color: #fff5df;
+          font-family: Arial, sans-serif;
+          font-size: 0.78rem;
+          line-height: 1.32;
+        }
+
+        .onboarding-note {
+          display: grid;
+          grid-template-columns: 20px 1fr;
+          gap: 8px;
+          align-items: start;
+          margin: 0 0 16px;
+          padding: 9px 10px;
+          color: #fff0d0;
+          border: 1px solid rgba(246, 198, 55, 0.4);
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.4);
+          font-family: Arial, sans-serif;
+          font-size: 0.7rem;
+          line-height: 1.28;
+        }
+
+        .onboarding-note svg {
+          color: var(--gold);
+        }
+
+        .onboarding-confirm {
+          width: 100%;
+          min-height: 44px;
+          color: #130d04;
+          border: 1px solid #ffe799;
+          border-radius: 10px;
+          background: linear-gradient(180deg, #ffe07a 0%, #d9981b 58%, #aa6405 100%);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+          font-family: 'Cinzel', serif;
+          font-size: 0.82rem;
           font-weight: 800;
           text-transform: uppercase;
           cursor: pointer;
