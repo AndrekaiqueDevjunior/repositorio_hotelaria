@@ -12,6 +12,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from prisma import Client
+from prisma.errors import UniqueViolationError
 
 from app.utils.datetime_utils import now_utc, to_utc
 
@@ -117,6 +118,49 @@ class PremioRepositoryAtomic:
         premio_id: int,
         cliente_id: int,
         funcionario_id: int = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        cliente_nome = "Cliente"
+        cliente_telefone = None
+        cliente_endereco = None
+        codigo_resgate = None
+        premio_nome = None
+        custo = 0
+
+        # Sem isso, um duplo-clique ou retry de rede no endpoint de resgate
+        # debitava pontos duas vezes (mesmo com os locks de saldo/estoque
+        # abaixo, que so garantem consistencia, nao deduplicacao). Fast-path
+        # fora da transacao; a unique constraint em idempotency_key e quem
+        # fecha a corrida de verdade (ver except UniqueViolationError abaixo).
+        if idempotency_key:
+            existente = await self._buscar_resgate_por_idempotency_key(self.db, idempotency_key)
+            if existente:
+                return existente
+
+        try:
+            return await self._resgatar_atomic_tx(
+                premio_id=premio_id,
+                cliente_id=cliente_id,
+                funcionario_id=funcionario_id,
+                idempotency_key=idempotency_key,
+            )
+        except UniqueViolationError:
+            # Duas requisicoes com a mesma idempotency_key correram e uma
+            # ganhou a corrida na constraint unica -- devolve o resgate dela
+            # em vez de propagar o erro (a transacao perdedora ja fez
+            # rollback completo do debito de saldo/estoque desta tentativa).
+            if idempotency_key:
+                existente = await self._buscar_resgate_por_idempotency_key(self.db, idempotency_key)
+                if existente:
+                    return existente
+            raise
+
+    async def _resgatar_atomic_tx(
+        self,
+        premio_id: int,
+        cliente_id: int,
+        funcionario_id: Optional[int],
+        idempotency_key: Optional[str],
     ) -> Dict[str, Any]:
         cliente_nome = "Cliente"
         cliente_telefone = None
@@ -260,6 +304,7 @@ class PremioRepositoryAtomic:
                     "codigoStatus": CODIGO_STATUS_ACTIVE,
                     "expiraEm": expira_em,
                     "funcionarioId": funcionario_id,
+                    "idempotencyKey": idempotency_key,
                 }
             )
 
@@ -784,6 +829,59 @@ class PremioRepositoryAtomic:
             "estoque": _row_get(premio, "estoque"),
             "imagem_url": _row_get(premio, "imagemUrl", _row_get(premio, "imagem_url")),
             "created_at": _row_get(premio, "createdAt").isoformat() if _row_get(premio, "createdAt") else None,
+        }
+
+    async def _buscar_resgate_por_idempotency_key(self, conn, idempotency_key: str) -> Optional[Dict[str, Any]]:
+        """Busca um resgate ja criado com esta chave, para devolver como
+        replay seguro (mesma logica de pagamento_repo.get_by_idempotency_key).
+        """
+        rows = await conn.query_raw(
+            """
+            SELECT rp.id AS resgate_id,
+                   rp.status,
+                   rp.pontos_usados,
+                   p.id AS premio_id,
+                   p.nome AS premio_nome,
+                   p.categoria AS premio_categoria,
+                   p.preco_em_pontos,
+                   COALESCE(cr.codigo, rp.codigo_resgate) AS codigo,
+                   COALESCE(cr.valido_ate, rp.expira_em) AS valido_ate
+            FROM resgates_premios rp
+            JOIN premios p ON p.id = rp.premio_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM codigos_resgate cr
+                WHERE cr.resgate_id = rp.id
+                ORDER BY cr.created_at DESC, cr.id DESC
+                LIMIT 1
+            ) cr ON TRUE
+            WHERE rp.idempotency_key = $1
+            LIMIT 1
+            """,
+            idempotency_key,
+        )
+        if not rows:
+            return None
+
+        row = rows[0]
+        valido_ate = to_utc(row.get("valido_ate"))
+        return {
+            "success": True,
+            "idempotente": True,
+            "resgate_id": int(row["resgate_id"]),
+            "status": row.get("status"),
+            "premio": {
+                "id": int(row["premio_id"]),
+                "nome": row.get("premio_nome"),
+                "categoria": row.get("premio_categoria"),
+                "preco_em_pontos": int(row.get("preco_em_pontos") or 0),
+            },
+            "pontos_usados": int(row.get("pontos_usados") or 0),
+            "codigo": row.get("codigo"),
+            "codigo_resgate": row.get("codigo"),
+            "codigo_status": CODIGO_STATUS_ACTIVE,
+            "valido_ate": valido_ate.isoformat() if valido_ate else None,
+            "expira_em": valido_ate.isoformat() if valido_ate else None,
+            "mensagem": "Resgate ja processado anteriormente (idempotencia).",
         }
 
     async def _gerar_codigo_resgate(self, transaction) -> str:

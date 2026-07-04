@@ -34,6 +34,10 @@ celery_app.conf.update(
             "task": "jornada.liberar_pontos_pendentes",
             "schedule": crontab(minute="*/15"),
         },
+        "jornada-retentar-estornos-pendentes": {
+            "task": "jornada.retentar_estornos_pendentes",
+            "schedule": crontab(minute="*/30"),
+        },
         "jornada-invalidar-codigos-vencidos": {
             "task": "jornada.invalidar_codigos_vencidos",
             "schedule": crontab(minute=0),

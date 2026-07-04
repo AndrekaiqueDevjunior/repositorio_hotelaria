@@ -598,10 +598,11 @@ class PagamentoService:
         """Processar webhook da Cielo"""
         try:
             pagamento = await self.pagamento_repo.get_by_payment_id(webhook_data.payment_id)
-            
+
             # Atualizar status baseado no webhook
             novo_status = "APROVADO" if webhook_data.status == "APPROVED" else "RECUSADO"
-            
+            status_anterior = pagamento.get("status")
+
             pagamento_atualizado = await self.pagamento_repo.update_status(
                 pagamento["id"],
                 novo_status
@@ -613,7 +614,10 @@ class PagamentoService:
                 db = next(get_db())
                 
                 # Obter dados completos da reserva para notificaÃ§Ã£o
-                if self.reserva_repo:
+                # Gateways de pagamento reentregam o mesmo webhook (at-least-once);
+                # so notifica se o status realmente mudou, para nao duplicar o
+                # alerta a cada reentrega do mesmo evento.
+                if self.reserva_repo and status_anterior != novo_status:
                     reserva = await self.reserva_repo.get_by_id(pagamento["reserva_id"])
                     
                     if novo_status == "APROVADO":

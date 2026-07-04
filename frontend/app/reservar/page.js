@@ -334,6 +334,8 @@ export default function Reservar() {
   
   // Criar reserva
   const criarReserva = async () => {
+    if (loading) return
+
     if (!isCustomerAuthenticated) {
       toast.warning('Autentique seu cadastro por WhatsApp antes de confirmar a reserva')
       setStep(3)
@@ -382,7 +384,13 @@ export default function Reservar() {
         customer_auth_token: customerAuth.accessToken
       }
       
-      const response = await api.post('/public/reservas', payload)
+      const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `reserva-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+      const response = await api.post('/public/reservas', payload, {
+        headers: { 'Idempotency-Key': idempotencyKey }
+      })
       
       const data = response.data
       

@@ -31,6 +31,16 @@ def liberar_pontos_pendentes_task(limit: int = 100):
     return asyncio.run(_run_with_db(_fn))
 
 
+@celery_app.task(name="jornada.retentar_estornos_pendentes")
+def retentar_estornos_pendentes_task(limit: int = 100):
+    from app.services.pontos_checkout_service import retentar_estornos_pendentes
+
+    async def _fn(db):
+        return await retentar_estornos_pendentes(db, limit=limit)
+
+    return asyncio.run(_run_with_db(_fn))
+
+
 async def _invalidar_codigos_vencidos(db) -> Any:
     from app.repositories.cupom_repo import CupomRepository
     from app.repositories.premio_repo_atomic import PremioRepositoryAtomic

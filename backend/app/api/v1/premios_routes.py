@@ -1,7 +1,7 @@
 """
 Rotas para o sistema de prêmios/recompensas.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from typing import List, Optional
 from pydantic import BaseModel
 from app.schemas.premio_schema import (
@@ -158,7 +158,8 @@ async def resgatar_premio_por_id(
     premio_id: int,
     payload: ResgatePremioPorIdRequest,
     current_user: User = Depends(get_current_active_user),
-    _rate_limit: None = Depends(rate_limit_strict)
+    _rate_limit: None = Depends(rate_limit_strict),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """Resgatar premio pelo endpoint padronizado da Jornada Real."""
     db = get_db()
@@ -167,6 +168,7 @@ async def resgatar_premio_por_id(
         premio_id=premio_id,
         cliente_id=payload.cliente_id,
         funcionario_id=current_user.id if hasattr(current_user, "id") else None,
+        idempotency_key=idempotency_key,
     )
     if not resultado.get("success"):
         raise HTTPException(status_code=400, detail=resultado.get("error"))
@@ -221,7 +223,8 @@ async def atualizar_premio(
 async def resgatar_premio_publico(
     request: ResgatePremioPublicoRequest,
     http_request: Request,
-    _rate_limit: None = Depends(rate_limit_strict)
+    _rate_limit: None = Depends(rate_limit_strict),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """
     Resgate público de prêmio (sem autenticação).
@@ -260,7 +263,8 @@ async def resgatar_premio_publico(
         resultado = await repo.resgatar_atomic(
             premio_id=request.premio_id,
             cliente_id=cliente_id,
-            funcionario_id=None
+            funcionario_id=None,
+            idempotency_key=idempotency_key,
         )
 
         if not resultado.get('success'):

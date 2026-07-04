@@ -101,6 +101,7 @@ model Reserva {
   quarto           Quarto            @relation(fields: [quartoId], references: [id])
 
   @@index([quartoId])
+  @@index([clienteId])
   @@map("reservas")
 }
 
@@ -160,6 +161,8 @@ model Pagamento {
   reserva             Reserva                @relation(fields: [reservaId], references: [id])
 
   @@index([cartaoToken], map: "idx_pagamentos_cartao_token")
+  @@index([clienteId])
+  @@index([reservaId])
   @@map("pagamentos")
 }
 
@@ -246,6 +249,8 @@ model OperacaoAntifraude {
   cliente     Cliente   @relation(fields: [clienteId], references: [id])
   pagamento   Pagamento @relation(fields: [pagamentoId], references: [id])
 
+  @@index([clienteId])
+  @@index([pagamentoId])
   @@map("operacoes_antifraude")
 }
 
@@ -527,6 +532,7 @@ model ResgatePremio {
   status               String       @default("PENDENTE")
   codigoResgate        String?      @unique @map("codigo_resgate")
   codigoStatus         String       @default("active") @map("codigo_status")
+  idempotencyKey       String?      @unique @map("idempotency_key")
   usadoEm              DateTime?    @map("usado_em")
   expiraEm             DateTime?    @map("expira_em")
   funcionarioId        Int?         @map("funcionario_id")
@@ -543,6 +549,8 @@ model ResgatePremio {
   @@index([premioId])
   @@index([status])
   @@index([codigoStatus])
+  @@index([funcionarioId])
+  @@index([funcionarioEntregaId])
   @@map("resgates_premios")
 }
 
@@ -562,6 +570,7 @@ model CodigoResgate {
   @@index([resgateId])
   @@index([status])
   @@index([validoAte])
+  @@index([funcionarioId])
   @@map("codigos_resgate")
 }
 

@@ -174,6 +174,7 @@ class PontosRepository:
         liberar_em: Optional[datetime] = None,
         metadata: Optional[Dict[str, Any]] = None,
         pontos_nivel: Optional[int] = None,
+        _tx: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Criar transação de pontos completa com todos os relacionamentos
@@ -192,17 +193,20 @@ class PontosRepository:
                 aplicado so aos Pontos R). Se None, usa `pontos` quando
                 positivo (comportamento legado para origens sem multiplicador).
                 Nunca reduz Pontos N, mesmo se um valor negativo for passado.
+            _tx: transação Prisma já aberta pelo chamador (ex.: para manter um
+                lock/consulta anterior atômico junto com esta escrita). Se
+                None, abre e comita sua própria transação como de costume.
         """
         # VALIDAÇÃO DE SEGURANÇA: Limites de pontos
         if pontos == 0:
             raise ValueError("Transação de 0 pontos não permitida")
-        
+
         if abs(pontos) > MAX_PONTOS_POR_TRANSACAO:
             raise ValueError(
                 f"Transação limitada a ±{MAX_PONTOS_POR_TRANSACAO} pontos. "
                 f"Valor solicitado: {pontos}"
             )
-        
+
         origem_norm = (origem or "").strip().upper()
         status_norm = (status or "liberado").strip().lower()
         if pontos < 0 and status_norm == "liberado":
@@ -214,7 +218,7 @@ class PontosRepository:
             else [origem_norm]
         )
 
-        async with self.db.tx() as transaction:
+        async def _executar(transaction) -> Dict[str, Any]:
             if reserva_id and origem_norm in ORIGENS_IDEMPOTENTES_POR_RESERVA:
                 transacao_existente = await transaction.transacaopontos.find_first(
                     where={"reservaId": reserva_id, "origem": {"in": origens_idempotencia}}
@@ -335,6 +339,12 @@ class PontosRepository:
                 "liberar_em": liberar_em.isoformat() if liberar_em else None,
                 "metadata": metadata,
             }
+
+        if _tx is not None:
+            return await _executar(_tx)
+
+        async with self.db.tx() as transaction:
+            return await _executar(transaction)
 
     @staticmethod
     def _extrair_pontos_n_metadata(metadata_raw: Any, default: int) -> int:
@@ -487,6 +497,119 @@ class PontosRepository:
             await self._notificar_pontos_liberados(liberada)
 
         return {"success": True, "total_liberadas": len(liberadas), "transacoes": liberadas}
+
+    async def retentar_estornos_pendentes(
+        self,
+        limit: int = 100,
+        agora: Optional[datetime] = None,
+        prazo_falha: timedelta = timedelta(days=30),
+    ) -> Dict[str, Any]:
+        """Reprocessa ESTORNOs que nao puderam ser aplicados na hora do
+        cancelamento (saldo insuficiente porque o cliente ja resgatou os
+        pontos creditados no checkout).
+
+        Diferente de liberar_pontos_pendentes, aqui nao ha uma data prevista
+        de liberacao -- o estorno so fica aplicavel quando o cliente
+        acumular saldo suficiente de novo. Por isso o teto antes de desistir
+        e marcar como 'falha' (revisao manual) e bem maior: 30 dias.
+        """
+        agora_ref = agora or datetime.now(timezone.utc)
+        limite = max(1, min(int(limit or 100), 500))
+
+        pendentes = await self.db.query_raw(
+            """
+            SELECT id
+            FROM transacoes_pontos
+            WHERE tipo = 'ESTORNO'
+              AND status = 'pendente'
+            ORDER BY created_at ASC, id ASC
+            LIMIT $1
+            """,
+            limite,
+        )
+
+        aplicados: List[Dict[str, Any]] = []
+        for row in pendentes:
+            transacao_id = int(row["id"])
+            async with self.db.tx() as transaction:
+                locked_rows = await transaction.query_raw(
+                    """
+                    SELECT *
+                    FROM transacoes_pontos
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    transacao_id,
+                )
+                if not locked_rows:
+                    continue
+
+                transacao = locked_rows[0]
+                if (transacao.get("status") or "").lower() != "pendente":
+                    continue
+
+                pontos = int(transacao.get("pontos") or 0)
+                usuario_pontos_id = int(transacao["usuario_pontos_id"])
+                usuario_rows = await transaction.query_raw(
+                    """
+                    SELECT *
+                    FROM usuarios_pontos
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    usuario_pontos_id,
+                )
+                if not usuario_rows:
+                    continue
+
+                saldo_anterior = int(usuario_rows[0]["saldo"] or 0)
+                saldo_posterior = saldo_anterior + pontos
+
+                if saldo_posterior < 0:
+                    criado_em = to_utc(transacao.get("created_at"))
+                    if criado_em and (agora_ref - criado_em) > prazo_falha:
+                        await transaction.execute_raw(
+                            """
+                            UPDATE transacoes_pontos
+                            SET status = 'falha'
+                            WHERE id = $1
+                            """,
+                            transacao_id,
+                        )
+                    continue
+
+                await transaction.execute_raw(
+                    """
+                    UPDATE usuarios_pontos
+                    SET saldo = $1, updated_at = NOW()
+                    WHERE id = $2
+                    """,
+                    saldo_posterior,
+                    usuario_pontos_id,
+                )
+                await transaction.execute_raw(
+                    """
+                    UPDATE transacoes_pontos
+                    SET status = 'estornado',
+                        saldo_anterior = $1,
+                        saldo_posterior = $2
+                    WHERE id = $3
+                    """,
+                    saldo_anterior,
+                    saldo_posterior,
+                    transacao_id,
+                )
+
+                aplicados.append({
+                    "transacao_id": transacao_id,
+                    "cliente_id": int(transacao["cliente_id"]),
+                    "reserva_id": transacao.get("reserva_id"),
+                    "pontos": pontos,
+                    "saldo_anterior": saldo_anterior,
+                    "saldo_posterior": saldo_posterior,
+                })
+
+        return {"success": True, "total_aplicados": len(aplicados), "transacoes": aplicados}
 
     async def _notificar_pontos_liberados(self, transacao: Dict[str, Any]) -> None:
         origem = (transacao.get("origem") or "").strip().upper()

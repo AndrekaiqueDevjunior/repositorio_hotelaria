@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -201,6 +201,7 @@ async def obter_loyalty_customer(
 async def redeem_reward(
     payload: RewardRedeemRequest,
     _rate_limit: None = Depends(rate_limit_strict),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     """Alias da Jornada Real para resgate de premio com resposta em ingles."""
     customer = await _resolve_customer(
@@ -215,6 +216,7 @@ async def redeem_reward(
         premio_id=payload.reward_id,
         cliente_id=int(customer["id"]),
         funcionario_id=None,
+        idempotency_key=idempotency_key,
     )
 
     if not result.get("success"):

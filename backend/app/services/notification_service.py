@@ -159,6 +159,12 @@ class NotificationService:
                 print("[NOTIFICAÇÃO] Erro: ID da reserva não encontrado")
                 return
 
+            # Idempotencia: evita reenviar WhatsApp/email/notificacao se esta
+            # reserva ja foi notificada antes (reprocessamento, retry, etc.)
+            if await service.existe_notificacao_categoria_reserva("reserva", reserva_id=reserva_id):
+                print(f"[NOTIFICAÇÃO] Reserva #{reserva_id} ja notificada, ignorando reenvio")
+                return
+
             # Obter dados básicos com fallback para nomes de campos alternativos
             cliente_nome = _get(reserva, "clienteNome") or _get(reserva, "cliente_nome")
             quarto_numero = _get(reserva, "quartoNumero") or _get(reserva, "quarto_numero")

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime, date
@@ -20,6 +21,7 @@ from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
 from app.services.otp_service import OtpService
 from app.middleware.rate_limit import rate_limit_strict
+from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from app.core.cache import redis_lock
 
 router = APIRouter(prefix="/public", tags=["public"])
@@ -552,13 +554,23 @@ async def identificar_cliente_recorrente(
 async def criar_reserva_publica(
     reserva_data: ReservaPublicaCreate,
     request: Request,
-    _rate_limit: None = Depends(rate_limit_strict)
+    _rate_limit: None = Depends(rate_limit_strict),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
     """
     Criar reserva (API Pública)
 
     Requer autenticacao por OTP/WhatsApp vinculada ao CPF informado.
+
+    Headers:
+        Idempotency-Key: UUID único (opcional, recomendado para evitar
+        reserva/notificacao duplicada em caso de duplo clique ou retry).
     """
+    if idempotency_key:
+        cached = await check_idempotency(f"public_reserva:{idempotency_key}")
+        if cached:
+            return JSONResponse(content=cached["body"], status_code=cached["status_code"])
+
     try:
         db = get_db()
         cliente_repo = ClienteRepository(db)
@@ -697,7 +709,7 @@ async def criar_reserva_publica(
                 # notificar_nova_reserva (garantido para todo caller).
                 await NotificationService.notificar_nova_reserva(db, reserva_model)
 
-        return {
+        resultado = {
             "success": True,
             "reserva": {
                 "codigo": reserva_criada["codigo_reserva"],
@@ -723,7 +735,12 @@ async def criar_reserva_publica(
                 "contato": "(22) 2648-5900 ou contato@hotelrealcabofrio.com.br"
             }
         }
-        
+
+        if idempotency_key:
+            await store_idempotency_result(f"public_reserva:{idempotency_key}", resultado, status_code=200)
+
+        return resultado
+
     except HTTPException:
         raise
     except Exception as e:

@@ -265,20 +265,38 @@ async def estornar_pontos_cancelamento(db, reserva_id: int) -> Dict[str, Any]:
         )
         if ja_estornado:
             continue
+        motivo_estorno = f"Estorno da transacao #{transacao.id} - reserva {reserva_id} cancelada"
         try:
             result = await pontos_repo.criar_transacao_pontos(
                 cliente_id=transacao.clienteId,
                 pontos=-int(transacao.pontos),
                 tipo="ESTORNO",
                 origem=origem_estorno,
-                motivo=f"Estorno da transacao #{transacao.id} - reserva {reserva_id} cancelada",
+                motivo=motivo_estorno,
                 reserva_id=reserva_id,
                 status="estornado",
             )
             estornados.append({"transacao_original_id": transacao.id, **result})
         except Exception as exc:
             print(f"[PONTOS ESTORNO] Falha ao estornar transacao {transacao.id} da reserva {reserva_id}: {exc}")
-            pendentes.append({"transacao_original_id": transacao.id, "erro": str(exc)})
+            # Saldo insuficiente (cliente ja resgatou os pontos) ou outra falha
+            # pontual: registra um estorno "pendente" (nao mexe no saldo agora)
+            # para o job retentar_estornos_pendentes reprocessar quando o
+            # cliente acumular saldo suficiente de novo.
+            try:
+                result_pendente = await pontos_repo.criar_transacao_pontos(
+                    cliente_id=transacao.clienteId,
+                    pontos=-int(transacao.pontos),
+                    tipo="ESTORNO",
+                    origem=origem_estorno,
+                    motivo=motivo_estorno,
+                    reserva_id=reserva_id,
+                    status="pendente",
+                )
+                pendentes.append({"transacao_original_id": transacao.id, "erro": str(exc), **result_pendente})
+            except Exception as exc_fallback:
+                print(f"[PONTOS ESTORNO] Falha tambem ao registrar estorno pendente da transacao {transacao.id}: {exc_fallback}")
+                pendentes.append({"transacao_original_id": transacao.id, "erro": str(exc_fallback)})
 
     return {
         "success": True,
@@ -294,6 +312,14 @@ async def liberar_pontos_pendentes(
     agora: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     return await PontosRepository(db).liberar_pontos_pendentes(limit=limit, agora=agora)
+
+
+async def retentar_estornos_pendentes(
+    db,
+    limit: int = 100,
+    agora: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    return await PontosRepository(db).retentar_estornos_pendentes(limit=limit, agora=agora)
 
 
 async def creditar_bonus_cupom_no_checkout(
@@ -440,50 +466,64 @@ async def creditar_bonus_promo_primeiros_no_checkout(
     if status_reserva in {"CANCELADA", "CANCELADO", "NO_SHOW", "NO-SHOW"}:
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Reserva cancelada nao gera promo"}
 
-    # Idempotencia por CPF: 1 bonus por cliente, independente de quantas reservas
-    ja_contemplado = await db.transacaopontos.find_first(
-        where={
-            "clienteId": cliente_id,
-            "tipo": "CREDITO",
-            "origem": PROMO_PRIMEIROS_ORIGEM,
-        }
-    )
-    if ja_contemplado:
-        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cliente ja contemplado na promo"}
-
-    # Vagas: conta CPFs distintos ja contemplados
-    contemplados = await db.transacaopontos.find_many(
-        where={"tipo": "CREDITO", "origem": PROMO_PRIMEIROS_ORIGEM},
-        distinct=["clienteId"],
-    )
-    vagas_usadas = len(contemplados)
-    if vagas_usadas >= vagas:
-        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Vagas da promo esgotadas"}
-
-    posicao = vagas_usadas + 1
     codigo = getattr(reserva, "codigoReserva", None) or str(reserva_id)
-    motivo = f"Promo primeiros {vagas} clientes - posicao {posicao}/{vagas} - reserva {codigo}"
-    metadata = {
-        "programa": "JORNADA_REAL",
-        "origem": PROMO_PRIMEIROS_ORIGEM,
-        "promo": PROMO_PRIMEIROS_CHAVE,
-        "posicao": posicao,
-        "vagas": vagas,
-        "pontos": pontos_promo,
-        "data_limite": data_limite.isoformat() if data_limite else None,
-    }
-
     pontos_repo = PontosRepository(db)
-    result = await pontos_repo.criar_transacao_pontos(
-        cliente_id=cliente_id,
-        pontos=pontos_promo,
-        tipo="CREDITO",
-        origem=PROMO_PRIMEIROS_ORIGEM,
-        motivo=motivo,
-        reserva_id=reserva_id,
-        funcionario_id=funcionario_id,
-        metadata=metadata,
-    )
+
+    # Vagas sao um recurso compartilhado e limitado (ex.: 10 primeiros
+    # clientes) -- contar "CPFs distintos ja contemplados" e decidir se ha
+    # vaga livre precisa ser atomico com o credito, senao dois checkouts
+    # concorrentes na ultima vaga passam ambos no check-then-act. Um
+    # pg_advisory_xact_lock serializa todos os creditos desta promo mesmo
+    # com pool de conexoes (o lock e preso a transacao, nao a sessao, e e
+    # liberado automaticamente no commit/rollback).
+    async with db.tx() as transaction:
+        await transaction.execute_raw(
+            "SELECT pg_advisory_xact_lock(hashtext($1))", PROMO_PRIMEIROS_CHAVE
+        )
+
+        # Idempotencia por CPF: 1 bonus por cliente, independente de quantas reservas
+        ja_contemplado = await transaction.transacaopontos.find_first(
+            where={
+                "clienteId": cliente_id,
+                "tipo": "CREDITO",
+                "origem": PROMO_PRIMEIROS_ORIGEM,
+            }
+        )
+        if ja_contemplado:
+            return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cliente ja contemplado na promo"}
+
+        # Vagas: conta CPFs distintos ja contemplados
+        contemplados = await transaction.transacaopontos.find_many(
+            where={"tipo": "CREDITO", "origem": PROMO_PRIMEIROS_ORIGEM},
+            distinct=["clienteId"],
+        )
+        vagas_usadas = len(contemplados)
+        if vagas_usadas >= vagas:
+            return {"success": True, "creditado": False, "pontos": 0, "motivo": "Vagas da promo esgotadas"}
+
+        posicao = vagas_usadas + 1
+        motivo = f"Promo primeiros {vagas} clientes - posicao {posicao}/{vagas} - reserva {codigo}"
+        metadata = {
+            "programa": "JORNADA_REAL",
+            "origem": PROMO_PRIMEIROS_ORIGEM,
+            "promo": PROMO_PRIMEIROS_CHAVE,
+            "posicao": posicao,
+            "vagas": vagas,
+            "pontos": pontos_promo,
+            "data_limite": data_limite.isoformat() if data_limite else None,
+        }
+
+        result = await pontos_repo.criar_transacao_pontos(
+            cliente_id=cliente_id,
+            pontos=pontos_promo,
+            tipo="CREDITO",
+            origem=PROMO_PRIMEIROS_ORIGEM,
+            motivo=motivo,
+            reserva_id=reserva_id,
+            funcionario_id=funcionario_id,
+            metadata=metadata,
+            _tx=transaction,
+        )
 
     if result.get("idempotente"):
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Bonus da promo ja creditado", "transacao": result}
