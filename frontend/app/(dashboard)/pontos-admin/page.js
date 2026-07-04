@@ -662,9 +662,7 @@ function PontosContent() {
     try {
       setValidandoCodigo(true)
       setError('')
-      const res = await api.post('/validacao-resgates/validar', {
-        codigo_resgate: codigoResgate.trim()
-      })
+      const res = await api.post(`/codigos/${encodeURIComponent(codigoResgate.trim())}/validar`)
       setValidacaoResult(res.data)
     } catch (err) {
       setError(formatErrorMessage(err))
@@ -682,9 +680,7 @@ function PontosContent() {
     try {
       setConfirmandoEntrega(true)
       setError('')
-      await api.post('/validacao-resgates/confirmar-entrega', {
-        codigo_resgate: codigoResgate.trim()
-      })
+      await api.post(`/codigos/${encodeURIComponent(codigoResgate.trim())}/utilizar`)
       alert('✅ Entrega confirmada com sucesso!')
       setCodigoResgate('')
       setValidacaoResult(null)
@@ -699,7 +695,7 @@ function PontosContent() {
   const loadResgatesPendentes = async () => {
     try {
       setLoadingPendentes(true)
-      const res = await api.get('/validacao-resgates/historico?status=PENDENTE')
+      const res = await api.get('/codigos/pendentes?limit=50')
       setResgatesPendentes(res.data.resgates || [])
     } catch (err) {
       console.error('Erro ao carregar resgates pendentes:', err)
@@ -2186,60 +2182,75 @@ function PontosContent() {
         {/* Resultado da Validação */}
         {validacaoResult && (
           <div className={`p-6 rounded-lg border-2 ${
-            validacaoResult.valido && !validacaoResult.ja_entregue
+            validacaoResult.valido
               ? 'bg-green-50 dark:bg-green-900/20 border-green-500'
-              : validacaoResult.ja_entregue
+              : validacaoResult.ja_utilizado
               ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500'
               : 'bg-red-50 dark:bg-red-900/20 border-red-500'
           }`}>
             <div className="text-center mb-4">
               <div className="text-4xl mb-2">
-                {validacaoResult.valido && !validacaoResult.ja_entregue ? '✅' : validacaoResult.ja_entregue ? '⚠️' : '❌'}
+                {validacaoResult.valido ? '✅' : validacaoResult.ja_utilizado ? '⚠️' : '❌'}
               </div>
               <p className="text-lg font-bold">
-                {validacaoResult.mensagem}
+                {validacaoResult.valido
+                  ? '✅ Código válido!'
+                  : validacaoResult.ja_utilizado
+                  ? '⚠️ Este prêmio já foi entregue!'
+                  : `❌ ${validacaoResult.error || 'Código inválido'}`}
               </p>
             </div>
 
-            {validacaoResult.valido && (
+            {(validacaoResult.premio || validacaoResult.cliente) && (
               <div className="space-y-3 text-sm">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <span className="font-semibold">Cliente:</span>
-                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.cliente_nome}</p>
+                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.cliente?.nome_completo || '-'}</p>
                   </div>
                   <div>
                     <span className="font-semibold">Documento:</span>
-                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.cliente_documento}</p>
+                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.cliente?.documento || '-'}</p>
                   </div>
                   <div>
                     <span className="font-semibold">Prêmio:</span>
-                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.premio_nome}</p>
+                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.premio?.nome || '-'}</p>
                   </div>
                   <div>
-                    <span className="font-semibold">Pontos:</span>
-                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.pontos_usados} pontos</p>
+                    <span className="font-semibold">Pontos usados no resgate:</span>
+                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.pontos_usados ?? '-'} pontos</p>
                   </div>
                   <div>
-                    <span className="font-semibold">Status:</span>
-                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.status}</p>
+                    <span className="font-semibold">Nível de fidelidade:</span>
+                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.cliente?.nivel_fidelidade || '-'}</p>
                   </div>
                   <div>
-                    <span className="font-semibold">Data Resgate:</span>
+                    <span className="font-semibold">Saldo atual do cliente:</span>
+                    <p className="text-gray-700 dark:text-gray-300">{validacaoResult.cliente?.saldo_atual ?? '-'} pontos</p>
+                  </div>
+                  <div>
+                    <span className="font-semibold">Data do Resgate:</span>
                     <p className="text-gray-700 dark:text-gray-300">
                       {validacaoResult.data_resgate ? new Date(validacaoResult.data_resgate).toLocaleString('pt-BR') : '-'}
                     </p>
                   </div>
                 </div>
 
-                {validacaoResult.ja_entregue && (
-                  <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded">
-                    <p className="font-semibold">⚠️ Prêmio já foi entregue!</p>
-                    <p className="text-sm">Entregue por: {validacaoResult.funcionario_entrega || 'N/A'}</p>
+                {validacaoResult.cliente?.resgates_anteriores?.length > 0 && (
+                  <div className="mt-4">
+                    <span className="font-semibold">Resgates anteriores deste cliente:</span>
+                    <ul className="mt-1 divide-y divide-gray-200 dark:divide-gray-700">
+                      {validacaoResult.cliente.resgates_anteriores.map((r) => (
+                        <li key={r.id} className="py-1 flex justify-between text-xs text-gray-600 dark:text-gray-400">
+                          <span>{r.codigo} — {r.premio}</span>
+                          <span>{r.status} · {r.data ? new Date(r.data).toLocaleDateString('pt-BR') : '-'}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 
-                {!validacaoResult.ja_entregue && (
+                {validacaoResult.valido && (
                   <button
                     onClick={confirmarEntrega}
                     disabled={confirmandoEntrega}

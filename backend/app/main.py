@@ -26,7 +26,6 @@ from app.api.v1 import (
     pagamento_manual_routes,
     premios_routes,
     tarifas_routes,
-    validacao_resgate_routes,
     consumo_routes,
     cancelamento_routes,
     operacional_routes,
@@ -139,7 +138,6 @@ app.include_router(antifraude_routes.router, prefix="/api/v1")
 app.include_router(checkin_routes.router, prefix="/api/v1")
 app.include_router(pagamento_manual_routes.router, prefix="/api/v1")
 app.include_router(premios_routes.router, prefix="/api/v1")
-app.include_router(validacao_resgate_routes.router, prefix="/api/v1")
 app.include_router(comprovante_routes.router, prefix="/api/v1")
 app.include_router(cupom_routes.router, prefix="/api/v1")
 app.include_router(admin_coupon_routes.router, prefix="/api/v1")

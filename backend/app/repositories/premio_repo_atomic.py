@@ -462,7 +462,9 @@ class PremioRepositoryAtomic:
         async with self.db.tx() as transaction:
             rows = await transaction.query_raw(
                 """
-                SELECT cr.*, rp.cliente_id, rp.premio_id, p.nome AS premio_nome, p.categoria AS premio_categoria
+                SELECT cr.*, rp.cliente_id, rp.premio_id, rp.pontos_usados,
+                       rp.created_at AS resgate_created_at,
+                       p.nome AS premio_nome, p.categoria AS premio_categoria
                 FROM codigos_resgate cr
                 JOIN resgates_premios rp ON rp.id = cr.resgate_id
                 JOIN premios p ON p.id = rp.premio_id
@@ -477,27 +479,197 @@ class PremioRepositoryAtomic:
             row = rows[0]
             status_codigo = (row.get("status") or CODIGO_STATUS_ACTIVE).lower()
             valido_ate = to_utc(row.get("valido_ate"))
+            resgate_id = int(row["resgate_id"])
+            cliente_id = int(row["cliente_id"])
+            premio = {
+                "id": int(row["premio_id"]),
+                "nome": row.get("premio_nome"),
+                "categoria": row.get("premio_categoria"),
+            }
+            cliente = await self._montar_info_cliente(transaction, cliente_id, resgate_id_atual=resgate_id)
+
+            pontos_usados = int(row.get("pontos_usados") or 0)
+            data_resgate = self._iso(row.get("resgate_created_at"))
 
             if status_codigo != CODIGO_STATUS_ACTIVE:
-                return {"success": True, "valido": False, "error": f"Codigo indisponivel: {status_codigo}"}
+                return {
+                    "success": True,
+                    "valido": False,
+                    "error": f"Codigo indisponivel: {status_codigo}",
+                    "ja_utilizado": status_codigo == CODIGO_STATUS_USED,
+                    "resgate_id": resgate_id,
+                    "pontos_usados": pontos_usados,
+                    "data_resgate": data_resgate,
+                    "premio": premio,
+                    "cliente": cliente,
+                }
 
             if valido_ate and valido_ate < now_utc():
-                await self._marcar_codigo_expirado(transaction, int(row["id"]), int(row["resgate_id"]))
-                return {"success": True, "valido": False, "error": "Codigo expirado"}
+                await self._marcar_codigo_expirado(transaction, int(row["id"]), resgate_id)
+                return {
+                    "success": True,
+                    "valido": False,
+                    "error": "Codigo expirado",
+                    "resgate_id": resgate_id,
+                    "pontos_usados": pontos_usados,
+                    "data_resgate": data_resgate,
+                    "premio": premio,
+                    "cliente": cliente,
+                }
 
             return {
                 "success": True,
                 "valido": True,
                 "codigo": codigo,
-                "resgate_id": int(row["resgate_id"]),
-                "cliente_id": int(row["cliente_id"]),
-                "premio": {
-                    "id": int(row["premio_id"]),
-                    "nome": row.get("premio_nome"),
-                    "categoria": row.get("premio_categoria"),
-                },
+                "resgate_id": resgate_id,
+                "cliente_id": cliente_id,
+                "premio": premio,
+                "pontos_usados": pontos_usados,
+                "data_resgate": data_resgate,
                 "valido_ate": valido_ate.isoformat() if valido_ate else None,
+                "cliente": cliente,
             }
+
+    @staticmethod
+    def _iso(value: Any) -> Optional[str]:
+        """Formata created_at/etc para ISO 8601 independente do tipo devolvido.
+
+        query_raw do prisma-client-py as vezes devolve datetime e as vezes
+        devolve str para a mesma coluna timestamp, dependendo de LEFT JOIN
+        LATERAL/agregacoes na query -- normaliza os dois casos.
+        """
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+    async def _montar_info_cliente(self, conn, cliente_id: int, resgate_id_atual: int) -> Dict[str, Any]:
+        """Trajetoria do cliente para dar contexto a quem esta validando o
+        codigo na recepcao (nome, documento, saldo, nivel, historico recente
+        e resgates anteriores) -- mesma info que a tela de validacao sempre
+        precisou mostrar, so que agora buscada a partir do codigo real.
+        """
+        cliente_rows = await conn.query_raw(
+            """
+            SELECT c."nomeCompleto" AS nome_completo, c.documento,
+                   c."totalGasto" AS total_gasto, c."totalReservas" AS total_reservas,
+                   up.saldo, up.pontos_nivel
+            FROM clientes c
+            LEFT JOIN usuarios_pontos up ON up.cliente_id = c.id
+            WHERE c.id = $1
+            """,
+            cliente_id,
+        )
+        if not cliente_rows:
+            return {"id": cliente_id}
+
+        c = cliente_rows[0]
+
+        from app.services.programa_pontos_service import ProgramaPontosService
+        nivel = await ProgramaPontosService(self.db).nivel_por_total_pontos_nivel(int(c.get("pontos_nivel") or 0))
+
+        historico_rows = await conn.query_raw(
+            """
+            SELECT tipo, pontos, origem, motivo, created_at
+            FROM transacoes_pontos
+            WHERE cliente_id = $1
+            ORDER BY created_at DESC
+            LIMIT 10
+            """,
+            cliente_id,
+        )
+        resgates_rows = await conn.query_raw(
+            """
+            SELECT rp.id, rp.pontos_usados, rp.status, rp.created_at, p.nome AS premio_nome,
+                   COALESCE(cr.codigo, rp.codigo_resgate) AS codigo
+            FROM resgates_premios rp
+            JOIN premios p ON p.id = rp.premio_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM codigos_resgate cr
+                WHERE cr.resgate_id = rp.id
+                ORDER BY cr.created_at DESC, cr.id DESC
+                LIMIT 1
+            ) cr ON TRUE
+            WHERE rp.cliente_id = $1 AND rp.id != $2
+            ORDER BY rp.created_at DESC
+            LIMIT 5
+            """,
+            cliente_id,
+            resgate_id_atual,
+        )
+
+        return {
+            "id": cliente_id,
+            "nome_completo": c.get("nome_completo"),
+            "documento": c.get("documento"),
+            "saldo_atual": int(c.get("saldo") or 0),
+            "total_gasto": float(c.get("total_gasto") or 0),
+            "total_reservas": int(c.get("total_reservas") or 0),
+            "nivel_fidelidade": nivel.get("nome"),
+            "historico_pontos": [
+                {
+                    "data": self._iso(r.get("created_at")),
+                    "tipo": r.get("tipo"),
+                    "pontos": r.get("pontos"),
+                    "origem": r.get("origem"),
+                    "motivo": r.get("motivo"),
+                }
+                for r in historico_rows
+            ],
+            "resgates_anteriores": [
+                {
+                    "id": int(r["id"]),
+                    "codigo": r.get("codigo"),
+                    "premio": r.get("premio_nome"),
+                    "pontos_usados": int(r.get("pontos_usados") or 0),
+                    "status": r.get("status"),
+                    "data": self._iso(r.get("created_at")),
+                }
+                for r in resgates_rows
+            ],
+        }
+
+    async def listar_resgates_pendentes(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Fila de resgates aguardando entrega, entre todos os clientes --
+        usada pela tela de validacao da recepcao (antes so existia essa
+        listagem no sistema legado, que consultava resgatepremio.status
+        diretamente e nao refletia os codigos reais)."""
+        rows = await self.db.query_raw(
+            """
+            SELECT rp.id AS resgate_id,
+                   COALESCE(cr.codigo, rp.codigo_resgate) AS codigo,
+                   c."nomeCompleto" AS cliente_nome,
+                   p.nome AS premio_nome,
+                   rp.pontos_usados,
+                   rp.created_at AS data_resgate
+            FROM resgates_premios rp
+            JOIN clientes c ON c.id = rp.cliente_id
+            JOIN premios p ON p.id = rp.premio_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM codigos_resgate cr
+                WHERE cr.resgate_id = rp.id
+                ORDER BY cr.created_at DESC, cr.id DESC
+                LIMIT 1
+            ) cr ON TRUE
+            WHERE rp.status = $1
+            ORDER BY rp.created_at ASC
+            LIMIT $2
+            """,
+            RESGATE_STATUS_AGUARDANDO_USO,
+            max(1, min(int(limit or 50), 200)),
+        )
+        return [
+            {
+                "resgate_id": int(row["resgate_id"]),
+                "codigo": row.get("codigo"),
+                "cliente_nome": row.get("cliente_nome"),
+                "premio_nome": row.get("premio_nome"),
+                "pontos_usados": int(row.get("pontos_usados") or 0),
+                "data_resgate": self._iso(row.get("data_resgate")),
+            }
+            for row in rows
+        ]
 
     async def usar_codigo_resgate(
         self,
@@ -511,10 +683,12 @@ class PremioRepositoryAtomic:
         async with self.db.tx() as transaction:
             rows = await transaction.query_raw(
                 """
-                SELECT cr.*, rp.cliente_id, rp.premio_id, p.nome AS premio_nome
+                SELECT cr.*, rp.cliente_id, rp.premio_id, p.nome AS premio_nome,
+                       c."nomeCompleto" AS cliente_nome
                 FROM codigos_resgate cr
                 JOIN resgates_premios rp ON rp.id = cr.resgate_id
                 JOIN premios p ON p.id = rp.premio_id
+                JOIN clientes c ON c.id = rp.cliente_id
                 WHERE cr.codigo = $1
                 FOR UPDATE OF cr
                 """,
@@ -590,6 +764,8 @@ class PremioRepositoryAtomic:
                 "codigo_status": CODIGO_STATUS_USED,
                 "status": RESGATE_STATUS_UTILIZADO,
                 "usado_em": usado_em.isoformat(),
+                "cliente_nome": codigo_data.get("cliente_nome"),
+                "premio_nome": codigo_data.get("premio_nome"),
             }
 
     async def listar_resgates_cliente(self, cliente_id: int) -> List[Dict[str, Any]]:

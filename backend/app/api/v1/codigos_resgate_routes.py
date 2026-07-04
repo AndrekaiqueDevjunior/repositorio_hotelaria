@@ -14,6 +14,16 @@ def get_repo() -> PremioRepositoryAtomic:
     return PremioRepositoryAtomic(get_db())
 
 
+@router.get("/pendentes", response_model=dict)
+async def listar_resgates_pendentes(
+    limit: int = Query(50, ge=1, le=200),
+    repo: PremioRepositoryAtomic = Depends(get_repo),
+    current_user: User = Depends(require_staff),
+):
+    resgates = await repo.listar_resgates_pendentes(limit=limit)
+    return {"success": True, "total": len(resgates), "resgates": resgates}
+
+
 @router.get("/{codigo}", response_model=dict)
 async def obter_codigo_resgate(
     codigo: str,
@@ -36,8 +46,10 @@ async def validar_codigo_resgate(
     resultado = await repo.validar_codigo_resgate(codigo)
     if not resultado.get("success"):
         raise HTTPException(status_code=404, detail=resultado.get("error"))
-    if not resultado.get("valido"):
-        raise HTTPException(status_code=400, detail=resultado.get("error"))
+    # Codigo invalido/ja utilizado/expirado nao e erro HTTP: devolve 200 com
+    # valido=false e o contexto do cliente/premio, para a tela de validacao
+    # poder mostrar quem e o cliente e o que aconteceu com o codigo (em vez
+    # de so um erro generico).
     return resultado
 
 
