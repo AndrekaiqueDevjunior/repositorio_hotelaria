@@ -4,9 +4,9 @@ Rotas de autenticação com refresh tokens
 
 from fastapi import APIRouter, HTTPException, Body, Request, Depends, Response, UploadFile, File
 from pydantic import BaseModel, EmailStr
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Optional
-from app.utils.datetime_utils import now_utc, cookie_expires
+from app.utils.datetime_utils import now_utc
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -26,8 +26,23 @@ from app.core.config import settings
 import jwt
 import os
 import uuid
+import hashlib
 
 router = APIRouter()
+
+INVALID_CREDENTIALS_MESSAGE = "E-mail, CPF ou senha inválidos"
+COMMON_PASSWORDS = {
+    "123456",
+    "123456789",
+    "1234567890",
+    "admin",
+    "password",
+    "senha",
+    "hotel123",
+    "hotelreal",
+    "hotelreal123",
+    "qwerty",
+}
 
 
 class LoginRequest(BaseModel):
@@ -70,19 +85,108 @@ def _get_cookie_options(request: Request) -> tuple[Optional[str], bool, str]:
     return cookie_domain, cookie_secure, cookie_samesite
 
 
+def _hash_cache_part(value: str) -> str:
+    return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()[:24]
+
+
+def _login_attempt_keys(email: str, ip: str) -> tuple[str, str]:
+    email_hash = _hash_cache_part(email)
+    ip_hash = _hash_cache_part(ip or "unknown")
+    return f"login_attempts:account_ip:{email_hash}:{ip_hash}", f"login_attempts:ip:{ip_hash}"
+
+
+def _get_access_token_from_request(request: Request) -> Optional[str]:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header.replace("Bearer ", "", 1).strip()
+    return request.cookies.get(settings.COOKIE_NAME)
+
+
+async def _blacklist_access_token(token: Optional[str]) -> None:
+    if not token:
+        return
+
+    try:
+        secret_key = os.getenv("SECRET_KEY") or DEV_FALLBACK_SECRET_KEY
+        payload = jwt.decode(
+            token,
+            secret_key,
+            algorithms=["HS256"],
+            options={"verify_exp": False, "verify_aud": False},
+        )
+        jti = payload.get("jti")
+        exp = datetime.fromtimestamp(payload["exp"], timezone.utc)
+        ttl = int((exp - now_utc()).total_seconds())
+
+        if ttl > 0 and jti:
+            await cache.set(f"blacklist:jti:{jti}", "1", ttl=ttl)
+    except Exception as e:
+        print(f"[AUTH] Erro ao adicionar token à blacklist: {e}")
+
+
+def _validate_new_password(new_password: str, funcionario) -> None:
+    normalized = new_password.strip().lower()
+
+    if len(new_password) < 12:
+        raise HTTPException(status_code=400, detail="A nova senha deve ter pelo menos 12 caracteres")
+
+    if normalized in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="A nova senha é muito comum")
+
+    email_prefix = (getattr(funcionario, "email", "") or "").split("@")[0].lower()
+    nome_parts = [part for part in (getattr(funcionario, "nome", "") or "").lower().split() if len(part) >= 3]
+
+    if email_prefix and email_prefix in normalized:
+        raise HTTPException(status_code=400, detail="A nova senha não deve conter o e-mail do usuário")
+
+    if any(part in normalized for part in nome_parts):
+        raise HTTPException(status_code=400, detail="A nova senha não deve conter o nome do usuário")
+
+    categories = [
+        any(c.isupper() for c in new_password),
+        any(c.islower() for c in new_password),
+        any(c.isdigit() for c in new_password),
+        any(c in '!@#$%&*()_+-=[]{}|;:,.<>?/' for c in new_password),
+    ]
+
+    long_passphrase = len(new_password) >= 20 and " " in new_password
+    if sum(categories) < 3 and not long_passphrase:
+        raise HTTPException(
+            status_code=400,
+            detail="A nova senha deve combinar pelo menos 3 tipos: maiúsculas, minúsculas, números ou símbolos",
+        )
+
+
+def _delete_auth_cookies(request: Request, response: Response) -> None:
+    cookie_domain, _, _ = _get_cookie_options(request)
+    refresh_cookie_name = f"{settings.COOKIE_NAME}_refresh"
+
+    response.delete_cookie(
+        key=settings.COOKIE_NAME,
+        path="/",
+        domain=cookie_domain,
+    )
+    response.delete_cookie(
+        key=refresh_cookie_name,
+        path="/",
+        domain=cookie_domain,
+    )
+
+
 async def check_login_attempts(email: str, ip: str):
     """Verificar tentativas de login falhadas"""
     
-    key = f"login_attempts:{email}:{ip}"
-    attempts = await cache.get(key)
-    
-    if attempts and int(attempts) >= 5:
-        # Verificar se ainda está bloqueado
+    account_ip_key, ip_key = _login_attempt_keys(email, ip)
+    for key, limit in ((account_ip_key, 5), (ip_key, 25)):
+        attempts = await cache.get(key)
+        if not attempts or int(attempts) < limit:
+            continue
+
         ttl = await cache.ttl(key)
         if ttl > 0:
             raise HTTPException(
                 status_code=429,
-                detail=f"Conta temporariamente bloqueada. Tente novamente em {ttl} segundos"
+                detail=f"Muitas tentativas de login. Tente novamente em {ttl} segundos"
             )
     
     return True
@@ -91,19 +195,16 @@ async def check_login_attempts(email: str, ip: str):
 async def log_failed_login(email: str, ip: str):
     """Registrar tentativa falha"""
     
-    key = f"login_attempts:{email}:{ip}"
-    
-    # Incrementar contador
-    attempts = await cache.incr(key)
-    
-    if attempts == 1:
-        # Primeira tentativa, definir expiração de 15 minutos
-        await cache.expire(key, 900)
-    
-    if attempts >= 5:
-        # 5 falhas = bloquear por 15 minutos
-        await cache.expire(key, 900)
-        print(f"[AUTH] Bloqueio ativado para {email} de {ip}")
+    account_ip_key, ip_key = _login_attempt_keys(email, ip)
+
+    for key, threshold in ((account_ip_key, 5), (ip_key, 25)):
+        attempts = await cache.incr(key)
+        if attempts == 1:
+            await cache.expire(key, 900)
+        if attempts >= threshold:
+            lock_seconds = min(900 * (2 ** max(0, attempts - threshold)), 3600)
+            await cache.expire(key, lock_seconds)
+            print(f"[AUTH] Bloqueio temporário ativado para chave {key}")
 
 
 async def log_successful_login(user_id: int, ip: str, user_agent: str):
@@ -113,8 +214,8 @@ async def log_successful_login(user_id: int, ip: str, user_agent: str):
     funcionario = await db.funcionario.find_unique(where={"id": user_id})
     
     # Limpar tentativas falhas
-    key = f"login_attempts:{funcionario.email}:{ip}"
-    await cache.delete(key)
+    account_ip_key, _ = _login_attempt_keys(funcionario.email, ip)
+    await cache.delete(account_ip_key)
     
     # Registrar em auditoria (desativado - modelo não existe)
     # try:
@@ -160,14 +261,14 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
     
     if not funcionario:
         await log_failed_login(credentials.email, ip)
-        raise HTTPException(status_code=401, detail="Credenciais inválidas")
+        raise HTTPException(status_code=401, detail=INVALID_CREDENTIALS_MESSAGE)
 
     # Verificar senha
     senha_valida = verify_password(credentials.password, funcionario.senha)
 
     if not senha_valida:
         await log_failed_login(credentials.email, ip)
-        raise HTTPException(status_code=401, detail="Credenciais inválidas")
+        raise HTTPException(status_code=401, detail=INVALID_CREDENTIALS_MESSAGE)
     
     # Verificar se conta está ativa
     if funcionario.status != "ATIVO":
@@ -198,8 +299,6 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
     
     cookie_domain, cookie_secure, cookie_samesite = _get_cookie_options(request)
 
-    expires_at = cookie_expires(settings.COOKIE_MAX_AGE)
-    
     refresh_cookie_name = f"{settings.COOKIE_NAME}_refresh"
     
     response.set_cookie(
@@ -235,7 +334,6 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
             "fotoUrl": getattr(funcionario, "fotoUrl", None),
             "primeiroAcesso": primeiro_acesso
         },
-        "refresh_token": refresh_token,
         "token_type": "cookie",
         "requirePasswordChange": primeiro_acesso
     }
@@ -243,6 +341,8 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
 
 @router.post("/change-password")
 async def change_password(
+    request: Request,
+    response: Response,
     current_password: str = Body(...),
     new_password: str = Body(...),
     current_user: User = Depends(get_current_user)
@@ -265,20 +365,7 @@ async def change_password(
     if not verify_password(current_password, funcionario.senha):
         raise HTTPException(status_code=401, detail="Senha atual incorreta")
     
-    # Validar nova senha (forte)
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="A nova senha deve ter pelo menos 8 caracteres")
-    
-    has_upper = any(c.isupper() for c in new_password)
-    has_lower = any(c.islower() for c in new_password)
-    has_digit = any(c.isdigit() for c in new_password)
-    has_special = any(c in '!@#$%&*()_+-=[]{}|;:,.<>?' for c in new_password)
-    
-    if not (has_upper and has_lower and has_digit and has_special):
-        raise HTTPException(
-            status_code=400, 
-            detail="A nova senha deve conter: letras maiúsculas, minúsculas, números e símbolos"
-        )
+    _validate_new_password(new_password, funcionario)
     
     # Atualizar senha
     new_hash = hash_password(new_password)
@@ -289,10 +376,14 @@ async def change_password(
             "primeiroAcesso": False
         }
     )
+
+    await cache.delete(f"refresh_token:{current_user.id}")
+    await _blacklist_access_token(_get_access_token_from_request(request))
+    _delete_auth_cookies(request, response)
     
     return {
         "success": True,
-        "message": "Senha alterada com sucesso"
+        "message": "Senha alterada com sucesso. Faça login novamente."
     }
 
 
@@ -315,7 +406,9 @@ async def refresh_access_token(
     """
     
     refresh_cookie_name = f"{settings.COOKIE_NAME}_refresh"
-    refresh_token = body.refresh_token if body else request.cookies.get(refresh_cookie_name)
+    refresh_token = request.cookies.get(refresh_cookie_name)
+    if body and body.refresh_token:
+        refresh_token = body.refresh_token
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Refresh token não fornecido")
 
@@ -330,6 +423,7 @@ async def refresh_access_token(
     # Verificar se refresh token ainda é válido (não revogado)
     stored_token = await cache.get(f"refresh_token:{user_id}")
     if stored_token != refresh_token:
+        await cache.delete(f"refresh_token:{user_id}")
         raise HTTPException(status_code=401, detail="Refresh token revogado")
     
     # Gerar novo access token
@@ -340,9 +434,15 @@ async def refresh_access_token(
     }
     
     new_access_token = create_access_token(token_data)
+    new_refresh_token = create_refresh_token(token_data)
+
+    await cache.set(
+        f"refresh_token:{user_id}",
+        new_refresh_token,
+        ttl=REFRESH_TOKEN_EXPIRE_DAYS * 86400
+    )
     
     cookie_domain, cookie_secure, cookie_samesite = _get_cookie_options(request)
-    expires_at = cookie_expires(settings.COOKIE_MAX_AGE)
     response.set_cookie(
         key=settings.COOKIE_NAME,
         value=new_access_token,
@@ -353,10 +453,20 @@ async def refresh_access_token(
         httponly=settings.COOKIE_HTTPONLY,
         samesite=cookie_samesite,
     )
+    response.set_cookie(
+        key=refresh_cookie_name,
+        value=new_refresh_token,
+        max_age=settings.COOKIE_MAX_AGE,
+        path="/",
+        domain=cookie_domain,
+        secure=cookie_secure,
+        httponly=settings.COOKIE_HTTPONLY,
+        samesite=cookie_samesite,
+    )
 
     return {
-        "access_token": new_access_token,
-        "token_type": "bearer",
+        "success": True,
+        "token_type": "cookie",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
 
@@ -379,22 +489,7 @@ async def logout(
     await cache.delete(f"refresh_token:{user_id}")
     
     # Blacklist do access token atual (até expirar)
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header.replace("Bearer ", "")
-        
-        try:
-            # Decodificar para obter jti e expiração
-            secret_key = os.getenv("SECRET_KEY") or DEV_FALLBACK_SECRET_KEY
-            payload = jwt.decode(token, secret_key, algorithms=["HS256"], options={"verify_exp": False})
-            jti = payload.get("jti")
-            exp = datetime.fromtimestamp(payload["exp"])
-            ttl = int((exp - now_utc()).total_seconds())
-            
-            if ttl > 0 and jti:
-                await cache.set(f"blacklist:jti:{jti}", "1", ttl=ttl)
-        except Exception as e:
-            print(f"[AUTH] Erro ao adicionar token à blacklist: {e}")
+    await _blacklist_access_token(_get_access_token_from_request(request))
     
     # Registrar logout em auditoria (desativado - modelo não existe)
     # db = get_db()
@@ -413,19 +508,7 @@ async def logout(
     # except Exception as e:
     #     print(f"[AUTH] Erro ao registrar auditoria de logout: {e}")
     
-    cookie_domain, _, _ = _get_cookie_options(request)
-    refresh_cookie_name = f"{settings.COOKIE_NAME}_refresh"
-
-    response.delete_cookie(
-        key=settings.COOKIE_NAME,
-        path="/",
-        domain=cookie_domain,
-    )
-    response.delete_cookie(
-        key=refresh_cookie_name,
-        path="/",
-        domain=cookie_domain,
-    )
+    _delete_auth_cookies(request, response)
     
     return {"success": True, "message": "Logout realizado com sucesso"}
 

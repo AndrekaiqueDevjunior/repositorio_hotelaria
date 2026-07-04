@@ -286,6 +286,14 @@ async def get_current_user(
         # Verificar e decodificar token
         payload = verify_token(token, token_type="access")
 
+        jti = payload.get("jti")
+        if not jti:
+            raise HTTPException(status_code=401, detail="Token inválido")
+
+        from app.core.cache import cache
+        if await cache.get(f"blacklist:jti:{jti}"):
+            raise HTTPException(status_code=401, detail="Token revogado")
+
         user_id = int(payload.get("sub"))
         email = payload.get("email")
         perfil = payload.get("perfil")
