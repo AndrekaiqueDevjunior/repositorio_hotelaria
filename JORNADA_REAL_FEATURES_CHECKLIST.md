@@ -1,5 +1,7 @@
 # Jornada Real - Checklist de Funcionalidades
 
+**Atualizacao executiva 2026-07-04:** JR-01 foi validado em service/API/schema/model com `7/7` testes focados passando (`test_indicacao_service.py` + `test_referral_routes.py`); backend corrigido para creditar `50` pontos no Convite Real. Frontend de JR-01 ficou parcial: `/reservar` agora le `?cupom=`/`?codigo=`, valida em `/cupons/validar`, envia `cupom_codigo` para `/public/reservas` e mostra desconto/total, mas ainda falta tela "Meu Cupom" com copiar/WhatsApp/historico. JR-09 foi reconectado parcialmente no admin: `/(dashboard)/pontos-admin` agora usa `/admin/coupons`, gera/edita/desativa por codigo e aceita campanha influencer/comissao; ainda falta UX completa de link rastreado, metricas e detalhes. Validacao rodada: `45 passed` no pacote focado Jornada Real e `next build` OK no frontend.
+
 Roadmap completo com 11 funcionalidades críticas para produção.
 
 ---
@@ -8,17 +10,31 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 
 | # | Funcionalidade | Prioridade | Complexidade | Backend | Frontend | WhatsApp | Testes | Est. |
 |---|---|----------|--------------|---------|----------|----------|--------|------|
-| 1️⃣ | Cupom Amigo | 🔴 Alta | Média | ✅ | ❌ | ❌ | ✅ 5/5 | 3-4d |
-| 2️⃣ | Benefícios Níveis | 🔴 Alta | Média | ✅ | 🟡 | ❌ | 🟡 prisma | 2-3d |
-| 3️⃣ | Barras Progresso | 🔴 Alta | Baixa | ✅ | ✅ | ❌ | ✅ 2/2 | 1-2d |
-| 4️⃣ | Aviso Prêmio Próximo | 🟡 Média | Média | ✅ | N/A | ✅ | 🟡 prisma | 2d |
-| 5️⃣ | Msg Pós Check-out | 🟡 Média | Baixa | ✅ | N/A | ✅ | 🟡 prisma | 1d |
+| 1️⃣ | Cupom Amigo | 🔴 Alta | Média | ✅ | 🟡 | 🟡 | ✅ 7/7 | 3-4d |
+| 2️⃣ | Benefícios Níveis | 🔴 Alta | Média | ✅ | 🟡 | N/A | ✅ 5/5 | 2-3d |
+| 3️⃣ | Barras Progresso | 🔴 Alta | Baixa | ✅ | ✅ | N/A | ✅ 2/2 | 1-2d |
+| 4️⃣ | Aviso Prêmio Próximo | 🟡 Média | Média | ✅ | N/A | ✅ | ✅ 2/2 | 2d |
+| 5️⃣ | Msg Pós Check-out | 🟡 Média | Baixa | ✅ | N/A | ✅ | ✅ 1/1 | 1d |
 | 6️⃣ | Som Check-out | 🟡 Média | Baixa | ✅ | ✅ | N/A | ✅ 2/2 | 1d |
-| 7️⃣ | Invalidar Códigos | 🔴 Alta | Média | ✅ | 🟡 | N/A | 🟡 prisma | 2d |
-| 8️⃣ | Remover Suites Reservadas | 🔴 Alta | Média | ✅ | ✅ | N/A | 🟡 prisma | 2d |
-| 9️⃣ | Gerador Cupons | 🟡 Média | Alta | ✅ | 🟡 | N/A | 🟡 prisma | 4-5d |
+| 7️⃣ | Invalidar Códigos | 🔴 Alta | Média | ✅ | 🟡 | N/A | ✅ 5/5 | 2d |
+| 8️⃣ | Remover Suites Reservadas | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 3/3 | 2d |
+| 9️⃣ | Gerador Cupons | 🟡 Média | Alta | ✅ | 🟡 | N/A | ✅ 3/3 | 4-5d |
 | 🔟 | Confirmação Check-in Admin | 🟡 Média | Média | ✅ | ✅ | ✅ | ✅ 4/4 | 2-3d |
-| 1️⃣1️⃣ | Autenticar Cadastro | 🔴 Alta | Média | ✅ | ✅ | ✅ | 🟡 prisma | 2d |
+| 1️⃣1️⃣ | Autenticar Cadastro | 🔴 Alta | Média | ✅ | ✅ | ✅ | ✅ 6/6 | 2d |
+
+### Sincronizacao dominio + backend + frontend
+
+- [ ] 🟡 1️⃣ Cupom Amigo / Convite Real: backend, API e reserva publica sincronizados; `/reservar` valida/aplica cupom. Falta tela "Meu Cupom" com copiar, WhatsApp direto e historico.
+- [ ] 🟡 2️⃣ Beneficios dos niveis: backend calcula Experiencia 2x e Real 4x; frontend consulta/exibe nivel, mas falta mostrar estimativa de ganho na reserva.
+- [x] ✅ 3️⃣ Barras de progresso: backend entrega progresso de nivel/premios e `/consultar-pontos` exibe dados reais.
+- [x] ✅ 4️⃣ Aviso de premio proximo: backend + WhatsApp sincronizados; sem tela obrigatoria.
+- [x] ✅ 5️⃣ Mensagem pos check-out: backend + WhatsApp sincronizados; link leva o cliente para conferir pontos.
+- [x] ✅ 6️⃣ Som de check-out: backend gera alerta e frontend de reservas/dashboard notifica com som/quarto.
+- [ ] 🟡 7️⃣ Invalidar codigos usados: backend invalida/esgota/renova; frontend mostra parte do status, mas falta UX completa para cupom amigo e renovacao.
+- [x] ✅ 8️⃣ Remover suites reservadas: backend filtra disponibilidade e `/reservar` consome a lista real.
+- [ ] 🟡 9️⃣ Gerador de cupons: admin frontend ja usa `/admin/coupons` e envia influencer/comissao; falta UX completa de link rastreado, metricas e detalhes.
+- [x] ✅ 🔟 Check-in dinheiro com aprovacao admin: backend, WhatsApp e painel admin sincronizados.
+- [x] ✅ 1️⃣1️⃣ Autenticar cadastro: `/reservar` consulta/cria cliente, envia/valida OTP e backend bloqueia reserva sem token valido.
 
 **Total estimado: 22-29 dias | Sprint: 4-5 semanas**
 
@@ -33,6 +49,8 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 ---
 
 ## 1️⃣ Cupom Amigo - CONVITE REAL
+
+**Atualizacao 2026-07-04:** backend/service/API/schema/model revalidado; `PONTOS_CONVITE_REAL` corrigido para `50` e rotas `/referrals/*` passaram. Frontend agora tem integracao real parcial no `/reservar`: aceita cupom por query string ou digitacao, valida em `/cupons/validar`, envia `cupom_codigo` para `/public/reservas` e mostra desconto/total. Falta "Meu Cupom" com copiar, compartilhar WhatsApp e historico de usos. WhatsApp permanece parcial: backend monta mensagem/link e rota de referral cobre envio via Twilio quando solicitado, mas falta UX de compartilhamento do cliente.
 
 ### Descrição
 Hóspede recebe código único de indicação. Compartilha via WhatsApp com amigos. Se amigo reservar usando código, ambos ganham benefícios.
@@ -56,13 +74,15 @@ Depois me conta 🔥
 - [x] ✅ Validação: código ativo, não expirado, sem max uso atingido
 
 ### Frontend Necessário
-**Status Frontend:** ❌ Não implementado — nenhuma tela de "Meu Cupom" existe. Campo de desconto no `/reservar` também ausente.
+**Status Frontend:** 🟡 Parcial — `/reservar` ja recebe cupom por query string/digitacao, valida em `/cupons/validar`, envia `cupom_codigo` e exibe desconto/total. Ainda falta tela "Meu Cupom" com copiar, compartilhar WhatsApp e historico.
 
 - [ ] Tela "Meu Cupom" em `/entrar-jornada-real` ou novo route `/meu-cupom`
 - [ ] Exibe código gerado
 - [ ] Botão "Copiar" → copia link com código
 - [ ] Botão "Compartilhar WhatsApp" → abre WhatsApp com mensagem pré-preenchida
 - [ ] Historico de usos do código (quantos amigos usaram, pontos ganhos)
+
+- [x] ✅ `/reservar` valida e aplica `cupom_codigo` com dados reais do backend
 
 ### WhatsApp Necessário
 - [ ] Integração com Twilio/Z-API/Evolution API
@@ -481,6 +501,8 @@ GET /availability?checkin=2026-06-14&checkout=2026-06-15
 
 ## 9️⃣ Gerador de Cupons (Desconto & Influencers)
 
+**Atualizacao 2026-07-04:** service/API/schema/model validados com `test_admin_coupons_service.py` (`3/3`). Frontend admin em `/(dashboard)/pontos-admin` foi reconectado ao contrato real `/admin/coupons`: lista via `GET /admin/coupons`, cria via `POST /admin/coupons/generate`, edita/desativa por codigo e envia campos de campanha influencer/comissao. Continua parcial porque ainda falta UX completa para exibir/copiar link rastreado, detalhes de usos, metricas de comissao e jornada visual dedicada.
+
 ### Descrição
 Admin gera cupons de desconto com validade e rastreamento. Útil para:
 - Promoções sazonais
@@ -550,15 +572,16 @@ Status: ATIVO
   - ✅ Dashboard admin retorna usos, clientes únicos, valor bruto, desconto, valor líquido e comissão estimada
 
 ### Frontend Necessário
-**Status Frontend:** 🟡 Parcial — painel admin em `/(dashboard)/pontos/page.js` tem `cupomForm` funcional (criar/editar/listar cupons), mas conectado ao contrato antigo `/cupons/*`, não ao novo `/admin/coupons/*`. Campo de desconto na reserva está ausente.
+**Status Frontend:** 🟡 Parcial — painel admin em `/(dashboard)/pontos-admin` esta conectado ao contrato novo `/admin/coupons/*` para listar, criar, editar e desativar por codigo. `/reservar` tambem valida e envia cupom. Ainda falta UX completa de link rastreado, metricas/detalhes de uso e copia/compartilhamento.
 
 - [ ] Painel admin:
-  - [x] 🟡 Formulário "Criar Cupom" existe em `/pontos` — falta reconectar a `/admin/coupons/generate`
-  - [x] 🟡 Tabela de cupons com stats existe — falta reconectar a `GET /admin/coupons`
-  - [ ] Botão "Desativar cupom" (existe "excluir" mas precisa apontar ao `DELETE /admin/coupons/{code}`)
+  - [x] ✅ Formulario "Criar Cupom" conectado a `/admin/coupons/generate`
+  - [x] ✅ Tabela de cupons conectada a `GET /admin/coupons`
+  - [x] ✅ Botao "Desativar cupom" aponta para `/admin/coupons/{code}`
+  - [ ] Exibir/copiar link rastreado e abrir detalhes de usos/metricas
 
 - [ ] Página pública:
-  - Campo "Cupom de desconto" na página de reserva
+  - [x] Campo "Cupom de desconto" na pagina de reserva
   - Ao validar cupom:
     ```javascript
     POST /reservations/validate-coupon { code: "VERAO2026" }
@@ -783,7 +806,7 @@ cd frontend && npm run build
 ## 📅 Roadmap Recomendado
 
 ### Fase 1: MVP (Semana 1-2)
-- [ ] 1️⃣ Cupom Amigo (backend ✅ testes ✅; falta frontend tela + campo no /reservar)
+- [ ] 1️⃣ Cupom Amigo (backend ✅ testes ✅; `/reservar` ✅; falta tela "Meu Cupom" + WhatsApp direto/historico)
 - [ ] 2️⃣ Benefícios Níveis (backend ✅; 🟡 parcial — nivel_jornada_real exibe bônus, falta badge em consultar-pontos e estimativa em reservar)
 - [x] ✅ 3️⃣ Barras Progresso (backend + frontend + testes ✅)
 - [x] ✅ 8️⃣ Remover Suites Reservadas (backend + frontend ✅)
@@ -801,7 +824,7 @@ cd frontend && npm run build
 
 ### Fase 3: Autenticação & Cupons (Semana 4-5)
 - [x] ✅ 1️⃣1️⃣ Autenticar Cadastro (backend + frontend `/reservar` + WhatsApp ✅)
-- [ ] 9️⃣ Gerador Cupons (backend ✅; falta reconectar painel admin + campo desconto na reserva)
+- [ ] 9️⃣ Gerador Cupons (backend ✅; painel admin e campo de reserva ✅; falta UX de link rastreado/metricas/detalhes)
 
 **Saída:** Sistema completo com segurança e promoções
 

@@ -68,6 +68,9 @@ function PontosContent() {
   const [cupomForm, setCupomForm] = useState({
     codigo: '',
     descricao: '',
+    tipo_campanha: 'DESCONTO',
+    influencer_nome: '',
+    commission_percentage: '',
     tipo_desconto: 'PERCENTUAL',
     valor_desconto: '',
     pontos_bonus: '',
@@ -167,6 +170,9 @@ function PontosContent() {
     setCupomForm({
       codigo: '',
       descricao: '',
+      tipo_campanha: 'DESCONTO',
+      influencer_nome: '',
+      commission_percentage: '',
       tipo_desconto: 'PERCENTUAL',
       valor_desconto: '',
       pontos_bonus: '',
@@ -186,14 +192,41 @@ function PontosContent() {
       .map((item) => item.trim().toUpperCase())
       .filter(Boolean)
 
+  const normalizarCupomAdmin = (cupom) => {
+    const tipoDesconto = cupom.discountType || cupom.tipo_desconto || 'PERCENTAGE'
+    return {
+      id: cupom.id,
+      codigo: cupom.code || cupom.codigo,
+      descricao: cupom.description || cupom.descricao || '',
+      tipo_desconto: tipoDesconto === 'FIXED_AMOUNT' ? 'FIXO' : tipoDesconto === 'PERCENTAGE' ? 'PERCENTUAL' : tipoDesconto,
+      valor_desconto: cupom.discountValue ?? cupom.valor_desconto ?? 0,
+      pontos_bonus: cupom.bonusPoints ?? cupom.pontos_bonus ?? 0,
+      min_diarias: cupom.minNights ?? cupom.min_diarias ?? '',
+      suites_permitidas: cupom.suiteTypes ?? cupom.suites_permitidas ?? [],
+      data_inicio: cupom.validFrom ?? cupom.data_inicio ?? '',
+      data_fim: cupom.validUntil ?? cupom.data_fim ?? '',
+      limite_total_usos: cupom.maxUses ?? cupom.limite_total_usos ?? '',
+      limite_por_cliente: cupom.perCustomerLimit ?? cupom.limite_por_cliente ?? '',
+      total_usos: cupom.currentUses ?? cupom.total_usos ?? 0,
+      ativo: cupom.active ?? cupom.ativo ?? cupom.status === 'ACTIVE',
+      status: cupom.status || (cupom.ativo ? 'ACTIVE' : 'INACTIVE'),
+      tipo_campanha: cupom.campaignType || cupom.tipo_campanha || 'DESCONTO',
+      tracking_link: cupom.trackingLink || cupom.link_rastreado || '',
+      influencer_nome: cupom.influencerName || cupom.influencer_nome || '',
+      commission_percentage: cupom.commissionPercentage ?? cupom.commission_percentual ?? '',
+      stats: cupom.stats || {},
+    }
+  }
+
   const loadCupons = async () => {
     if (!canManageCupons) return
 
     try {
       setCuponsLoading(true)
       setCuponsError('')
-      const res = await api.get('/cupons')
-      setCupons(Array.isArray(res.data) ? res.data : [])
+      const res = await api.get('/admin/coupons')
+      const rows = Array.isArray(res.data?.coupons) ? res.data.coupons : []
+      setCupons(rows.map(normalizarCupomAdmin))
     } catch (err) {
       setCuponsError(formatErrorMessage(err))
     } finally {
@@ -451,10 +484,13 @@ function PontosContent() {
   }
 
   const startEditCupom = (cupom) => {
-    setEditCupomId(cupom.id)
+    setEditCupomId(cupom.codigo)
     setCupomForm({
       codigo: cupom.codigo || '',
       descricao: cupom.descricao || '',
+      tipo_campanha: cupom.tipo_campanha || 'DESCONTO',
+      influencer_nome: cupom.influencer_nome || '',
+      commission_percentage: cupom.commission_percentage ?? '',
       tipo_desconto: cupom.tipo_desconto || 'PERCENTUAL',
       valor_desconto: cupom.valor_desconto ?? '',
       pontos_bonus: cupom.pontos_bonus ?? '',
@@ -490,40 +526,47 @@ function PontosContent() {
       setCuponsError('')
 
       const payload = {
-        descricao: cupomForm.descricao || null,
-        tipo_desconto: cupomForm.tipo_desconto,
-        valor_desconto: Number(cupomForm.valor_desconto),
-        data_inicio: `${cupomForm.data_inicio}T00:00:00`,
-        data_fim: `${cupomForm.data_fim}T23:59:59`,
-        ativo: !!cupomForm.ativo
+        description: cupomForm.descricao || null,
+        discountType: cupomForm.tipo_desconto === 'FIXO' ? 'FIXED_AMOUNT' : 'PERCENTAGE',
+        discountValue: Number(cupomForm.valor_desconto),
+        validFrom: `${cupomForm.data_inicio}T00:00:00`,
+        validUntil: `${cupomForm.data_fim}T23:59:59`,
+        status: cupomForm.ativo ? 'ACTIVE' : 'INACTIVE',
+        campaignType: cupomForm.tipo_campanha || 'DESCONTO'
       }
 
       if (!editCupomId) {
-        payload.codigo = cupomForm.codigo.trim().toUpperCase()
+        payload.code = cupomForm.codigo.trim().toUpperCase()
       }
 
       if (cupomForm.pontos_bonus !== '') {
-        payload.pontos_bonus = Number(cupomForm.pontos_bonus)
+        payload.bonusPoints = Number(cupomForm.pontos_bonus)
       }
       if (cupomForm.min_diarias !== '') {
-        payload.min_diarias = Number(cupomForm.min_diarias)
+        payload.minNights = Number(cupomForm.min_diarias)
       }
       if (cupomForm.limite_total_usos !== '') {
-        payload.limite_total_usos = Number(cupomForm.limite_total_usos)
+        payload.maxUses = Number(cupomForm.limite_total_usos)
       }
       if (cupomForm.limite_por_cliente !== '') {
-        payload.limite_por_cliente = Number(cupomForm.limite_por_cliente)
+        payload.perCustomerLimit = Number(cupomForm.limite_por_cliente)
+      }
+      if (cupomForm.influencer_nome.trim()) {
+        payload.influencerName = cupomForm.influencer_nome.trim()
+      }
+      if (cupomForm.commission_percentage !== '') {
+        payload.commissionPercentage = Number(cupomForm.commission_percentage)
       }
 
       const suites = normalizarSuitesCupom(cupomForm.suites_permitidas)
       if (suites.length) {
-        payload.suites_permitidas = suites
+        payload.suiteTypes = suites
       }
 
       if (editCupomId) {
-        await api.put(`/cupons/${editCupomId}`, payload)
+        await api.put(`/admin/coupons/${encodeURIComponent(editCupomId)}`, payload)
       } else {
-        await api.post('/cupons', payload)
+        await api.post('/admin/coupons/generate', payload)
       }
 
       resetCupomForm()
@@ -541,7 +584,9 @@ function PontosContent() {
     try {
       setCuponsLoading(true)
       setCuponsError('')
-      await api.patch(`/cupons/${cupom.id}/ativar`, { ativo: !cupom.ativo })
+      await api.put(`/admin/coupons/${encodeURIComponent(cupom.codigo)}`, {
+        status: cupom.ativo ? 'INACTIVE' : 'ACTIVE'
+      })
       await loadCupons()
     } catch (err) {
       setCuponsError(formatErrorMessage(err))
@@ -550,14 +595,14 @@ function PontosContent() {
     }
   }
 
-  const excluirCupom = async (cupomId) => {
+  const excluirCupom = async (cupomCodigo) => {
     if (!canManageCupons) return
     if (!window.confirm('Deseja desativar este cupom?')) return
 
     try {
       setCuponsLoading(true)
       setCuponsError('')
-      await api.delete(`/cupons/${cupomId}`)
+      await api.delete(`/admin/coupons/${encodeURIComponent(cupomCodigo)}`)
       await loadCupons()
     } catch (err) {
       setCuponsError(formatErrorMessage(err))
@@ -1616,6 +1661,29 @@ function PontosContent() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Campanha</label>
+                <select
+                  value={cupomForm.tipo_campanha}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, tipo_campanha: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="DESCONTO">Desconto</option>
+                  <option value="INFLUENCER">Influencer</option>
+                  <option value="CUPOM_AMIGO">Cupom amigo</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Influencer</label>
+                <input
+                  value={cupomForm.influencer_nome}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, influencer_nome: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Nome opcional"
+                />
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de desconto</label>
                 <select
                   value={cupomForm.tipo_desconto}
@@ -1636,6 +1704,20 @@ function PontosContent() {
                   value={cupomForm.valor_desconto}
                   onChange={(e) => setCupomForm(prev => ({ ...prev, valor_desconto: e.target.value }))}
                   className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Comissao (%)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={cupomForm.commission_percentage}
+                  onChange={(e) => setCupomForm(prev => ({ ...prev, commission_percentage: e.target.value }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Opcional"
                 />
               </div>
 
@@ -1816,7 +1898,7 @@ function PontosContent() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => excluirCupom(cupom.id)}
+                              onClick={() => excluirCupom(cupom.codigo)}
                               className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
                             >
                               Excluir

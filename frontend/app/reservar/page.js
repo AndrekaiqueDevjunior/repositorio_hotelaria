@@ -1,6 +1,6 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import {
@@ -30,6 +30,7 @@ const initialCustomerAuth = {
 
 export default function Reservar() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   
   // Estados do fluxo
   const [step, setStep] = useState(1) // 1: Datas, 2: Quarto, 3: Dados, 4: Pagamento, 5: Confirmação
@@ -61,9 +62,14 @@ export default function Reservar() {
   })
   const [customerAuth, setCustomerAuth] = useState(initialCustomerAuth)
   const [authLoading, setAuthLoading] = useState(false)
+  const [pontuacaoPorSuite, setPontuacaoPorSuite] = useState([])
+  const [loyaltyInfo, setLoyaltyInfo] = useState(null)
   
   // Pagamento
   const [metodoPagamento, setMetodoPagamento] = useState('balcao')
+  const [cupomCodigo, setCupomCodigo] = useState('')
+  const [cupomValidacao, setCupomValidacao] = useState(null)
+  const [cupomLoading, setCupomLoading] = useState(false)
   
   // Reserva confirmada
   const [reservaConfirmada, setReservaConfirmada] = useState(null)
@@ -74,6 +80,33 @@ export default function Reservar() {
   const cpfLimpo = onlyDigits(hospedeData.documento)
   const telefoneLimpo = onlyDigits(hospedeData.telefone)
   const isCustomerAuthenticated = Boolean(customerAuth.accessToken && customerAuth.customer)
+
+  // Estimativa de pontos ganhos nesta reserva: Pontos N = pontuacao-base da
+  // suite (nunca recebe bonus), Pontos R = pontuacao-base x multiplicador do
+  // nivel atual do cliente (1x/2x/4x). So uma estimativa para o cliente ver
+  // antes de confirmar -- o calculo real e refeito no checkout pelo backend.
+  const pontosEstimados = useMemo(() => {
+    if (!quartoSelecionado || !numDiarias) return null
+
+    const suiteInfo = pontuacaoPorSuite.find(
+      (item) => String(item.suite || '').toUpperCase() === String(quartoSelecionado.tipo || '').toUpperCase()
+    )
+    if (!suiteInfo) return null
+
+    const pontosPorDiaria = Number(suiteInfo.pontos_por_diaria) || 0
+    const pontosN = pontosPorDiaria * numDiarias
+    if (pontosN <= 0) return null
+
+    const multiplicador = Number(loyaltyInfo?.current_level?.multiplicador) || 1
+    const pontosR = Math.ceil(pontosN * multiplicador)
+
+    return {
+      pontosN,
+      pontosR,
+      multiplicador,
+      nivelNome: loyaltyInfo?.current_level_name || loyaltyInfo?.current_level?.nome,
+    }
+  }, [quartoSelecionado, numDiarias, pontuacaoPorSuite, loyaltyInfo])
 
   const isValidCPF = (value) => {
     const cpf = onlyDigits(value)
@@ -95,6 +128,34 @@ export default function Reservar() {
     if (Array.isArray(detail)) return detail[0]?.msg || fallback
     return detail || error?.message || fallback
   }
+
+  const normalizeCouponCode = (value) =>
+    String(value || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]/g, '')
+      .slice(0, 50)
+
+  useEffect(() => {
+    const codigoCupom = searchParams.get('cupom') || searchParams.get('codigo') || ''
+    if (codigoCupom) {
+      setCupomCodigo(normalizeCouponCode(codigoCupom))
+    }
+  }, [searchParams])
+
+  // Tabela de pontos-por-diaria por suite, usada so para estimar o ganho de
+  // pontos no resumo da reserva (nao afeta o calculo real, que acontece no
+  // checkout do lado do backend).
+  useEffect(() => {
+    let isMounted = true
+    api.get('/jornada/regras')
+      .then((response) => {
+        if (isMounted) setPontuacaoPorSuite(response.data?.pontuacao_por_suite || [])
+      })
+      .catch(() => {})
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const resetCustomerAuth = () => {
     setCustomerAuth({ ...initialCustomerAuth })
@@ -325,10 +386,58 @@ export default function Reservar() {
         accessToken: response.data.access_token,
       }))
       toast.success('Cadastro autenticado. Você pode continuar a reserva.')
+
+      // Melhor esforco: usado so para estimar pontos no resumo da reserva,
+      // nao bloqueia o fluxo se falhar.
+      const documentoCliente = onlyDigits(customer?.documento || cpfLimpo)
+      if (documentoCliente) {
+        api.get(`/customers/${documentoCliente}/loyalty`)
+          .then((res) => setLoyaltyInfo(res.data))
+          .catch(() => {})
+      }
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Erro ao validar código'))
     } finally {
       setAuthLoading(false)
+    }
+  }
+
+  const validarCupomReserva = async () => {
+    const codigo = normalizeCouponCode(cupomCodigo)
+    if (!codigo) {
+      toast.warning('Informe um cupom para validar')
+      return
+    }
+    if (!quartoSelecionado || !numDiarias) {
+      toast.warning('Escolha uma suite antes de validar o cupom')
+      return
+    }
+
+    setCupomLoading(true)
+    setCupomValidacao(null)
+    try {
+      const payload = {
+        codigo,
+        suite_tipo: quartoSelecionado.tipo,
+        num_diarias: numDiarias,
+        valor_total_base: quartoSelecionado.preco_total,
+      }
+      if (customerAuth.customer?.id) {
+        payload.cliente_id = customerAuth.customer.id
+      }
+
+      const response = await api.post('/cupons/validar', payload)
+      setCupomCodigo(codigo)
+      setCupomValidacao(response.data)
+      if (response.data?.valido) {
+        toast.success('Cupom validado. Ele sera confirmado junto com a reserva.')
+      } else {
+        toast.warning(response.data?.mensagem || 'Cupom invalido')
+      }
+    } catch (error) {
+      setCupomValidacao({ valido: false, mensagem: getApiErrorMessage(error, 'Cupom invalido') })
+    } finally {
+      setCupomLoading(false)
     }
   }
   
@@ -383,6 +492,11 @@ export default function Reservar() {
         metodo_pagamento: metodoPagamento,
         customer_auth_token: customerAuth.accessToken
       }
+
+      const cupomNormalizado = normalizeCouponCode(cupomCodigo)
+      if (cupomNormalizado) {
+        payload.cupom_codigo = cupomNormalizado
+      }
       
       const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
@@ -430,6 +544,8 @@ export default function Reservar() {
           accessToken: '',
         }))
         setStep(3)
+      } else if (error.response?.status === 400 && getApiErrorMessage(error, '')) {
+        toast.error('Erro: ' + getApiErrorMessage(error, 'Dados invalidos. Verifique as informacoes e tente novamente.'))
       } else if (error.response?.status === 400) {
         toast.error('❌ Dados inválidos. Verifique as informações e tente novamente.')
       } else if (error.response?.status === 500) {
@@ -1186,15 +1302,78 @@ export default function Reservar() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600">Total</p>
-                  <p className="text-2xl font-bold text-green-600">R$ {quartoSelecionado.preco_total.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    R$ {Number(cupomValidacao?.valor_final_estimado || quartoSelecionado.preco_total).toFixed(2)}
+                  </p>
+                  {cupomValidacao?.valido && (
+                    <p className="text-xs font-semibold text-amber-700">
+                      Cupom {cupomCodigo} aplicado
+                    </p>
+                  )}
                 </div>
               </div>
+
+              {pontosEstimados && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <p className="font-semibold">👑 Pontos que você vai ganhar nesta reserva (estimativa)</p>
+                  <div className="mt-1 grid gap-1 sm:grid-cols-3">
+                    <span>Pontos de nível: {pontosEstimados.pontosN}N</span>
+                    <span>Pontos de resgate: {pontosEstimados.pontosR}R</span>
+                    {pontosEstimados.multiplicador > 1 && (
+                      <span>
+                        Bônus nível {pontosEstimados.nivelNome || ''}: {pontosEstimados.multiplicador}x
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            
+
             <div className="p-6 space-y-4">
               <p className="text-gray-700 font-medium mb-4">Selecione uma opção:</p>
               
               {/* Opções de pagamento */}
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <label className="block text-sm font-bold uppercase text-amber-900">Cupom ou Convite Real</label>
+                <div className="mt-2 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <input
+                    type="text"
+                    value={cupomCodigo}
+                    onChange={(e) => {
+                      setCupomCodigo(normalizeCouponCode(e.target.value))
+                      setCupomValidacao(null)
+                    }}
+                    placeholder="Digite seu cupom"
+                    className="w-full rounded-lg border-2 border-amber-200 bg-white p-3 font-mono uppercase text-gray-900 focus:border-amber-400 focus:outline-none"
+                    maxLength={50}
+                  />
+                  <button
+                    type="button"
+                    onClick={validarCupomReserva}
+                    disabled={cupomLoading || !cupomCodigo}
+                    className="rounded-lg bg-amber-600 px-5 py-3 font-bold text-white transition-all hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {cupomLoading ? 'Validando...' : 'Validar cupom'}
+                  </button>
+                </div>
+                {cupomValidacao && (
+                  <div className={`mt-3 rounded-lg border p-3 text-sm ${
+                    cupomValidacao.valido
+                      ? 'border-green-200 bg-green-50 text-green-800'
+                      : 'border-red-200 bg-red-50 text-red-700'
+                  }`}>
+                    <p className="font-semibold">{cupomValidacao.mensagem}</p>
+                    {cupomValidacao.valido && (
+                      <div className="mt-2 grid gap-1 sm:grid-cols-3">
+                        <span>Desconto: R$ {Number(cupomValidacao.valor_desconto_calculado || 0).toFixed(2)}</span>
+                        <span>Total: R$ {Number(cupomValidacao.valor_final_estimado || quartoSelecionado.preco_total).toFixed(2)}</span>
+                        <span>Bonus: {cupomValidacao.pontos_bonus || 0} RP</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-3">
                 <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-all ${
                   metodoPagamento === 'balcao' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'
@@ -1289,7 +1468,14 @@ export default function Reservar() {
                   </div>
                   <div className="bg-green-50 p-4 rounded-lg">
                     <p className="text-sm text-gray-500">Valor Total</p>
-                    <p className="font-bold text-green-600 text-xl">R$ {reservaConfirmada.reserva.valor_total.toFixed(2)}</p>
+                    <p className="font-bold text-green-600 text-xl">
+                      R$ {Number(reservaConfirmada.reserva.valor_total_com_desconto || reservaConfirmada.reserva.valor_total).toFixed(2)}
+                    </p>
+                    {Number(reservaConfirmada.reserva.valor_desconto || 0) > 0 && (
+                      <p className="text-xs text-green-700">
+                        Desconto: R$ {Number(reservaConfirmada.reserva.valor_desconto).toFixed(2)}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

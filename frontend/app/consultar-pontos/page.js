@@ -235,6 +235,9 @@ export default function ConsultarPontos() {
   )
   const customerName = loyaltyData?.customer_name || loyaltyData?.customerName || 'Hóspede Real'
   const isFallbackLoyalty = Boolean(loyaltyData?.is_fallback)
+  const currentLevelName = loyaltyData?.current_level_name || loyaltyData?.current_level?.nome
+  const currentMultiplier = firstNumber(loyaltyData?.current_level?.multiplicador, 1) || 1
+  const hasBonusAtivo = !isFallbackLoyalty && currentMultiplier > 1
   const rewardSummary = rewardGoalPoints > 0 ? `${Math.min(currentPoints, rewardGoalPoints)}/${rewardGoalPoints}` : `${currentPoints}`
   const rewardSummaryLabel = rewardGoalPoints > 0 ? 'pontos para o próximo prêmio' : 'pontos disponíveis'
   const rewardProgressText =
@@ -400,6 +403,12 @@ export default function ConsultarPontos() {
             Seu progresso de nível
             <Star size={17} fill="currentColor" />
           </h2>
+
+          {hasBonusAtivo && (
+            <p className="level-bonus-badge">
+              🎉 Nível {currentLevelName}: seus pontos de resgate valem <strong>{currentMultiplier}x</strong> em cada reserva
+            </p>
+          )}
 
           <div className="level-map">
             <article>
@@ -894,6 +903,22 @@ export default function ConsultarPontos() {
           background: linear-gradient(180deg, #ffe38a, #b76b08);
           border-radius: 50%;
           box-shadow: 0 0 12px rgba(246, 198, 55, 0.4);
+        }
+
+        .level-bonus-badge {
+          width: min(340px, 90vw);
+          margin: 4px auto 0;
+          padding: 8px 14px;
+          text-align: center;
+          font-size: 0.9rem;
+          color: #fff4df;
+          border: 1px solid rgba(246, 198, 55, 0.62);
+          border-radius: 10px;
+          background: rgba(183, 107, 8, 0.22);
+        }
+
+        .level-bonus-badge strong {
+          color: #ffe38a;
         }
 
         .level-summary {

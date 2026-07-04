@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -87,7 +87,7 @@ class FakeAdminCupomRepo:
 async def test_admin_generate_coupon_cria_influencer_com_link_e_comissao():
     repo = FakeAdminCupomRepo()
     service = CupomService(repo)
-    valid_until = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    valid_until = datetime.now(timezone.utc) + timedelta(days=30)
     payload = AdminCouponGenerateRequest(
         code="ingrid_influencer",
         discountType="PERCENTAGE",
