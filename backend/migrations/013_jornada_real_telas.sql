@@ -150,8 +150,8 @@ SET diarias_base = 1,
 WHERE ativo = TRUE
   AND UPPER(suite_tipo) IN ('LUXO', 'MASTER', 'DUPLA', 'REAL');
 
-INSERT INTO pontos_regras (suite_tipo, diarias_base, rp_por_base, temporada, data_inicio, data_fim, ativo)
-SELECT v.suite_tipo, 1, v.rp_por_base, 'JORNADA_REAL', DATE '2020-01-01', DATE '2099-12-31', TRUE
+INSERT INTO pontos_regras (suite_tipo, diarias_base, rp_por_base, temporada, data_inicio, data_fim, ativo, created_at, updated_at)
+SELECT v.suite_tipo, 1, v.rp_por_base, 'JORNADA_REAL', DATE '2020-01-01', DATE '2099-12-31', TRUE, NOW(), NOW()
 FROM (
     VALUES
         ('LUXO', 1),
