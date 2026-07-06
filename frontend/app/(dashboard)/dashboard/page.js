@@ -12,6 +12,8 @@ export default function Dashboard() {
   const [pagamentos, setPagamentos] = useState({ total: 0, pendente: 0 })
   const [horaAtual, setHoraAtual] = useState('')
   const [checkoutAlertas, setCheckoutAlertas] = useState([])
+  const [alertasDoServidor, setAlertasDoServidor] = useState(false)
+  const [marcandoVistoId, setMarcandoVistoId] = useState(null)
   const [somAtivado, setSomAtivado] = useState(false)
   const [notificationPermission, setNotificationPermission] = useState('default')
   const alertSignatureRef = useRef('')
@@ -27,7 +29,8 @@ export default function Dashboard() {
     loadStats()
     loadUltimasReservas()
     loadPagamentos()
-    
+    loadCheckoutAlerts()
+
     // Atualizar hora
     const updateTime = () => {
       setHoraAtual(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }))
@@ -146,6 +149,46 @@ export default function Dashboard() {
     loadStats()
     loadUltimasReservas()
     loadPagamentos()
+    loadCheckoutAlerts()
+  }
+
+  // Fonte preferida dos alertas: job do backend (GET /checkout-alerts/pending),
+  // que persiste em `notificacoes` com dedupe e suporta "marcar como visto".
+  // Se a chamada falhar, o effect abaixo cai no filtro local de reservas.
+  const mapServerAlert = (alert) => ({
+    id: alert.reservation_id,
+    cliente_nome: alert.guest_name,
+    quarto_numero: alert.room_number || alert.room,
+    codigo_reserva: alert.codigo_reserva,
+    checkout_previsto: alert.checkout_previsto || alert.checkout_at,
+    status: 'CHECKOUT PENDENTE',
+    mensagem: alert.message,
+    fromServer: true,
+  })
+
+  const loadCheckoutAlerts = async () => {
+    try {
+      const res = await api.get('/checkout-alerts/pending', { silentError: true })
+      const alerts = Array.isArray(res.data?.alerts) ? res.data.alerts : []
+      setCheckoutAlertas(alerts.map(mapServerAlert))
+      setAlertasDoServidor(true)
+    } catch (err) {
+      setAlertasDoServidor(false)
+    }
+  }
+
+  const marcarCheckoutVisto = async (reservaId) => {
+    if (marcandoVistoId) return
+
+    setMarcandoVistoId(reservaId)
+    try {
+      await api.post(`/checkout-alerts/${reservaId}/viewed`)
+      setCheckoutAlertas((prev) => prev.filter((alerta) => alerta.id !== reservaId))
+    } catch (err) {
+      console.error('Erro ao marcar checkout como visto:', err)
+    } finally {
+      setMarcandoVistoId(null)
+    }
   }
 
   const tocarAlertaCheckout = () => {
@@ -208,7 +251,11 @@ export default function Dashboard() {
     return 'Boa noite'
   }
 
+  // Fallback local: so entra em acao se o endpoint /checkout-alerts/pending
+  // estiver indisponivel (mantem o comportamento antigo de filtrar reservas).
   useEffect(() => {
+    if (alertasDoServidor) return
+
     const agora = new Date()
     const inicioJanela = new Date(agora)
     inicioJanela.setHours(11, 0, 0, 0)
@@ -229,13 +276,17 @@ export default function Dashboard() {
     })
 
     setCheckoutAlertas(alertas)
+  }, [reservasOperacionais, horaAtual, alertasDoServidor])
 
-    if (!alertas.length) {
+  // Som + notificacao do Chrome quando o conjunto de alertas muda
+  // (independente da fonte: job do backend ou fallback local).
+  useEffect(() => {
+    if (!checkoutAlertas.length) {
       alertSignatureRef.current = ''
       return
     }
 
-    const signature = alertas.map((reserva) => reserva.id).sort((a, b) => a - b).join('-')
+    const signature = checkoutAlertas.map((reserva) => reserva.id).sort((a, b) => a - b).join('-')
     if (alertSignatureRef.current === signature) {
       return
     }
@@ -247,12 +298,18 @@ export default function Dashboard() {
     }
 
     if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
-      const primeiraReserva = alertas[0]
-      new window.Notification('Checkout pendente às 11:00', {
-        body: `${alertas.length} reserva(s) ainda aguardam checkout. Primeira: ${primeiraReserva.cliente_nome} / quarto ${primeiraReserva.quarto_numero}.`
+      const primeiraReserva = checkoutAlertas[0]
+      const titulo = primeiraReserva.mensagem || `CHECKOUT - Quarto ${primeiraReserva.quarto_numero}`
+      new window.Notification(titulo, {
+        body:
+          `${primeiraReserva.cliente_nome} • ` +
+          `previsto ${primeiraReserva.checkout_previsto ? new Date(primeiraReserva.checkout_previsto).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '11:00'}` +
+          (checkoutAlertas.length > 1 ? ` • +${checkoutAlertas.length - 1} outra(s) reserva(s) pendente(s)` : ''),
+        tag: 'hotel-checkout-pendente',
+        requireInteraction: true,
       })
     }
-  }, [reservasOperacionais, horaAtual, somAtivado])
+  }, [checkoutAlertas, somAtivado])
 
   if (loading) {
     return (
@@ -366,9 +423,19 @@ export default function Dashboard() {
                   </span>
                 </div>
                 <div className="mt-3 space-y-1 text-sm text-gray-700">
-                  <p>Quarto {reserva.quarto_numero} • {reserva.tipo_suite}</p>
+                  <p>Quarto {reserva.quarto_numero}{reserva.tipo_suite ? ` • ${reserva.tipo_suite}` : ''}</p>
                   <p>Checkout previsto: {reserva.checkout_previsto ? new Date(reserva.checkout_previsto).toLocaleString('pt-BR') : '-'}</p>
                 </div>
+                {reserva.fromServer && (
+                  <button
+                    type="button"
+                    onClick={() => marcarCheckoutVisto(reserva.id)}
+                    disabled={marcandoVistoId !== null}
+                    className="mt-3 w-full rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+                  >
+                    {marcandoVistoId === reserva.id ? 'Marcando...' : '✔ Marcar como visto'}
+                  </button>
+                )}
               </div>
             ))}
           </div>
