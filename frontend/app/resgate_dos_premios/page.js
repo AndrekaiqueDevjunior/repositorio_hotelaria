@@ -12,6 +12,7 @@ import {
   Info,
   LockKeyhole,
   MapPin,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Ticket,
@@ -107,6 +108,29 @@ const formatDate = (value) => {
 }
 
 const ONBOARDING_STORAGE_KEY = 'jr_resgate_onboarding_visto'
+
+// Status do codigo de resgate vindos do backend (codigos_resgate):
+// ativo | utilizado | expirado | cancelado. Um codigo "ativo" com validade
+// vencida e tratado como expirado aqui, pois a marcacao no banco e lazy.
+const getRedemptionCodeState = (redemption) => {
+  const status = String(redemption.codigo_status || redemption.status || '').toLowerCase()
+
+  if (['utilizado', 'used'].includes(status)) return 'used'
+  if (['expirado', 'expired'].includes(status)) return 'expired'
+  if (['cancelado', 'cancelled'].includes(status)) return 'cancelled'
+
+  const expiresAt = redemption.expira_em ? new Date(redemption.expira_em) : null
+  if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt < new Date()) return 'expired'
+
+  return 'active'
+}
+
+const REDEMPTION_STATE_LABELS = {
+  active: 'Código ativo',
+  used: 'Utilizado',
+  expired: 'Código expirado',
+  cancelled: 'Código cancelado',
+}
 
 const withCpfParam = (href, cpf) => {
   if (!cpf) return href
@@ -238,6 +262,42 @@ export default function ResgateDosPremios() {
   const [isRedeeming, setIsRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const [myRedemptions, setMyRedemptions] = useState([])
+  const [renewingId, setRenewingId] = useState(null)
+
+  const loadMyRedemptions = async () => {
+    if (!cpf) return
+
+    try {
+      const response = await api.get('/jornada/meus-resgates', { params: { cpf }, silentError: true })
+      const resgates = Array.isArray(response.data?.resgates) ? response.data.resgates : []
+      setMyRedemptions(resgates)
+    } catch (error) {
+      // Historico e complementar: sem ele a tela de resgate continua funcionando
+      setMyRedemptions([])
+    }
+  }
+
+  useEffect(() => {
+    loadMyRedemptions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf])
+
+  const handleRenewCode = async (redemption) => {
+    if (renewingId) return
+
+    setRenewingId(redemption.id)
+    setRedeemError(null)
+
+    try {
+      await api.post(`/jornada/resgates/${redemption.id}/renovar`, { cpf }, { silentError: true })
+      await loadMyRedemptions()
+    } catch (error) {
+      setRedeemError(getApiErrorMessage(error, 'Erro ao renovar código.'))
+    } finally {
+      setRenewingId(null)
+    }
+  }
 
   useEffect(() => {
     try {
@@ -342,6 +402,7 @@ export default function ResgateDosPremios() {
         expiresAt: getRedemptionExpiry(redemption),
         status: getRedemptionStatus(redemption),
       })
+      loadMyRedemptions()
     } catch (error) {
       if (error.response?.status === 402) {
         setRedeemError('Saldo insuficiente de pontos.')
@@ -530,6 +591,68 @@ export default function ResgateDosPremios() {
               </article>
             ))}
           </div>
+
+          {cpf && myRedemptions.length > 0 && (
+            <section className="my-redemptions">
+              <h2>
+                <Ticket size={19} strokeWidth={1.9} />
+                Meus resgates
+                <Ticket size={19} strokeWidth={1.9} />
+              </h2>
+
+              <div className="redemption-list">
+                {myRedemptions.map((redemption) => {
+                  const state = getRedemptionCodeState(redemption)
+                  const expiresAt = formatDate(redemption.expira_em)
+                  const usedAt = formatDate(redemption.usado_em)
+                  const canRenew = ['expired', 'cancelled'].includes(state)
+
+                  return (
+                    <article className={`redemption-card state-${state}`} key={redemption.id}>
+                      <header>
+                        <strong>{redemption.premio_nome}</strong>
+                        <span className={`redemption-chip chip-${state}`}>
+                          {REDEMPTION_STATE_LABELS[state]}
+                        </span>
+                      </header>
+
+                      <div className="redemption-code">
+                        <code>{redemption.codigo_resgate || '—'}</code>
+                        {state === 'active' && redemption.codigo_resgate && (
+                          <button
+                            type="button"
+                            aria-label="Copiar código"
+                            onClick={() => navigator.clipboard?.writeText(redemption.codigo_resgate)}
+                          >
+                            <Copy size={15} strokeWidth={1.8} />
+                          </button>
+                        )}
+                      </div>
+
+                      <p className="redemption-meta">
+                        {redemption.pontos_usados} pontos
+                        {state === 'active' && expiresAt && <> · válido até {expiresAt}</>}
+                        {state === 'used' && usedAt && <> · utilizado em {usedAt}</>}
+                        {state === 'expired' && expiresAt && <> · venceu em {expiresAt}</>}
+                      </p>
+
+                      {canRenew && (
+                        <button
+                          type="button"
+                          className="renew-code-button"
+                          onClick={() => handleRenewCode(redemption)}
+                          disabled={renewingId !== null}
+                        >
+                          <RefreshCw size={15} strokeWidth={2} />
+                          {renewingId === redemption.id ? 'Renovando...' : 'Renovar código'}
+                        </button>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          )}
         </section>
       )}
 
@@ -1138,6 +1261,169 @@ export default function ResgateDosPremios() {
           margin: -2px 0 0;
           color: var(--gold);
           font-size: 0.72rem;
+        }
+
+        .my-redemptions {
+          margin-top: 20px;
+          padding: 0 8px;
+        }
+
+        .my-redemptions h2 {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          margin: 0 0 12px;
+          color: var(--gold);
+          font-family: 'Cinzel', serif;
+          font-size: clamp(1.05rem, 4.6vw, 1.3rem);
+          text-transform: uppercase;
+        }
+
+        .redemption-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .redemption-card {
+          padding: 12px;
+          border: 1.2px solid rgba(157, 91, 8, 0.62);
+          border-radius: 10px;
+          background: rgba(5, 5, 4, 0.84);
+        }
+
+        .redemption-card.state-active {
+          border-color: rgba(110, 231, 138, 0.42);
+        }
+
+        .redemption-card.state-expired,
+        .redemption-card.state-cancelled {
+          border-color: rgba(255, 120, 96, 0.5);
+        }
+
+        .redemption-card header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+
+        .redemption-card header strong {
+          color: var(--gold-soft);
+          font-family: 'Cinzel', serif;
+          font-size: 0.82rem;
+        }
+
+        .redemption-chip {
+          flex: 0 0 auto;
+          padding: 3px 9px;
+          border-radius: 999px;
+          font-family: Arial, sans-serif;
+          font-size: 0.62rem;
+          font-weight: 700;
+        }
+
+        .chip-active {
+          color: #9dffb0;
+          border: 1px solid rgba(110, 231, 138, 0.55);
+          background: rgba(26, 84, 40, 0.4);
+        }
+
+        .chip-used {
+          color: #ffe9ae;
+          border: 1px solid rgba(246, 198, 55, 0.45);
+          background: rgba(94, 62, 8, 0.34);
+        }
+
+        .chip-expired,
+        .chip-cancelled {
+          color: #ffb3a6;
+          border: 1px solid rgba(255, 120, 96, 0.55);
+          background: rgba(96, 27, 16, 0.42);
+        }
+
+        .redemption-code {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .redemption-code code {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          padding: 7px 10px;
+          color: #fffaf2;
+          border: 1px dashed rgba(255, 232, 156, 0.6);
+          border-radius: 7px;
+          background: rgba(0, 0, 0, 0.42);
+          font-family: 'Cinzel', serif;
+          font-size: 0.94rem;
+          text-align: center;
+          white-space: nowrap;
+        }
+
+        .redemption-card.state-expired .redemption-code code,
+        .redemption-card.state-cancelled .redemption-code code,
+        .redemption-card.state-used .redemption-code code {
+          opacity: 0.55;
+          text-decoration: line-through;
+        }
+
+        .redemption-code button {
+          width: 30px;
+          height: 30px;
+          display: grid;
+          place-items: center;
+          color: #fff2d0;
+          border: 1px solid rgba(246, 198, 55, 0.58);
+          border-radius: 7px;
+          background: rgba(115, 75, 10, 0.78);
+          cursor: pointer;
+        }
+
+        .redemption-meta {
+          margin: 8px 0 0;
+          color: #fff0d0;
+          font-family: Arial, sans-serif;
+          font-size: 0.72rem;
+        }
+
+        .renew-code-button {
+          width: 100%;
+          min-height: 38px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          margin-top: 10px;
+          color: #130d04;
+          border: 1px solid #ffe799;
+          border-radius: 8px;
+          background: linear-gradient(180deg, #ffe07a 0%, #d9981b 58%, #aa6405 100%);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+          font-family: 'Cinzel', serif;
+          font-size: 0.7rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          cursor: pointer;
+        }
+
+        .renew-code-button:disabled {
+          cursor: wait;
+          opacity: 0.72;
+        }
+
+        @media (min-width: 900px) {
+          .my-redemptions {
+            padding: 0;
+          }
+
+          .redemption-list {
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 14px;
+          }
         }
 
         .redeem-success-backdrop {

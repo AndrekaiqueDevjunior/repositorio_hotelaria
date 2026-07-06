@@ -6,6 +6,9 @@ import { formatErrorMessage } from '../../../lib/errorHandler'
 import ProtectedRoute from '../../../components/ProtectedRoute'
 import { useAuth } from '../../../contexts/AuthContext'
 
+const formatBRL = (value) =>
+  Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
 function PontosContent() {
   const { hasRole } = useAuth()
   const canManagePontos = hasRole(['ADMIN'])
@@ -82,6 +85,10 @@ function PontosContent() {
     limite_por_cliente: '',
     ativo: true
   })
+
+  // Detalhes/metricas de cupom (modal)
+  const [detalheCupom, setDetalheCupom] = useState(null)
+  const [detalheLoading, setDetalheLoading] = useState(false)
 
   // Promo "primeiros N clientes"
   const [promoStatus, setPromoStatus] = useState(null)
@@ -215,6 +222,7 @@ function PontosContent() {
       influencer_nome: cupom.influencerName || cupom.influencer_nome || '',
       commission_percentage: cupom.commissionPercentage ?? cupom.commission_percentual ?? '',
       stats: cupom.stats || {},
+      usages: cupom.usages || [],
     }
   }
 
@@ -608,6 +616,29 @@ function PontosContent() {
       setCuponsError(formatErrorMessage(err))
     } finally {
       setCuponsLoading(false)
+    }
+  }
+
+  const copiarLinkCupom = async (cupom) => {
+    if (!cupom.tracking_link) return
+
+    try {
+      await navigator.clipboard?.writeText(cupom.tracking_link)
+      toast.success(`Link do cupom ${cupom.codigo} copiado!`)
+    } catch (err) {
+      toast.error('Não foi possível copiar o link.')
+    }
+  }
+
+  const abrirDetalhesCupom = async (cupomCodigo) => {
+    try {
+      setDetalheLoading(true)
+      const res = await api.get(`/admin/coupons/${encodeURIComponent(cupomCodigo)}`)
+      setDetalheCupom(normalizarCupomAdmin(res.data))
+    } catch (err) {
+      toast.error(formatErrorMessage(err))
+    } finally {
+      setDetalheLoading(false)
     }
   }
 
@@ -1884,6 +1915,24 @@ function PontosContent() {
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
+                              onClick={() => abrirDetalhesCupom(cupom.codigo)}
+                              disabled={detalheLoading}
+                              className="px-3 py-1 rounded bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-60"
+                            >
+                              Detalhes
+                            </button>
+                            {cupom.tracking_link && (
+                              <button
+                                type="button"
+                                onClick={() => copiarLinkCupom(cupom)}
+                                className="px-3 py-1 rounded bg-teal-600 text-white hover:bg-teal-700"
+                                title={cupom.tracking_link}
+                              >
+                                Copiar link
+                              </button>
+                            )}
+                            <button
+                              type="button"
                               onClick={() => startEditCupom(cupom)}
                               className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
                             >
@@ -1914,6 +1963,131 @@ function PontosContent() {
               <div className="text-gray-600 dark:text-gray-300">Nenhum cupom cadastrado.</div>
             )}
           </div>
+
+          {detalheCupom && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setDetalheCupom(null)}
+            >
+              <div
+                className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      Cupom {detalheCupom.codigo}
+                    </h4>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {detalheCupom.tipo_campanha}
+                      {detalheCupom.influencer_nome ? ` · ${detalheCupom.influencer_nome}` : ''}
+                      {' · '}
+                      {detalheCupom.ativo ? 'Ativo' : 'Inativo'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDetalheCupom(null)}
+                    className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-900"
+                  >
+                    Fechar
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                  <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+                    <div className="text-xl font-bold text-primary-600">{detalheCupom.stats?.usageCount ?? 0}</div>
+                    <div className="text-xs text-gray-500">Usos</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+                    <div className="text-xl font-bold text-primary-600">{detalheCupom.stats?.uniqueCustomers ?? 0}</div>
+                    <div className="text-xs text-gray-500">Clientes únicos</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+                    <div className="text-xl font-bold text-gray-900 dark:text-white">{formatBRL(detalheCupom.stats?.grossAmount)}</div>
+                    <div className="text-xs text-gray-500">Valor bruto</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+                    <div className="text-xl font-bold text-amber-600">{formatBRL(detalheCupom.stats?.discountAmount)}</div>
+                    <div className="text-xs text-gray-500">Desconto concedido</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+                    <div className="text-xl font-bold text-green-600">{formatBRL(detalheCupom.stats?.netAmount)}</div>
+                    <div className="text-xs text-gray-500">Valor líquido</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-center">
+                    <div className="text-xl font-bold text-purple-600">{formatBRL(detalheCupom.stats?.estimatedCommission)}</div>
+                    <div className="text-xs text-gray-500">
+                      Comissão estimada
+                      {detalheCupom.commission_percentage !== '' && detalheCupom.commission_percentage != null
+                        ? ` (${Number(detalheCupom.commission_percentage)}%)`
+                        : ''}
+                    </div>
+                  </div>
+                </div>
+
+                {detalheCupom.tracking_link && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Link rastreado
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={detalheCupom.tracking_link}
+                        className="flex-1 p-2 border border-gray-300 rounded-lg bg-gray-50 dark:bg-gray-700 text-sm"
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copiarLinkCupom(detalheCupom)}
+                        className="px-3 py-2 rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+                      >
+                        Copiar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <h5 className="font-semibold text-gray-900 dark:text-white mb-2">Últimos usos</h5>
+                {detalheCupom.usages?.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="text-left border-b">
+                          <th className="py-2 pr-4">Data</th>
+                          <th className="py-2 pr-4">Reserva</th>
+                          <th className="py-2 pr-4">Cliente</th>
+                          <th className="py-2 pr-4">Bruto</th>
+                          <th className="py-2 pr-4">Desconto</th>
+                          <th className="py-2 pr-4">Líquido</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detalheCupom.usages.map((uso) => (
+                          <tr key={uso.id} className="border-b">
+                            <td className="py-2 pr-4">
+                              {uso.created_at ? new Date(uso.created_at).toLocaleDateString('pt-BR') : '—'}
+                            </td>
+                            <td className="py-2 pr-4">{uso.reservation_code || uso.reservation_id || '—'}</td>
+                            <td className="py-2 pr-4">{uso.customer_name || '—'}</td>
+                            <td className="py-2 pr-4">{formatBRL(uso.gross_amount)}</td>
+                            <td className="py-2 pr-4">{formatBRL(uso.discount_amount)}</td>
+                            <td className="py-2 pr-4">{formatBRL(uso.net_amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-gray-600 dark:text-gray-300 text-sm">Nenhum uso registrado ainda.</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

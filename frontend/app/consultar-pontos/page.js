@@ -487,6 +487,18 @@ export default function ConsultarPontos() {
           </div>
 
           <p>{rewardProgressText}</p>
+
+          <button
+            type="button"
+            className="invite-friends-button"
+            onClick={() => router.push(withCpfParam('/meu-cupom', cpf))}
+          >
+            <span>
+              <Gift size={18} strokeWidth={1.8} />
+              Convidar amigos — Meu Cupom
+            </span>
+            <ArrowRight size={18} strokeWidth={1.9} />
+          </button>
         </section>
 
         <section className="exclusive-section">
@@ -1052,6 +1064,32 @@ export default function ConsultarPontos() {
           margin: 4px 0 0;
           color: #fff3dd;
           font-size: 0.74rem;
+        }
+
+        .invite-friends-button {
+          width: 100%;
+          min-height: 42px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-top: 12px;
+          padding: 0 14px;
+          color: var(--gold);
+          border: 1px solid rgba(246, 198, 55, 0.58);
+          border-radius: 8px;
+          background: rgba(7, 6, 4, 0.84);
+          font-family: 'Cinzel', serif;
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          cursor: pointer;
+        }
+
+        .invite-friends-button span {
+          display: flex;
+          align-items: center;
+          gap: 9px;
         }
 
         .exclusive-section {

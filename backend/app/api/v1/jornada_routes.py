@@ -26,6 +26,14 @@ class RewardRedeemRequest(BaseModel):
     cpf: Optional[str] = None
 
 
+class MeuCupomGerarRequest(BaseModel):
+    cpf: str
+
+
+class MeuResgateRenovarRequest(BaseModel):
+    cpf: str
+
+
 class PromoPrimeirosConfigRequest(BaseModel):
     ativo: bool = True
     pontos: int
@@ -239,6 +247,138 @@ async def redeem_reward(
         "remaining_redeemable_points": result.get("novo_saldo"),
         "message": result.get("mensagem") or "Prêmio resgatado com sucesso.",
     }
+
+
+def _primeiro_nome(nome: Optional[str]) -> str:
+    partes = (nome or "").strip().split()
+    return partes[0] if partes else "Cliente"
+
+
+async def _resolver_cliente_publico(cpf: str) -> dict:
+    cliente = await _get_customer_by_document(cpf)
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+    return cliente
+
+
+def _montar_payload_meu_cupom(cliente: dict, cupom: dict, usos: list, indicacoes: list) -> dict:
+    from app.services.indicacao_service import PONTOS_CONVITE_REAL
+
+    creditadas = sum(1 for item in indicacoes if item.get("pontos_creditados"))
+    status = cupom.get("status_efetivo") or cupom.get("status")
+
+    return {
+        "success": True,
+        "customer_id": int(cliente["id"]),
+        "customer_name": cliente.get("nome_completo"),
+        "coupon": {
+            "code": cupom.get("codigo"),
+            "codigo": cupom.get("codigo"),
+            "status": status,
+            "active": status == "active",
+            "discount_percentage": cupom.get("valor_desconto"),
+            "bonus_points": cupom.get("pontos_bonus") or 0,
+            "current_uses": cupom.get("total_usos") or 0,
+            "max_uses": cupom.get("limite_total_usos"),
+            "expires_at": cupom.get("data_fim"),
+            "link": cupom.get("link_rastreado"),
+            "whatsapp_message": cupom.get("whatsapp_message"),
+            "whatsapp_share_url": cupom.get("whatsapp_share_url"),
+            "points_per_referral": PONTOS_CONVITE_REAL,
+        },
+        # Historico enxuto de usos: so primeiro nome do amigo, sem documento,
+        # porque este endpoint e publico (consultado por CPF, sem login).
+        "usages": [
+            {
+                "friend_name": _primeiro_nome(uso.get("customer_name")),
+                "used_at": uso.get("created_at"),
+                "discount_amount": uso.get("discount_amount"),
+            }
+            for uso in usos
+        ],
+        "referrals_total": len(indicacoes),
+        "referrals_credited": creditadas,
+        "referral_points_earned": creditadas * PONTOS_CONVITE_REAL,
+    }
+
+
+def _get_cupom_service_jornada():
+    from app.repositories.cupom_repo import CupomRepository
+    from app.services.cupom_service import CupomService
+
+    return CupomService(CupomRepository(get_db()))
+
+
+@router.get("/jornada/meu-cupom", response_model=dict)
+async def obter_meu_cupom_jornada(
+    cpf: str = Query(..., min_length=11),
+    _rate_limit: None = Depends(rate_limit_moderate),
+):
+    """Cupom Convite Real do cliente (tela publica "Meu Cupom"): devolve o
+    cupom amigo mais recente (criando o primeiro automaticamente), link
+    rastreado, mensagem de WhatsApp e historico de usos/pontos ganhos."""
+    from app.services.indicacao_service import IndicacaoService
+
+    cliente = await _resolver_cliente_publico(cpf)
+    service = _get_cupom_service_jornada()
+
+    cupom = await service.obter_ou_criar_cupom_amigo_cliente(int(cliente["id"]))
+    usos = await service.listar_usos_cupom(cupom["codigo"])
+    indicacoes_resp = await IndicacaoService(get_db()).listar_indicacoes_cliente(int(cliente["id"]))
+    indicacoes = indicacoes_resp.get("indicacoes") or []
+
+    return _montar_payload_meu_cupom(cliente, cupom, usos, indicacoes)
+
+
+@router.post("/jornada/meu-cupom/gerar", response_model=dict, status_code=201)
+async def gerar_novo_meu_cupom_jornada(
+    payload: MeuCupomGerarRequest,
+    _rate_limit: None = Depends(rate_limit_strict),
+):
+    """Gera novo cupom Convite Real quando o atual expirou/esgotou."""
+    from app.services.indicacao_service import IndicacaoService
+
+    cliente = await _resolver_cliente_publico(payload.cpf)
+    service = _get_cupom_service_jornada()
+
+    cupom = await service.gerar_novo_cupom_amigo_cliente(int(cliente["id"]))
+    indicacoes_resp = await IndicacaoService(get_db()).listar_indicacoes_cliente(int(cliente["id"]))
+    indicacoes = indicacoes_resp.get("indicacoes") or []
+
+    return _montar_payload_meu_cupom(cliente, cupom, [], indicacoes)
+
+
+@router.get("/jornada/meus-resgates", response_model=dict)
+async def listar_meus_resgates_jornada(
+    cpf: str = Query(..., min_length=11),
+    _rate_limit: None = Depends(rate_limit_moderate),
+):
+    """Resgates do cliente com status do codigo (ativo/utilizado/expirado/
+    cancelado) para a tela publica de premios."""
+    cliente = await _resolver_cliente_publico(cpf)
+    resgates = await PremioRepositoryAtomic(get_db()).listar_resgates_cliente(int(cliente["id"]))
+    return {"success": True, "total": len(resgates), "resgates": resgates}
+
+
+@router.post("/jornada/resgates/{resgate_id}/renovar", response_model=dict)
+async def renovar_meu_codigo_resgate_jornada(
+    resgate_id: int,
+    payload: MeuResgateRenovarRequest,
+    _rate_limit: None = Depends(rate_limit_strict),
+):
+    """Renova o codigo de resgate do proprio cliente: cancela o codigo antigo
+    e gera um novo ativo. Exige que o resgate pertenca ao CPF informado."""
+    cliente = await _resolver_cliente_publico(payload.cpf)
+    repo = PremioRepositoryAtomic(get_db())
+
+    resgates = await repo.listar_resgates_cliente(int(cliente["id"]))
+    if not any(int(item["id"]) == int(resgate_id) for item in resgates):
+        raise HTTPException(status_code=404, detail="Resgate não encontrado para este cliente.")
+
+    resultado = await repo.renovar_codigo_resgate(resgate_id=resgate_id, funcionario_id=None)
+    if not resultado.get("success"):
+        raise HTTPException(status_code=400, detail=resultado.get("error"))
+    return resultado
 
 
 @router.get("/jornada/config", response_model=dict)

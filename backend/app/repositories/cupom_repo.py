@@ -47,6 +47,15 @@ class CupomRepository:
             return None
         return self._serialize_cupom(cupom)
 
+    async def get_amigo_by_cliente(self, cliente_id: int) -> Optional[Dict[str, Any]]:
+        cupom = await self.db.cupom.find_first(
+            where={"clienteIndicadorId": cliente_id, "tipoCampanha": "CUPOM_AMIGO"},
+            order={"createdAt": "desc"},
+        )
+        if not cupom:
+            return None
+        return self._serialize_cupom(cupom)
+
     async def create(self, data: Dict[str, Any], criado_por: Optional[int] = None) -> Dict[str, Any]:
         codigo = self._normalizar_codigo(data["codigo"])
         tipo = self._normalizar_tipo_desconto(data["tipo_desconto"])

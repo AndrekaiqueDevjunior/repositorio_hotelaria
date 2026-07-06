@@ -1,6 +1,6 @@
 import secrets
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
@@ -9,6 +9,12 @@ from fastapi import HTTPException
 
 from app.repositories.cupom_repo import CupomRepository
 from app.utils.datetime_utils import now_utc, to_utc
+
+
+CUPOM_AMIGO_DESCONTO_PADRAO = Decimal("10")
+CUPOM_AMIGO_PONTOS_BONUS_PADRAO = 0
+CUPOM_AMIGO_DIAS_VALIDADE_PADRAO = 90
+CUPOM_AMIGO_LIMITE_USOS_PADRAO = 5
 
 
 class CupomService:
@@ -98,6 +104,69 @@ class CupomService:
             except Exception as exc:
                 cupom["whatsapp_send_result"] = {"success": False, "error": str(exc)}
         return self._enriquecer_cupom_com_links(cupom)
+
+    def _status_efetivo_cupom(self, cupom: Dict[str, Any]) -> str:
+        """Status real do cupom mesmo quando a marcacao no banco e lazy
+        (expiracao/esgotamento so sao gravados ao tentar validar/usar)."""
+        status = (cupom.get("status") or "").lower()
+        if status != "active" or not cupom.get("ativo"):
+            return status or "cancelled"
+
+        data_fim = cupom.get("data_fim")
+        if data_fim:
+            try:
+                fim = to_utc(datetime.fromisoformat(str(data_fim).replace("Z", "+00:00")))
+                if fim and fim < now_utc():
+                    return "expired"
+            except ValueError:
+                pass
+
+        limite = cupom.get("limite_total_usos")
+        if limite and int(cupom.get("total_usos") or 0) >= int(limite):
+            return "max_usage_reached"
+
+        return "active"
+
+    async def obter_ou_criar_cupom_amigo_cliente(self, cliente_id: int) -> Dict[str, Any]:
+        """Cupom Convite Real do proprio cliente: devolve o mais recente ou
+        cria o primeiro automaticamente com os padroes da Jornada Real."""
+        cupom = await self.cupom_repo.get_amigo_by_cliente(cliente_id)
+        if not cupom:
+            cupom = await self.criar_cupom_amigo(
+                cliente_id=cliente_id,
+                percentual_desconto=CUPOM_AMIGO_DESCONTO_PADRAO,
+                pontos_bonus=CUPOM_AMIGO_PONTOS_BONUS_PADRAO,
+                dias_validade=CUPOM_AMIGO_DIAS_VALIDADE_PADRAO,
+                limite_total_usos=CUPOM_AMIGO_LIMITE_USOS_PADRAO,
+            )
+        else:
+            cupom = self._enriquecer_cupom_com_links(cupom, convite_real=True)
+
+        cupom["status_efetivo"] = self._status_efetivo_cupom(cupom)
+        return cupom
+
+    async def gerar_novo_cupom_amigo_cliente(self, cliente_id: int) -> Dict[str, Any]:
+        """Gera novo cupom Convite Real quando o atual expirou/esgotou."""
+        atual = await self.cupom_repo.get_amigo_by_cliente(cliente_id)
+        if atual and self._status_efetivo_cupom(atual) == "active":
+            raise HTTPException(
+                status_code=400,
+                detail="Seu cupom atual ainda esta ativo. Gere um novo apenas quando ele expirar ou esgotar.",
+            )
+
+        cupom = await self.criar_cupom_amigo(
+            cliente_id=cliente_id,
+            percentual_desconto=CUPOM_AMIGO_DESCONTO_PADRAO,
+            pontos_bonus=CUPOM_AMIGO_PONTOS_BONUS_PADRAO,
+            dias_validade=CUPOM_AMIGO_DIAS_VALIDADE_PADRAO,
+            limite_total_usos=CUPOM_AMIGO_LIMITE_USOS_PADRAO,
+        )
+        cupom["status_efetivo"] = "active"
+        return cupom
+
+    async def listar_usos_cupom(self, codigo: str, usage_limit: int = 25) -> List[Dict[str, Any]]:
+        cupom = await self.cupom_repo.get_admin_by_codigo(codigo, include_usages=True, usage_limit=usage_limit)
+        return (cupom or {}).get("usages", [])
 
     async def criar_cupom_rastreado(
         self,

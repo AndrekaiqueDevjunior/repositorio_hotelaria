@@ -1,5 +1,7 @@
 # Jornada Real - Checklist de Funcionalidades
 
+**Atualizacao executiva 2026-07-06:** Fechadas as 3 pendencias de frontend que restavam. JR-01: nova tela publica `/meu-cupom` (codigo, copiar link, compartilhar WhatsApp via `whatsapp_share_url`, historico de amigos e pontos ganhos), servida pelos novos endpoints publicos `GET /jornada/meu-cupom` e `POST /jornada/meu-cupom/gerar` (cupom amigo e criado automaticamente no primeiro acesso; regenera so quando expirado/esgotado). JR-07: `/resgate_dos_premios` ganhou secao "Meus resgates" com status do codigo (ativo/utilizado/expirado/cancelado) e botao "Renovar codigo" chamando `POST /jornada/resgates/{id}/renovar` (novo endpoint publico com checagem de posse por CPF); tela Meu Cupom mostra "X/5 usos" e "gere um novo". JR-09: painel `/(dashboard)/pontos-admin` agora exibe/copia o link rastreado e tem modal "Detalhes" com metricas reais (usos, clientes unicos, bruto/desconto/liquido, comissao estimada) e ultimos usos via `GET /admin/coupons/{code}`. JR-02 ja estava completo no codigo desde 2026-07-04 (badge em `/consultar-pontos` + estimativa em `/reservar`); checklist sincronizado. Validado: `70 passed` na suite unitaria (inclui 6 novos em `test_meu_cupom_service.py`) e `next build` OK.
+
 **Atualizacao executiva 2026-07-04:** JR-01 foi validado em service/API/schema/model com `7/7` testes focados passando (`test_indicacao_service.py` + `test_referral_routes.py`); backend corrigido para creditar `50` pontos no Convite Real. Frontend de JR-01 ficou parcial: `/reservar` agora le `?cupom=`/`?codigo=`, valida em `/cupons/validar`, envia `cupom_codigo` para `/public/reservas` e mostra desconto/total, mas ainda falta tela "Meu Cupom" com copiar/WhatsApp/historico. JR-09 foi reconectado parcialmente no admin: `/(dashboard)/pontos-admin` agora usa `/admin/coupons`, gera/edita/desativa por codigo e aceita campanha influencer/comissao; ainda falta UX completa de link rastreado, metricas e detalhes. Validacao rodada: `45 passed` no pacote focado Jornada Real e `next build` OK no frontend.
 
 Roadmap completo com 11 funcionalidades críticas para produção.
@@ -10,29 +12,29 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 
 | # | Funcionalidade | Prioridade | Complexidade | Backend | Frontend | WhatsApp | Testes | Est. |
 |---|---|----------|--------------|---------|----------|----------|--------|------|
-| 1️⃣ | Cupom Amigo | 🔴 Alta | Média | ✅ | 🟡 | 🟡 | ✅ 7/7 | 3-4d |
-| 2️⃣ | Benefícios Níveis | 🔴 Alta | Média | ✅ | 🟡 | N/A | ✅ 5/5 | 2-3d |
+| 1️⃣ | Cupom Amigo | 🔴 Alta | Média | ✅ | ✅ | ✅ | ✅ 13/13 | 3-4d |
+| 2️⃣ | Benefícios Níveis | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 5/5 | 2-3d |
 | 3️⃣ | Barras Progresso | 🔴 Alta | Baixa | ✅ | ✅ | N/A | ✅ 2/2 | 1-2d |
 | 4️⃣ | Aviso Prêmio Próximo | 🟡 Média | Média | ✅ | N/A | ✅ | ✅ 2/2 | 2d |
 | 5️⃣ | Msg Pós Check-out | 🟡 Média | Baixa | ✅ | N/A | ✅ | ✅ 1/1 | 1d |
 | 6️⃣ | Som Check-out | 🟡 Média | Baixa | ✅ | ✅ | N/A | ✅ 2/2 | 1d |
-| 7️⃣ | Invalidar Códigos | 🔴 Alta | Média | ✅ | 🟡 | N/A | ✅ 5/5 | 2d |
+| 7️⃣ | Invalidar Códigos | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 5/5 | 2d |
 | 8️⃣ | Remover Suites Reservadas | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 3/3 | 2d |
-| 9️⃣ | Gerador Cupons | 🟡 Média | Alta | ✅ | 🟡 | N/A | ✅ 3/3 | 4-5d |
+| 9️⃣ | Gerador Cupons | 🟡 Média | Alta | ✅ | ✅ | N/A | ✅ 3/3 | 4-5d |
 | 🔟 | Confirmação Check-in Admin | 🟡 Média | Média | ✅ | ✅ | ✅ | ✅ 4/4 | 2-3d |
 | 1️⃣1️⃣ | Autenticar Cadastro | 🔴 Alta | Média | ✅ | ✅ | ✅ | ✅ 6/6 | 2d |
 
 ### Sincronizacao dominio + backend + frontend
 
-- [ ] 🟡 1️⃣ Cupom Amigo / Convite Real: backend, API e reserva publica sincronizados; `/reservar` valida/aplica cupom. Falta tela "Meu Cupom" com copiar, WhatsApp direto e historico.
-- [ ] 🟡 2️⃣ Beneficios dos niveis: backend calcula Experiencia 2x e Real 4x; frontend consulta/exibe nivel, mas falta mostrar estimativa de ganho na reserva.
+- [x] ✅ 1️⃣ Cupom Amigo / Convite Real: backend, API e reserva publica sincronizados; `/reservar` valida/aplica cupom; tela `/meu-cupom` com copiar, WhatsApp direto e historico de usos/pontos.
+- [x] ✅ 2️⃣ Beneficios dos niveis: backend calcula Experiencia 2x e Real 4x; `/consultar-pontos` exibe badge do bonus e `/reservar` mostra estimativa de pontos com multiplicador real.
 - [x] ✅ 3️⃣ Barras de progresso: backend entrega progresso de nivel/premios e `/consultar-pontos` exibe dados reais.
 - [x] ✅ 4️⃣ Aviso de premio proximo: backend + WhatsApp sincronizados; sem tela obrigatoria.
 - [x] ✅ 5️⃣ Mensagem pos check-out: backend + WhatsApp sincronizados; link leva o cliente para conferir pontos.
 - [x] ✅ 6️⃣ Som de check-out: backend gera alerta e frontend de reservas/dashboard notifica com som/quarto.
-- [ ] 🟡 7️⃣ Invalidar codigos usados: backend invalida/esgota/renova; frontend mostra parte do status, mas falta UX completa para cupom amigo e renovacao.
+- [x] ✅ 7️⃣ Invalidar codigos usados: backend invalida/esgota/renova; `/resgate_dos_premios` lista "Meus resgates" com status (ativo/utilizado/expirado/cancelado) e renovacao; `/meu-cupom` mostra usos X/5 e regeneracao.
 - [x] ✅ 8️⃣ Remover suites reservadas: backend filtra disponibilidade e `/reservar` consome a lista real.
-- [ ] 🟡 9️⃣ Gerador de cupons: admin frontend ja usa `/admin/coupons` e envia influencer/comissao; falta UX completa de link rastreado, metricas e detalhes.
+- [x] ✅ 9️⃣ Gerador de cupons: admin frontend usa `/admin/coupons`, envia influencer/comissao, exibe/copia link rastreado e abre modal de detalhes com metricas e ultimos usos.
 - [x] ✅ 🔟 Check-in dinheiro com aprovacao admin: backend, WhatsApp e painel admin sincronizados.
 - [x] ✅ 1️⃣1️⃣ Autenticar cadastro: `/reservar` consulta/cria cliente, envia/valida OTP e backend bloqueia reserva sem token valido.
 
@@ -74,19 +76,19 @@ Depois me conta 🔥
 - [x] ✅ Validação: código ativo, não expirado, sem max uso atingido
 
 ### Frontend Necessário
-**Status Frontend:** 🟡 Parcial — `/reservar` ja recebe cupom por query string/digitacao, valida em `/cupons/validar`, envia `cupom_codigo` e exibe desconto/total. Ainda falta tela "Meu Cupom" com copiar, compartilhar WhatsApp e historico.
+**Status Frontend:** ✅ Completo — `/reservar` valida/aplica cupom e a nova tela `/meu-cupom` (2026-07-06) cobre codigo, copiar, WhatsApp e historico, alimentada por `GET /jornada/meu-cupom?cpf=` (cria o primeiro cupom automaticamente) e `POST /jornada/meu-cupom/gerar` (regenera quando expirado/esgotado).
 
-- [ ] Tela "Meu Cupom" em `/entrar-jornada-real` ou novo route `/meu-cupom`
-- [ ] Exibe código gerado
-- [ ] Botão "Copiar" → copia link com código
-- [ ] Botão "Compartilhar WhatsApp" → abre WhatsApp com mensagem pré-preenchida
-- [ ] Historico de usos do código (quantos amigos usaram, pontos ganhos)
+- [x] ✅ Tela "Meu Cupom" no novo route `/meu-cupom` (link "Convidar amigos" em `/consultar-pontos`)
+- [x] ✅ Exibe código gerado
+- [x] ✅ Botão "Copiar" → copia link com código
+- [x] ✅ Botão "Compartilhar WhatsApp" → abre WhatsApp com mensagem pré-preenchida (`whatsapp_share_url`)
+- [x] ✅ Historico de usos do código (amigos que usaram, pontos ganhos com convites)
 
 - [x] ✅ `/reservar` valida e aplica `cupom_codigo` com dados reais do backend
 
 ### WhatsApp Necessário
-- [ ] Integração com Twilio/Z-API/Evolution API
-- [ ] Template com variáveis:
+- [x] ✅ Compartilhamento direto do cliente via `wa.me` com mensagem pronta; envio via Twilio disponivel na rota de referral
+- [x] ✅ Template com variáveis:
   ```
   {{NOME_CLIENTE}} está na Jornada Real do Hotel Real 😮
   Se você reservar por esse link, a gente ganha benefícios
@@ -143,11 +145,11 @@ Cada nível concede bônus % de pontos nas reservas.
 - [x] ✅ Registrar bônus em metadata estruturada da `TransacaoPontos` com pontos base, bônus percentual, pontos bônus, nível e total final
 
 ### Frontend Necessário
-**Status Frontend:** 🟡 Parcial — `/nivel_jornada_real` chama `GET /customers/{cpf}/loyalty`, determina o nível real do cliente e exibe `currentLevel.benefits` incluindo "+20% de pontos por reserva". O que falta é o badge de bônus em `/consultar-pontos` e a estimativa em `/reservar`.
+**Status Frontend:** ✅ Completo (2026-07-04) — `/nivel_jornada_real` exibe os benefícios do nível, `/consultar-pontos` mostra o badge "Nível X: seus pontos valem Nx em cada reserva" e `/reservar` exibe a estimativa de pontos com o multiplicador real do cliente via `/jornada/regras` + `/customers/{cpf}/loyalty`.
 
-- [x] 🟡 `/nivel_jornada_real` → exibe bônus como benefício do nível atual (via dados reais de loyalty)
-- [ ] `/consultar-pontos` → mostrar "Seu bônus atual: +20%" sob o nível
-- [ ] `/reservar` → ao confirmar reserva, exibir estimativa:
+- [x] ✅ `/nivel_jornada_real` → exibe bônus como benefício do nível atual (via dados reais de loyalty)
+- [x] ✅ `/consultar-pontos` → badge de bônus do nível sob a barra de progresso
+- [x] ✅ `/reservar` → ao confirmar reserva, exibir estimativa:
   ```
   Sua reserva: R$500
   Pontos base: 50
@@ -430,12 +432,12 @@ Código novo: REAL-XYZ789GHI → ACTIVE
   - ✅ `POST /api/v1/codigos/maintenance/invalidar-vencidos` executa a rotina administrativa protegida
 
 ### Frontend Necessário
-**Status Frontend:** 🟡 Parcial — `resgate_dos_premios/page.js` já lê `codigo_status`/`status` da API, mostra "Código ativo" badge e exibe "válido até {data}". Falta tratar estado expirado/cancelado visualmente e botão de renovação. Cupom amigo (3/5 usos) ainda ausente.
+**Status Frontend:** ✅ Completo (2026-07-06) — `/resgate_dos_premios` tem seção "Meus resgates" (via `GET /jornada/meus-resgates?cpf=`) com chips de status, código riscado quando inválido e botão de renovação; `/meu-cupom` mostra status e usos do cupom amigo.
 
-- [ ] ❌ Cupom Amigo: mostrar "Status: Ativo | 3/5 usos"
-- [ ] ❌ Se status = USED: mostrar "Cupom expirou, gere um novo"
-- [x] 🟡 Resgate de prêmio: exibe "Código ativo" quando `status == active`, mostra data de validade
-- [ ] ❌ Quando `status == expired/cancelled`: mostrar "Código expirado" + botão "Renovar código" (`POST /codigos/resgates/{id}/renovar`)
+- [x] ✅ Cupom Amigo: `/meu-cupom` mostra "Cupom ativo · X/5 usos"
+- [x] ✅ Se esgotado/expirado: mostra "gere um novo" + botão "Gerar novo cupom"
+- [x] ✅ Resgate de prêmio: exibe "Código ativo" quando `status == active`, mostra data de validade
+- [x] ✅ Quando `status == expired/cancelled`: mostra "Código expirado/cancelado" + botão "Renovar código" (`POST /jornada/resgates/{id}/renovar`, público com posse por CPF; staff segue usando `POST /codigos/resgates/{id}/renovar`)
 
 ### Testes
 ```bash
@@ -572,13 +574,13 @@ Status: ATIVO
   - ✅ Dashboard admin retorna usos, clientes únicos, valor bruto, desconto, valor líquido e comissão estimada
 
 ### Frontend Necessário
-**Status Frontend:** 🟡 Parcial — painel admin em `/(dashboard)/pontos-admin` esta conectado ao contrato novo `/admin/coupons/*` para listar, criar, editar e desativar por codigo. `/reservar` tambem valida e envia cupom. Ainda falta UX completa de link rastreado, metricas/detalhes de uso e copia/compartilhamento.
+**Status Frontend:** ✅ Completo (2026-07-06) — painel admin em `/(dashboard)/pontos-admin` conectado ao contrato `/admin/coupons/*` com criacao, edicao, desativacao, copia do link rastreado e modal "Detalhes" com metricas (usos, clientes unicos, bruto/desconto/liquido, comissao estimada) e ultimos usos.
 
-- [ ] Painel admin:
+- [x] ✅ Painel admin:
   - [x] ✅ Formulario "Criar Cupom" conectado a `/admin/coupons/generate`
   - [x] ✅ Tabela de cupons conectada a `GET /admin/coupons`
   - [x] ✅ Botao "Desativar cupom" aponta para `/admin/coupons/{code}`
-  - [ ] Exibir/copiar link rastreado e abrir detalhes de usos/metricas
+  - [x] ✅ Botao "Copiar link" (link rastreado) e modal "Detalhes" com usos/metricas via `GET /admin/coupons/{code}`
 
 - [ ] Página pública:
   - [x] Campo "Cupom de desconto" na pagina de reserva
@@ -806,11 +808,11 @@ cd frontend && npm run build
 ## 📅 Roadmap Recomendado
 
 ### Fase 1: MVP (Semana 1-2)
-- [ ] 1️⃣ Cupom Amigo (backend ✅ testes ✅; `/reservar` ✅; falta tela "Meu Cupom" + WhatsApp direto/historico)
-- [ ] 2️⃣ Benefícios Níveis (backend ✅; 🟡 parcial — nivel_jornada_real exibe bônus, falta badge em consultar-pontos e estimativa em reservar)
+- [x] ✅ 1️⃣ Cupom Amigo (backend ✅ testes ✅; `/reservar` ✅; tela `/meu-cupom` com WhatsApp direto/historico ✅)
+- [x] ✅ 2️⃣ Benefícios Níveis (backend ✅; badge em consultar-pontos e estimativa em reservar ✅)
 - [x] ✅ 3️⃣ Barras Progresso (backend + frontend + testes ✅)
 - [x] ✅ 8️⃣ Remover Suites Reservadas (backend + frontend ✅)
-- [ ] 7️⃣ Invalidar Códigos (backend ✅; 🟡 parcial — resgate mostra "Código ativo" mas falta "Expirado" + renovar)
+- [x] ✅ 7️⃣ Invalidar Códigos (backend ✅; "Meus resgates" com expirado/cancelado + renovar ✅)
 
 **Saída:** Sistema de pontos e níveis funcional end-to-end
 
@@ -824,7 +826,7 @@ cd frontend && npm run build
 
 ### Fase 3: Autenticação & Cupons (Semana 4-5)
 - [x] ✅ 1️⃣1️⃣ Autenticar Cadastro (backend + frontend `/reservar` + WhatsApp ✅)
-- [ ] 9️⃣ Gerador Cupons (backend ✅; painel admin e campo de reserva ✅; falta UX de link rastreado/metricas/detalhes)
+- [x] ✅ 9️⃣ Gerador Cupons (backend ✅; painel admin com link rastreado, métricas e detalhes ✅)
 
 **Saída:** Sistema completo com segurança e promoções
 

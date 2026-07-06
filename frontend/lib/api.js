@@ -21,6 +21,7 @@ function extrairMensagemErro(error) {
 const ROTAS_PUBLICAS_JORNADA_REAL = [
   '/consultar-pontos',
   '/entrar-jornada-real',
+  '/meu-cupom',
   '/nivel_jornada_real',
   '/resgate_dos_premios',
   '/termos-jornada-real',
