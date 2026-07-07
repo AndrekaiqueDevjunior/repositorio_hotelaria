@@ -136,25 +136,6 @@ class WhatsAppService:
                 "error": str(exc),
             }
 
-    async def _send_notification(self, mensagem: str) -> Dict[str, Any]:
-        """Envia a mensagem para TODOS os numeros de notificacao configurados.
-
-        Retorna o resultado do primeiro envio (compatibilidade) e a lista
-        completa de resultados em `resultados`.
-        """
-        numeros = self.notification_numbers or ([self.notification_number] if self.notification_number else [])
-        if not numeros:
-            return {"success": False, "error": "Nenhum numero de notificacao configurado"}
-
-        resultados = []
-        for numero in numeros:
-            resultados.append(await self._send_message(numero, mensagem))
-
-        principal = resultados[0]
-        principal["resultados"] = resultados
-        principal["success"] = any(r.get("success") for r in resultados)
-        return principal
-
     async def _send_template(
         self,
         to_number: str,
@@ -194,6 +175,42 @@ class WhatsAppService:
                 "success": False,
                 "error": str(exc),
             }
+
+    @staticmethod
+    def _sanitize_template_var(value: Any, max_len: int = 160) -> str:
+        """Variaveis de content template nao podem ter quebra de linha, tab ou
+        4+ espacos seguidos (erros Twilio 63028/63021); valores longos podem
+        ser rejeitados. Colapsa whitespace e trunca."""
+        texto = " ".join(str(value if value is not None else "").split())
+        if len(texto) > max_len:
+            texto = texto[: max_len - 3] + "..."
+        return texto or "-"
+
+    async def _send_admin_template(self, variables: Dict[str, Any]) -> Dict[str, Any]:
+        """Envia alerta interno para todos os numeros de notificacao via o
+        content template aprovado TEMPLATE_RESERVA_CONFIRMADA (5 slots).
+
+        Texto livre business-initiated fora da janela de 24h cai em
+        undelivered (erro Twilio 63016) sem falhar o create — por isso os
+        alertas admin nao usam _send_message e nao ha fallback free-form
+        (ele mascararia a falha com falso sucesso).
+        """
+        numeros = self.notification_numbers or ([self.notification_number] if self.notification_number else [])
+        if not numeros:
+            return {"success": False, "error": "Nenhum numero de notificacao configurado"}
+
+        # Template aprovado exige exatamente os slots "1".."5" preenchidos.
+        vars_final = {str(i): self._sanitize_template_var(variables.get(str(i), "-")) for i in range(1, 6)}
+
+        resultados = [
+            await self._send_template(numero, self.TEMPLATE_RESERVA_CONFIRMADA, vars_final)
+            for numero in numeros
+        ]
+        # Copia para nao sobrescrever o success individual de resultados[0]
+        principal = dict(resultados[0])
+        principal["resultados"] = resultados
+        principal["success"] = any(r.get("success") for r in resultados)
+        return principal
 
     async def enviar_mensagem_customizada(self, to_number: str, mensagem: str) -> Dict[str, Any]:
         return await self._send_message(to_number, mensagem)
@@ -269,23 +286,13 @@ class WhatsAppService:
         link_reserva = self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
         link_comprovante = self._build_link("/comprovantes", {"comprovanteId": comprovante_id})
         link_aprovacao = approval_url or self._build_link("/checkin-approvals", {"code": approval_code})
-        linhas = [
-            "Pagamento em dinheiro aguardando liberação de check-in",
-            "",
-            f"Reserva: {codigo_reserva}",
-            f"Cliente: {cliente_nome}",
-            f"Valor: R$ {float(valor or 0):.2f}",
-            "Ação: conferir comprovante e liberar check-in no sistema.",
-        ]
-        if approval_code:
-            linhas.append(f"Codigo: {approval_code}")
-        if link_reserva:
-            linhas.append(f"Reserva: {link_reserva}")
-        if link_comprovante:
-            linhas.append(f"Comprovante: {link_comprovante}")
-        if link_aprovacao:
-            linhas.append(f"Confirmar: {link_aprovacao}")
-        return await self._send_notification("\n".join(linhas))
+        return await self._send_admin_template({
+            "1": f"{codigo_reserva} - DINHEIRO/CHECK-IN PENDENTE - {cliente_nome}",
+            "2": f"Codigo: {approval_code or '-'}",
+            "3": f"Aprovar: {link_aprovacao or '-'}",
+            "4": f"Comprovante: {link_comprovante or link_reserva or '-'}",
+            "5": f"{float(valor or 0):.2f}",
+        })
 
     async def enviar_notificacao_resgate_premio(
         self,
@@ -296,46 +303,15 @@ class WhatsAppService:
         pontos_usados: int,
         codigo_resgate: str,
     ) -> Dict[str, Any]:
-        endereco_texto = cliente_endereco or "Endereco nao informado"
-        telefone_texto = cliente_telefone or "Telefone nao informado"
-        mensagem = (
-            "Novo resgate de premio\n\n"
-            f"Cliente: {cliente_nome}\n"
-            f"Telefone: {telefone_texto}\n"
-            f"Endereco: {endereco_texto}\n"
-            f"Premio: {premio_nome}\n"
-            f"Pontos usados: {pontos_usados}\n"
-            f"Codigo do resgate: {codigo_resgate}"
-        )
-        return await self._send_notification(mensagem)
-
-    async def enviar_notificacao_nova_reserva(
-        self,
-        cliente_nome: str,
-        codigo_reserva: str,
-        quarto_numero: str,
-        checkin_previsto: str,
-        checkout_previsto: str,
-        valor_total: float,
-        status: str,
-        reserva_id: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        link_reservas = (
-            self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
-        )
-        mensagem = (
-            "Nova reserva recebida\n\n"
-            f"Codigo: {codigo_reserva}\n"
-            f"Cliente: {cliente_nome}\n"
-            f"Quarto: {quarto_numero}\n"
-            f"Check-in: {checkin_previsto}\n"
-            f"Check-out: {checkout_previsto}\n"
-            f"Valor: R$ {float(valor_total or 0):.2f}\n"
-            f"Status: {status}"
-        )
-        if link_reservas:
-            mensagem += f"\n\nAcessar: {link_reservas}"
-        return await self._send_notification(mensagem)
+        # Resgate e em pontos: slot 5 (valor "R$" no corpo do template) fica
+        # 0.00 e os pontos vao junto do endereco no slot 4.
+        return await self._send_admin_template({
+            "1": f"RESGATE {codigo_resgate} - {cliente_nome}",
+            "2": f"Premio: {premio_nome}",
+            "3": f"Tel: {cliente_telefone or 'nao informado'}",
+            "4": f"End: {cliente_endereco or 'nao informado'} | {pontos_usados} pontos",
+            "5": "0.00",
+        })
 
     async def enviar_notificacao_pagamento(
         self,
@@ -353,38 +329,28 @@ class WhatsAppService:
         tef_cupom_cliente_arquivo: Optional[str] = None,
         tef_cupom_estabelecimento_arquivo: Optional[str] = None,
     ) -> Dict[str, Any]:
-        linhas = [
-            f"Pagamento {evento}",
-            "",
-            f"Reserva: {codigo_reserva}",
-            f"Cliente: {cliente_nome}",
-            f"Valor: R$ {float(valor or 0):.2f}",
-        ]
-        if metodo:
-            linhas.append(f"Metodo: {metodo}")
-        if status:
-            linhas.append(f"Status: {status}")
+        partes_tef = []
         if nsu:
-            linhas.append(f"NSU: {nsu}")
-        if (metodo or "").lower() == "tef" or tef_nsu or tef_autorizacao:
-            if tef_nsu:
-                linhas.append(f"TEF NSU: {tef_nsu}")
-            if tef_autorizacao:
-                linhas.append(f"TEF Autorizacao: {tef_autorizacao}")
-            if tef_cupom_cliente_arquivo:
-                linhas.append("Cupom Cliente: disponivel")
-            if tef_cupom_estabelecimento_arquivo:
-                linhas.append("Cupom Estabelecimento: disponivel")
+            partes_tef.append(f"NSU: {nsu}")
+        if tef_nsu:
+            partes_tef.append(f"TEF NSU: {tef_nsu}")
+        if tef_autorizacao:
+            partes_tef.append(f"Aut: {tef_autorizacao}")
+        if tef_cupom_cliente_arquivo:
+            partes_tef.append("Cupom cliente ok")
+        if tef_cupom_estabelecimento_arquivo:
+            partes_tef.append("Cupom estab ok")
         link_pagamentos = (
             self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/pagamentos")
         )
         link_comprovantes = self._build_link("/comprovantes", {"pagamentoId": pagamento_id})
-        if link_pagamentos:
-            linhas.append(f"Acessar reserva: {link_pagamentos}")
-        if link_comprovantes:
-            linhas.append(f"Acessar comprovantes: {link_comprovantes}")
-        mensagem = "\n".join(linhas)
-        return await self._send_notification(mensagem)
+        return await self._send_admin_template({
+            "1": f"PGTO {evento} - {codigo_reserva} - {cliente_nome}",
+            "2": f"Metodo: {metodo or '-'} | Status: {status or '-'}",
+            "3": " | ".join(partes_tef) or "-",
+            "4": link_comprovantes or link_pagamentos or "-",
+            "5": f"{float(valor or 0):.2f}",
+        })
 
     async def enviar_notificacao_nova_reserva_admin(
         self,
@@ -406,25 +372,13 @@ class WhatsAppService:
         variaveis fixas (codigo/checkin/checkout/suite/valor) -- nome do
         cliente e numero do quarto sao combinados nos slots existentes.
         """
-        numeros = self.notification_numbers or ([self.notification_number] if self.notification_number else [])
-        if not numeros:
-            return {"success": False, "error": "Nenhum numero de notificacao configurado"}
-
-        variables = {
+        return await self._send_admin_template({
             "1": f"{codigo_reserva} - {cliente_nome}",
             "2": checkin_previsto,
             "3": checkout_previsto,
             "4": f"{tipo_suite or '-'} (Quarto {quarto_numero or '-'})",
             "5": f"{float(valor_total or 0):.2f}",
-        }
-        resultados = [
-            await self._send_template(numero, self.TEMPLATE_RESERVA_CONFIRMADA, variables)
-            for numero in numeros
-        ]
-        principal = resultados[0]
-        principal["resultados"] = resultados
-        principal["success"] = any(r.get("success") for r in resultados)
-        return principal
+        })
 
     async def enviar_notificacao_evento_reserva(
         self,
@@ -464,59 +418,24 @@ class WhatsAppService:
                 valor_total=valor_total,
             )
 
-        linhas = [
-            f"Reserva {evento}",
-            "",
-            f"Código: {codigo_reserva}",
-            f"Cliente: {cliente_nome}",
-            f"Tipo Suíte: {tipo_suite or '-'}",
-            f"Check-in: {checkin_previsto}",
-            f"Check-out: {checkout_previsto}",
-            f"Valor: R$ {float(valor_total or 0):.2f}",
-            f"Status: {status}",
-            "",
-            "👤 Informações do Cliente",
-            f"Nome: {cliente_nome}",
-        ]
-        if cliente_id is not None:
-            linhas.append(f"ID Cliente: {cliente_id}")
-
-        linhas.extend([
-            "",
-            "🏠 Informações do Quarto",
-            f"Quarto: {quarto_numero}",
-            f"Tipo Suíte: {tipo_suite or '-'}",
-            f"Diárias: {num_diarias if num_diarias is not None else '-'}",
-            "",
-            "📅 Datas da Reserva",
-            "Check-in Previsto:",
-            checkin_previsto,
-            "Check-out Previsto:",
-            checkout_previsto,
-            "",
-            "💰 Detalhes Financeiros",
-        ])
-        if valor_diaria is not None:
-            linhas.append(f"Valor Diária: R$ {float(valor_diaria or 0):.2f}")
-        linhas.extend([
-            f"Nº Diárias: {num_diarias if num_diarias is not None else '-'}",
-            f"Valor Total: R$ {float(valor_total or 0):.2f}",
-            "",
-            "⚙️ Informações de Sistema",
-            f"ID Reserva: {reserva_id if reserva_id is not None else '-'}",
-            f"Criado em: {created_at or '-'}",
-            f"Atualizado em: {updated_at or '-'}",
-            f"Criado por: {criado_por or '-'}",
-        ])
+        # Demais parametros da assinatura (cliente_telefone, origem, created_at
+        # etc.) seguem aceitos por compatibilidade com os callers, mas o dump
+        # longo saiu: como texto livre ele nem chegava (undelivered 63016).
+        slot4 = f"{tipo_suite or '-'} (Quarto {quarto_numero or '-'}) | {status}"
         if detalhe:
-            linhas.extend(["", f"Detalhe: {detalhe}"])
+            slot4 += f" | {detalhe}"
         link_reservas = (
             self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
         )
         if link_reservas:
-            linhas.extend(["", f"Acessar: {link_reservas}"])
-        mensagem = "\n".join(linhas)
-        return await self._send_notification(mensagem)
+            slot4 += f" | {link_reservas}"
+        return await self._send_admin_template({
+            "1": f"{codigo_reserva} - {evento.upper()} - {cliente_nome}",
+            "2": checkin_previsto,
+            "3": checkout_previsto,
+            "4": slot4,
+            "5": f"{float(valor_total or 0):.2f}",
+        })
 
     async def enviar_pontos_pos_checkout(
         self,
@@ -566,24 +485,23 @@ class WhatsAppService:
         link_reserva = (
             self._build_link(f"/reservas/{reserva_id}") if reserva_id else self._build_link("/reservas")
         )
-        linhas = [
-            "Check-in realizado ✅",
-            "",
-            f"Reserva: {codigo_reserva}",
-            f"Cliente: {cliente_nome}",
-            f"Quarto: {quarto_numero}",
-        ]
+        slot2 = f"Quarto {quarto_numero}"
         if num_hospedes is not None:
-            linhas.append(f"Hospedes: {num_hospedes}")
+            slot2 += f" | Hospedes: {num_hospedes}"
         if num_criancas:
-            linhas.append(f"Criancas: {num_criancas}")
+            slot2 += f" | Criancas: {num_criancas}"
+        partes_extra = []
         if placa_veiculo:
-            linhas.append(f"Placa: {placa_veiculo}")
+            partes_extra.append(f"Placa: {placa_veiculo}")
         if observacoes:
-            linhas.append(f"Observacoes: {observacoes}")
-        if link_reserva:
-            linhas.extend(["", f"Acessar: {link_reserva}"])
-        return await self._send_notification("\n".join(linhas))
+            partes_extra.append(f"Obs: {observacoes}")
+        return await self._send_admin_template({
+            "1": f"CHECK-IN REALIZADO - {codigo_reserva} - {cliente_nome}",
+            "2": slot2,
+            "3": " | ".join(partes_extra) or "-",
+            "4": link_reserva or "-",
+            "5": "0.00",
+        })
 
     async def enviar_confirmacao_resgate_cliente(
         self,
