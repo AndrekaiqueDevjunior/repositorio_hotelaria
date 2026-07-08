@@ -201,3 +201,6 @@ Thumbs.db
 Desktop.ini
 .Spotlight-V100
 .Trashes
+
+# Configuracao local do Claude Code (permissoes de sessao; pode conter credenciais)
+.claude/
