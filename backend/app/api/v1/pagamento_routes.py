@@ -388,9 +388,9 @@ async def status_pendencias_tef(
     clear: bool = True,
     current_user: User = Depends(get_current_active_user)
 ):
-    from app.services.tef_service import get_pending_status
+    from app.services.tef_service import get_pending_status_shared
 
-    status = get_pending_status(clear=clear)
+    status = await get_pending_status_shared(clear=clear)
     default_action = "confirm" if settings.TEF_AUTO_RESOLVE_PENDING_CONFIRM else "undo"
     return {"success": True, "default_action": default_action, **status}
 

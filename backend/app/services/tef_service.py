@@ -5,7 +5,7 @@ from typing import Any, Dict
 from urllib.parse import quote_plus
 
 from app.core.config import settings
-from app.core.cache import cache
+from app.core.cache import cache, redis_lock
 
 
 TEF_INTERACTIVE_SESSIONS: Dict[str, Dict[str, Any]] = {}
@@ -777,6 +777,51 @@ def get_pending_status(clear: bool = False) -> Dict[str, Any]:
         TEF_PENDING_STATUS["detail"] = None
         TEF_PENDING_STATUS["created_at"] = None
     return payload
+
+
+# O gunicorn roda varios workers: status em memoria fica inconsistente entre
+# eles (um worker guarda a falha, outro o sucesso). O Redis e a fonte
+# compartilhada; a memoria local vira fallback quando o Redis esta fora.
+TEF_PENDING_STATUS_CACHE_KEY = "tef:pendencias:status"
+TEF_PENDING_STATUS_TTL_SECONDS = 60 * 60 * 12
+
+
+async def _set_pending_status_shared(message: str, detail: Dict[str, Any] | None = None) -> None:
+    _set_pending_status(message, detail)
+    try:
+        await cache.set(
+            TEF_PENDING_STATUS_CACHE_KEY,
+            {
+                "message": message,
+                "detail": detail,
+                "created_at": datetime.now().isoformat(),
+            },
+            ttl=TEF_PENDING_STATUS_TTL_SECONDS,
+        )
+    except Exception:
+        pass
+
+
+async def get_pending_status_shared(clear: bool = False) -> Dict[str, Any]:
+    try:
+        cached = await cache.get(TEF_PENDING_STATUS_CACHE_KEY)
+    except Exception:
+        cached = None
+
+    if isinstance(cached, dict):
+        if clear:
+            try:
+                await cache.delete(TEF_PENDING_STATUS_CACHE_KEY)
+            except Exception:
+                pass
+            get_pending_status(clear=True)
+        return {
+            "message": cached.get("message"),
+            "detail": cached.get("detail"),
+            "created_at": cached.get("created_at"),
+        }
+
+    return get_pending_status(clear=clear)
 
 
 class TefService:
@@ -2097,6 +2142,22 @@ class TefService:
             }
 
     async def resolver_pendencias(self, confirmar: bool = True) -> Dict[str, Any]:
+        # O Agente CliSiTef so suporta uma sessao por vez: chamadas simultaneas
+        # (workers no boot, varios dashboards abertos) derrubam a sessao uma da
+        # outra ("sessionId errado" / "Agente nao esta esperando continua").
+        if cache.redis is None:
+            return await self._resolver_pendencias_serializado(confirmar=confirmar)
+
+        try:
+            async with redis_lock("tef:pendencias", timeout=60):
+                return await self._resolver_pendencias_serializado(confirmar=confirmar)
+        except TimeoutError:
+            return {
+                "success": False,
+                "error": "Outra verificacao de pendencias TEF ja esta em andamento. Aguarde alguns segundos e tente novamente.",
+            }
+
+    async def _resolver_pendencias_serializado(self, confirmar: bool = True) -> Dict[str, Any]:
         function_id = 130
         tax_invoice_number = self._generate_cupom_fiscal()
         tax_invoice_date = _now_fiscal_date()
@@ -2127,7 +2188,7 @@ class TefService:
                 session_id=remote_session_id,
             )
         except requests.RequestException as exc:
-            _set_pending_status("Falha ao iniciar pendencias TEF", {"error": str(exc)})
+            await _set_pending_status_shared("Falha ao iniciar pendencias TEF", {"error": str(exc)})
             return {
                 "success": False,
                 "error": f"Falha ao iniciar pendencias TEF: {exc}",
@@ -2135,7 +2196,7 @@ class TefService:
 
         _log_tef_response("start", function_id, start, start.get("sessionId"))
         if int(start.get("serviceStatus") or 0) != 0:
-            _set_pending_status("Agente retornou erro ao iniciar pendencias TEF", start)
+            await _set_pending_status_shared("Agente retornou erro ao iniciar pendencias TEF", start)
             return {
                 "success": False,
                 "error": f"Agente retornou serviceStatus={start.get('serviceStatus')}",
@@ -2143,7 +2204,7 @@ class TefService:
             }
 
         if int(start.get("clisitefStatus") or 0) != 10000:
-            _set_pending_status("CliSiTef nao iniciou pendencias", start)
+            await _set_pending_status_shared("CliSiTef nao iniciou pendencias", start)
             return {
                 "success": False,
                 "error": f"CliSiTef nao iniciou pendencias (status {start.get('clisitefStatus')})",
@@ -2152,7 +2213,7 @@ class TefService:
 
         session_id = str(start.get("sessionId") or remote_session_id or "").strip()
         if not session_id:
-            _set_pending_status("Agente nao retornou sessionId", start)
+            await _set_pending_status_shared("Agente nao retornou sessionId", start)
             return {
                 "success": False,
                 "error": "Agente nao retornou sessionId no startTransaction",
@@ -2179,7 +2240,7 @@ class TefService:
                     },
                 )
             except requests.RequestException as exc:
-                _set_pending_status("Falha no continueTransaction pendencias", {"error": str(exc)})
+                await _set_pending_status_shared("Falha no continueTransaction pendencias", {"error": str(exc)})
                 return {
                     "success": False,
                     "error": f"Falha no continueTransaction: {exc}",
@@ -2187,7 +2248,7 @@ class TefService:
 
             _log_tef_response("continue", function_id, response, session_id)
             if int(response.get("serviceStatus") or 0) != 0:
-                _set_pending_status("Erro no continueTransaction pendencias", response)
+                await _set_pending_status_shared("Erro no continueTransaction pendencias", response)
                 return {
                     "success": False,
                     "error": f"Erro no continueTransaction (serviceStatus={response.get('serviceStatus')})",
@@ -2257,7 +2318,7 @@ class TefService:
                 },
             )
         except requests.RequestException as exc:
-            _set_pending_status("Falha ao finalizar pendencias TEF", {"error": str(exc)})
+            await _set_pending_status_shared("Falha ao finalizar pendencias TEF", {"error": str(exc)})
             return {
                 "success": False,
                 "error": f"Falha ao finalizar pendencias TEF: {exc}",
@@ -2286,7 +2347,7 @@ class TefService:
             "finish_tax_invoice_time": finish_tax_invoice_time,
             "confirmar": confirmar,
         }
-        _set_pending_status(message, pending_detail)
+        await _set_pending_status_shared(message, pending_detail)
 
         return {
             "success": finish_success,

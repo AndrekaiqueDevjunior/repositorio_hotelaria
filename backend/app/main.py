@@ -170,6 +170,20 @@ async def startup_event():
             from app.services.tef_service import TefService
 
             async def _resolver():
+                # startup_event roda em CADA worker do gunicorn; sem este guard
+                # os 4 workers chamam o agente ao mesmo tempo e derrubam a
+                # sessao um do outro (agente so suporta uma sessao por vez).
+                try:
+                    if cache.redis is not None:
+                        primeiro = await cache.redis.set(
+                            "tef:pendencias:startup-guard", "1", ex=120, nx=True
+                        )
+                        if not primeiro:
+                            print("[TEF] Pendencias da abertura ja tratadas por outro worker")
+                            return
+                except Exception as exc:
+                    print(f"[TEF] Guard de startup indisponivel ({exc}); prosseguindo")
+
                 resultado = await TefService().resolver_pendencias(confirmar=settings.TEF_AUTO_RESOLVE_PENDING_CONFIRM)
                 print(f"[TEF] Pendencias resolvidas: {resultado}")
 
