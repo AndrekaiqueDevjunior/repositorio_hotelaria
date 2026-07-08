@@ -1538,7 +1538,7 @@ export default function Reservar() {
               <p className="text-sm text-yellow-400">O melhor da região</p>
             </div>
           </div>
-          <p className="text-sm">Av. Beira Mar, 1000 - Cabo Frio, RJ</p>
+          <p className="text-sm">Rua enfermeiro Ricardo Sanches 22, RJ</p>
           <p className="text-sm mt-1">📞 (22) 2648-5900 | 📧 contato@hotelrealcabofrio.com.br</p>
           <p className="text-xs mt-4 opacity-60">© 2024 Hotel Real Cabo Frio. Todos os direitos reservados.</p>
         </div>
