@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.database import get_db
-from app.middleware.auth_middleware import get_current_active_user, require_admin_or_manager
+from app.middleware.auth_middleware import get_current_active_user, require_admin_manager_or_recepcao
 from app.core.security import User
 from app.repositories.tarifa_suite_repo import TarifaSuiteRepository
 from app.schemas.tarifa_suite_schema import (
@@ -71,7 +71,7 @@ async def obter_tarifa(
 async def criar_tarifa(
     request: TarifaSuiteCreateRequest,
     repo: TarifaSuiteRepository = Depends(get_tarifa_repo),
-    current_user: User = Depends(require_admin_or_manager),
+    current_user: User = Depends(require_admin_manager_or_recepcao),
 ):
     if request.data_inicio > request.data_fim:
         raise HTTPException(status_code=400, detail="data_inicio nao pode ser maior que data_fim")
@@ -106,7 +106,7 @@ async def atualizar_tarifa(
     tarifa_id: int,
     request: TarifaSuiteUpdateRequest,
     repo: TarifaSuiteRepository = Depends(get_tarifa_repo),
-    current_user: User = Depends(require_admin_or_manager),
+    current_user: User = Depends(require_admin_manager_or_recepcao),
 ):
     if request.data_inicio > request.data_fim:
         raise HTTPException(status_code=400, detail="data_inicio nao pode ser maior que data_fim")
@@ -149,7 +149,7 @@ async def atualizar_status_tarifa(
     tarifa_id: int,
     request: dict,
     repo: TarifaSuiteRepository = Depends(get_tarifa_repo),
-    current_user: User = Depends(require_admin_or_manager),
+    current_user: User = Depends(require_admin_manager_or_recepcao),
 ):
     """Atualizar apenas o status da tarifa (ativo/inativo)"""
     existente = await repo.get_by_id(tarifa_id)
@@ -173,7 +173,7 @@ async def atualizar_status_tarifa(
 async def deletar_tarifa(
     tarifa_id: int,
     repo: TarifaSuiteRepository = Depends(get_tarifa_repo),
-    current_user: User = Depends(require_admin_or_manager),
+    current_user: User = Depends(require_admin_manager_or_recepcao),
 ):
     ok = await repo.soft_delete(tarifa_id)
     if not ok:

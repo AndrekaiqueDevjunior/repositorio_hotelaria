@@ -14,7 +14,7 @@ const menuItems = [
   { href: '/comprovantes', label: 'Comprovantes', icon: '🧾', roles: ['ADMIN', 'GERENTE'] },
   { href: '/auditoria', label: 'Auditoria', icon: '🕵️', roles: ['ADMIN', 'GERENTE'] },
   { href: '/pontos-admin', label: 'Sistema de Pontos', icon: '💎', roles: ['ADMIN'] },
-  { href: '/tarifas', label: 'Tarifas', icon: '💰', roles: ['ADMIN', 'GERENTE'] },
+  { href: '/tarifas', label: 'Tarifas', icon: '💰', roles: ['ADMIN', 'GERENTE', 'RECEPCIONISTA', 'RECEPCAO'] },
   { href: '/antifraude', label: 'Antifraude', icon: '🛡️', roles: ['ADMIN', 'GERENTE'] },
   { href: '/notificacoes', label: 'Notificações', icon: '🔔', roles: ['ADMIN', 'GERENTE', 'RECEPCIONISTA', 'RECEPCAO', 'FUNCIONARIO'] },
 ]

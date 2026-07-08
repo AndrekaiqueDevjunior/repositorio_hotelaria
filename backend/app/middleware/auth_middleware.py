@@ -44,6 +44,18 @@ async def require_admin_or_manager(current_user: User = Depends(get_current_acti
         )
     return current_user
 
+async def require_admin_manager_or_recepcao(current_user: User = Depends(get_current_active_user)) -> User:
+    """
+    Dependency para rotas que exigem perfil ADMIN, GERENTE ou RECEPCAO
+    (RECEPCIONISTA é o alias legado do mesmo perfil)
+    """
+    if current_user.perfil not in ["ADMIN", "GERENTE", "RECEPCAO", "RECEPCIONISTA"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Acesso negado. Apenas administradores, gerentes ou recepcionistas podem acessar esta rota."
+        )
+    return current_user
+
 async def require_staff(current_user: User = Depends(get_current_active_user)) -> User:
     """
     Dependency para rotas que exigem qualquer funcionário autenticado
@@ -55,4 +67,5 @@ async def require_staff(current_user: User = Depends(get_current_active_user)) -
 RequireAuth = Depends(get_current_active_user)
 RequireAdmin = Depends(require_admin)
 RequireAdminOrManager = Depends(require_admin_or_manager)
+RequireAdminManagerOrRecepcao = Depends(require_admin_manager_or_recepcao)
 RequireStaff = Depends(require_staff)
