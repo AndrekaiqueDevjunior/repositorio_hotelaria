@@ -60,6 +60,8 @@ class ReservaResponse(BaseModel):
     observacoes: Optional[str] = None
     telefone_contato: Optional[str] = None
     email_contato: Optional[str] = None
+    criado_por_funcionario_id: Optional[int] = None
+    tarifa_suite_id: Optional[int] = None
     valor_desconto: Optional[float] = 0.0
     valor_total_com_desconto: Optional[float] = None
     pagamentos: Optional[list]

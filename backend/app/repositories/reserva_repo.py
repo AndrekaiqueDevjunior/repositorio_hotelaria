@@ -109,7 +109,7 @@ class ReservaRepository:
         except ValueError:
             return valor
 
-    async def _obter_tarifa_diaria(self, suite_tipo: str, checkin_previsto: datetime) -> float:
+    async def _obter_tarifa_diaria(self, suite_tipo: str, checkin_previsto: datetime) -> tuple:
         tarifa_repo = TarifaSuiteRepository(self.db)
 
         suite_tipo_norm = suite_tipo.value if hasattr(suite_tipo, "value") else str(suite_tipo)
@@ -125,7 +125,7 @@ class ReservaRepository:
                 f"Tarifa nÃ£o cadastrada para a suÃ­te {suite_tipo_norm} na data {data_ref}. Cadastre uma tarifa antes de criar a reserva."
             )
 
-        return float(tarifa.get("preco_diaria", 0.0))
+        return float(tarifa.get("preco_diaria", 0.0)), tarifa.get("id")
     
     async def list_all(
         self,
@@ -196,7 +196,12 @@ class ReservaRepository:
             "offset": offset
         }
     
-    async def create(self, reserva: ReservaCreate, notificar: bool = True) -> Dict[str, Any]:
+    async def create(
+        self,
+        reserva: ReservaCreate,
+        notificar: bool = True,
+        criado_por_funcionario_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Criar nova reserva com validaÃ§Ãµes"""
         # Verificar se cliente existe
         cliente = await self.db.cliente.find_unique(where={"id": reserva.cliente_id})
@@ -240,7 +245,7 @@ class ReservaRepository:
                     
                     raise ValueError(msg_erro)
 
-        valor_diaria = await self._obter_tarifa_diaria(
+        valor_diaria, tarifa_suite_id = await self._obter_tarifa_diaria(
             reserva.tipo_suite,
             reserva.checkin_previsto,
         )
@@ -318,6 +323,8 @@ class ReservaRepository:
                         "observacoes": self._normalizar_valor_texto(reserva.observacoes),
                         "telefoneContato": self._normalizar_valor_texto(reserva.telefone_contato),
                         "emailContato": self._normalizar_valor_texto(reserva.email_contato),
+                        "criadoPorFuncionarioId": criado_por_funcionario_id,
+                        "tarifaSuiteId": tarifa_suite_id,
                     }
                 )
                 break
@@ -974,7 +981,9 @@ class ReservaRepository:
             suite_tipo = data.get("tipo_suite", reserva.tipoSuite)
             checkin_previsto = data.get("checkin_previsto", reserva.checkinPrevisto)
             if "valor_diaria" not in data:
-                update_data["valorDiaria"] = await self._obter_tarifa_diaria(suite_tipo, checkin_previsto)
+                nova_diaria, nova_tarifa_id = await self._obter_tarifa_diaria(suite_tipo, checkin_previsto)
+                update_data["valorDiaria"] = nova_diaria
+                update_data["tarifaSuiteId"] = nova_tarifa_id
 
         campos_texto = {
             "origem": "origem",
@@ -1112,6 +1121,8 @@ class ReservaRepository:
                 or getattr(getattr(reserva, 'cliente', None), 'telefone', None),
             "email_contato": getattr(reserva, 'emailContato', None)
                 or getattr(getattr(reserva, 'cliente', None), 'email', None),
+            "criado_por_funcionario_id": getattr(reserva, 'criadoPorFuncionarioId', None),
+            "tarifa_suite_id": getattr(reserva, 'tarifaSuiteId', None),
             "valor_desconto": valor_desconto,
             "valor_total_com_desconto": valor_total_com_desconto,
             "status": status_reserva,

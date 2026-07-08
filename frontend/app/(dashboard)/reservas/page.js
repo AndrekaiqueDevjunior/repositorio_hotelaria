@@ -126,7 +126,8 @@ export default function Reservas() {
     data_saida: '',
     valor_diaria: '',
     num_diarias: 1,
-    valor_total: ''
+    valor_total: '',
+    observacoes: ''
   })
   const [tarifaAtual, setTarifaAtual] = useState(null)
   const [tarifaLoading, setTarifaLoading] = useState(false)
@@ -396,7 +397,8 @@ export default function Reservas() {
       checkin_previsto: checkinPrevisto.toISOString(),
       checkout_previsto: checkoutPrevisto.toISOString(),
       valor_diaria: parseFloat(form.valor_diaria),
-      num_diarias: form.num_diarias
+      num_diarias: form.num_diarias,
+      observacoes: form.observacoes.trim() || null
     }
 
     try {
@@ -404,7 +406,7 @@ export default function Reservas() {
       toast.success('Reserva criada com sucesso!')
       await loadReservas()
       setShowForm(false)
-      setForm({ cliente_id: '', quarto_numero: '', tipo_suite: 'LUXO', data_entrada: '', data_saida: '', valor_diaria: '', num_diarias: 1, valor_total: '' })
+      setForm({ cliente_id: '', quarto_numero: '', tipo_suite: 'LUXO', data_entrada: '', data_saida: '', valor_diaria: '', num_diarias: 1, valor_total: '', observacoes: '' })
     } catch (error) {
       const msg = formatErrorMessage(error)
       toast.error(`Erro: ${msg}`)
@@ -1486,6 +1488,15 @@ export default function Reservas() {
               </div>
               <div className="p-2 border rounded bg-gray-50"><span className="text-sm">Diárias: {form.num_diarias}</span></div>
               <div className="p-2 border rounded bg-gray-50"><span className="text-sm font-semibold">Total: R$ {form.valor_total || '0.00'}</span></div>
+
+              <textarea
+                value={form.observacoes}
+                onChange={(e) => updateFormField('observacoes', e.target.value)}
+                placeholder="Observações (opcional): pedidos especiais, horário de chegada, etc."
+                maxLength={1000}
+                rows={3}
+                className="col-span-2 p-2 border rounded resize-none"
+              />
 
               <div className="col-span-2 flex gap-2">
                 <button type="submit" disabled={loading} className="flex-1 bg-real-blue text-white py-2 rounded hover:bg-blue-800">{loading ? 'Salvando...' : 'Criar Reserva'}</button>

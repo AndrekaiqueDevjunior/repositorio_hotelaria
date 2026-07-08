@@ -204,7 +204,10 @@ async def criar_reserva(
             )
             
             # CAMADA 5: Criar reserva
-            nova_reserva = await service.create(reserva)
+            nova_reserva = await service.create(
+                reserva,
+                criado_por_funcionario_id=current_user.id,
+            )
             
             result = {
                 "success": True,

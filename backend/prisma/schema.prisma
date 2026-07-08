@@ -88,6 +88,8 @@ model Reserva {
   observacoes      String?
   telefoneContato  String?           @map("telefone_contato")
   emailContato     String?           @map("email_contato")
+  criadoPorFuncionarioId Int?        @map("criado_por_funcionario_id")
+  tarifaSuiteId    Int?              @map("tarifa_suite_id")
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
   notificacoes     Notificacao[]
@@ -99,9 +101,13 @@ model Reserva {
   cupomUso         CupomUso?
   cliente          Cliente           @relation(fields: [clienteId], references: [id])
   quarto           Quarto            @relation(fields: [quartoId], references: [id])
+  criadoPorFuncionario Funcionario?  @relation("ReservasCriadas", fields: [criadoPorFuncionarioId], references: [id])
+  tarifaSuite      TarifaSuite?      @relation(fields: [tarifaSuiteId], references: [id])
 
   @@index([quartoId])
   @@index([clienteId])
+  @@index([criadoPorFuncionarioId])
+  @@index([tarifaSuiteId])
   @@map("reservas")
 }
 
@@ -133,6 +139,7 @@ model Funcionario {
   resgatesEntrega        ResgatePremio[]   @relation("ResgatesEntrega")
   codigosResgate         CodigoResgate[]
   auditorias             Auditoria[]
+  reservasCriadas        Reserva[]         @relation("ReservasCriadas")
 
   @@map("funcionarios")
 }
@@ -481,6 +488,7 @@ model TarifaSuite {
   ativo      Boolean  @default(true)
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
+  reservas   Reserva[]
 
   @@index([suiteTipo, ativo])
   @@index([dataInicio, dataFim])
