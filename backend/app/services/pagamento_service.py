@@ -85,48 +85,55 @@ class PagamentoService:
                     "idempotent_replay": True,
                 }
 
-        pagamento = await self.pagamento_repo.create(
-            PagamentoCreate(
-                reserva_id=reserva_id,
-                valor=valor,
-                metodo="tef",
-            ),
-            idempotency_key=idempotency_key,
-        )
-
         status = tef_response.get("status", "RECUSADO")
-        pagamento_atualizado = await self.pagamento_repo.update_status(
-            pagamento["id"],
-            status,
-            cielo_payment_id=tef_response.get("nsu"),
-            url_pagamento=None,
-            tef_autorizacao=tef_response.get("autorizacao"),
-            tef_cupom_cliente=tef_response.get("cupom_cliente"),
-            tef_cupom_estabelecimento=tef_response.get("cupom_estabelecimento"),
-        )
+        status_persistido = "PAGO" if status in {"APROVADO", "CONFIRMADO"} else "FALHOU"
 
-        if status == "APROVADO" and self.reserva_repo:
-            try:
-                await self.reserva_repo.confirmar(reserva_id)
-            except Exception as e:
-                # TEF = transacao fisica na maquininha, ja autorizada pelo banco em tempo real.
-                # Se confirmar() falhou (ex: antifraude bloqueou por ser reserva nova),
-                # confirmamos diretamente — antifraude nao se aplica a pagamentos fisicos TEF.
-                print(f"[TEF] confirmar() bloqueado ({e}). Confirmando reserva {reserva_id} diretamente.")
-                try:
-                    reserva_atual = await self.reserva_repo.db.reserva.find_unique(
-                        where={"id": reserva_id}
+        # ATOMICIDADE: o TEF ja foi autorizado na maquininha, entao o registro
+        # do pagamento (com status final) e a confirmacao da reserva precisam
+        # entrar juntos — nunca pode sobrar pagamento PAGO com reserva PENDENTE
+        # nem pagamento fantasma PENDENTE bloqueando novas tentativas.
+        # Antifraude nao se aplica a pagamento fisico TEF (transacao presencial).
+        async with self.pagamento_repo.db.tx() as tx:
+            pagamento = await self.pagamento_repo.create(
+                PagamentoCreate(
+                    reserva_id=reserva_id,
+                    valor=valor,
+                    metodo="tef",
+                ),
+                idempotency_key=idempotency_key,
+                db=tx,
+                status_inicial=status_persistido,
+            )
+
+            if pagamento.get("idempotent_replay"):
+                return pagamento
+
+            if status == "APROVADO":
+                reserva_atual = await tx.reserva.find_unique(where={"id": reserva_id})
+                if reserva_atual and reserva_atual.statusReserva in {
+                    "PENDENTE", "PENDENTE_PAGAMENTO", "AGUARDANDO_PAGAMENTO"
+                }:
+                    await tx.reserva.update(
+                        where={"id": reserva_id},
+                        data={"statusReserva": "CONFIRMADA"},
                     )
-                    if reserva_atual and reserva_atual.statusReserva in {
-                        "PENDENTE", "PENDENTE_PAGAMENTO", "AGUARDANDO_PAGAMENTO"
-                    }:
-                        await self.reserva_repo.db.reserva.update(
-                            where={"id": reserva_id},
-                            data={"statusReserva": "CONFIRMADA"},
-                        )
-                        print(f"[TEF] Reserva {reserva_id} confirmada diretamente apos pagamento TEF.")
-                except Exception as e2:
-                    print(f"[TEF] ERRO CRITICO: nao foi possivel confirmar reserva {reserva_id}: {e2}")
+
+        # Pos-commit: enriquecimento nao transacional (NSU, autorizacao e
+        # comprovantes). Se falhar, pagamento e reserva ja estao consistentes;
+        # o cupom pode ser reimpresso pela retaguarda SiTef.
+        try:
+            pagamento_atualizado = await self.pagamento_repo.update_status(
+                pagamento["id"],
+                status,
+                cielo_payment_id=tef_response.get("nsu"),
+                url_pagamento=None,
+                tef_autorizacao=tef_response.get("autorizacao"),
+                tef_cupom_cliente=tef_response.get("cupom_cliente"),
+                tef_cupom_estabelecimento=tef_response.get("cupom_estabelecimento"),
+            )
+        except Exception as e:
+            print(f"[TEF] Pagamento {pagamento['id']} gravado, mas falhou o enriquecimento (NSU/cupons): {e}")
+            pagamento_atualizado = pagamento
 
         return pagamento_atualizado
     

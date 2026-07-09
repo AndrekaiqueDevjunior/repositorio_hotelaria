@@ -48,15 +48,25 @@ class PagamentoRepository:
             return float(cupom_uso.valorFinal or valor_base)
         return float(valor_base)
     
-    async def create(self, pagamento: PagamentoCreate, idempotency_key: str = None) -> Dict[str, Any]:
+    async def create(
+        self,
+        pagamento: PagamentoCreate,
+        idempotency_key: str = None,
+        db=None,
+        status_inicial: str = None,
+    ) -> Dict[str, Any]:
         """
         Criar novo pagamento com validações
-        
+
         PAG-002 FIX: Valida status da reserva antes de aceitar pagamento
         IDEMPOTÊNCIA OBRIGATÓRIA: Previne pagamentos duplicados
+        db: client alternativo (ex.: transação Prisma) para escrita atômica
+        status_inicial: forca o status do INSERT quando o resultado ja e
+            conhecido antes de gravar (ex.: TEF ja autorizado na maquininha)
         """
+        db = db or self.db
         # Obter reserva para pegar o clienteId
-        reserva = await self.db.reserva.find_unique(where={"id": pagamento.reserva_id})
+        reserva = await db.reserva.find_unique(where={"id": pagamento.reserva_id})
         if not reserva:
             raise ValueError("Reserva não encontrada")
 
@@ -86,7 +96,7 @@ class PagamentoRepository:
         # ⚠️ IDEMPOTÊNCIA OBRIGATÓRIA
         # Verificar se já existe pagamento com mesma chave de idempotência
         if idempotency_key:
-            pagamento_existente = await self.db.pagamento.find_first(
+            pagamento_existente = await db.pagamento.find_first(
                 where={
                     "idempotencyKey": idempotency_key
                 }
@@ -100,7 +110,7 @@ class PagamentoRepository:
         # Verificar duplicatas por valor + reserva + timestamp próximo (5 minutos)
         cinco_minutos_atras = now_utc() - timedelta(minutes=5)
         
-        pagamento_duplicado = await self.db.pagamento.find_first(
+        pagamento_duplicado = await db.pagamento.find_first(
             where={
                 "reservaId": pagamento.reserva_id,
                 "valor": pagamento.valor,
@@ -131,10 +141,11 @@ class PagamentoRepository:
             idempotency_key = f"pag-{reserva.id}-{uuid.uuid4().hex[:16]}"
         
         # Determinar status inicial baseado no método de pagamento
-        status_inicial = "PENDENTE"
-        if pagamento.metodo == "na_chegada":
-            # Para pagamento na chegada, já considerar como aprovado
-            status_inicial = "PAGO"
+        if not status_inicial:
+            status_inicial = "PENDENTE"
+            if pagamento.metodo == "na_chegada":
+                # Para pagamento na chegada, já considerar como aprovado
+                status_inicial = "PAGO"
         
         # Dados do pagamento
         pagamento_data = {
@@ -153,7 +164,7 @@ class PagamentoRepository:
         # Criar o pagamento. Se outra requisição ganhou a corrida com a mesma
         # idempotency_key, retornar o registro existente como replay seguro.
         try:
-            novo_pagamento = await self.db.pagamento.create(data=pagamento_data)
+            novo_pagamento = await db.pagamento.create(data=pagamento_data)
         except UniqueViolationError:
             if idempotency_key:
                 pagamento_existente = await self.get_by_idempotency_key(idempotency_key)
@@ -162,11 +173,11 @@ class PagamentoRepository:
                     return pagamento_existente
             raise
 
-        pago_com_relacoes = await self.db.pagamento.find_unique(
+        pago_com_relacoes = await db.pagamento.find_unique(
             where={"id": novo_pagamento.id},
             include={"cliente": True, "reserva": True, "operacoesAntifraude": True, "comprovantes": True}
         )
-        
+
         return self._serialize_pagamento(pago_com_relacoes or novo_pagamento)
 
     async def list_all(self) -> List[Dict[str, Any]]:

@@ -243,7 +243,7 @@ class CupomRepository:
                 cu.valor_final,
                 cu.created_at,
                 r.codigo_reserva,
-                c.nome_completo AS cliente_nome,
+                c."nomeCompleto" AS cliente_nome,
                 c.documento AS cliente_documento
             FROM cupons_usos cu
             LEFT JOIN reservas r ON r.id = cu.reserva_id
