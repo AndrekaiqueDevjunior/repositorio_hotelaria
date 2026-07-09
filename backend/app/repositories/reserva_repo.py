@@ -330,6 +330,17 @@ class ReservaRepository:
                 break
             except UniqueViolationError:
                 nova_reserva = None
+            except Exception as exc:
+                # Corrida real de disponibilidade: dois processos passaram na
+                # checagem, mas a constraint de exclusao (migration 016) so
+                # deixa um vencer. Sem este tratamento o perdedor recebia 500.
+                if "reservas_quarto_periodo_no_overlap" in str(exc):
+                    raise ValueError(
+                        f"Quarto {reserva.quarto_numero} acabou de ser reservado por outra "
+                        f"pessoa para este periodo. Atualize a disponibilidade e escolha "
+                        f"outro quarto ou periodo."
+                    )
+                raise
 
         if not nova_reserva:
             raise ValueError("NÃ£o foi possÃ­vel gerar um cÃ³digo de reserva Ãºnico")
@@ -1018,10 +1029,20 @@ class ReservaRepository:
         quarto_antigo = getattr(reserva, "quartoNumero", None)
 
         # Atualizar reserva
-        await self.db.reserva.update(
-            where={"id": reserva_id},
-            data=update_data
-        )
+        try:
+            await self.db.reserva.update(
+                where={"id": reserva_id},
+                data=update_data
+            )
+        except Exception as exc:
+            # Mesma protecao do create: a constraint de exclusao e o arbitro
+            # final quando a troca de quarto/datas colide com outra reserva.
+            if "reservas_quarto_periodo_no_overlap" in str(exc):
+                raise ValueError(
+                    "O quarto/periodo escolhido acabou de ser ocupado por outra reserva. "
+                    "Atualize a disponibilidade e tente novamente."
+                )
+            raise
         
         updated_reserva = await self.db.reserva.find_unique(where={"id": reserva_id}, include=self._default_include())
         if update_data:
