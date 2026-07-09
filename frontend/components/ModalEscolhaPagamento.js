@@ -949,14 +949,6 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         return
       }
 
-      const cupomEstabelecimento = tefResultado?.cupom_estabelecimento || tefResultado?.tef_cupom_estabelecimento || ''
-      const cupomCliente = tefResultado?.cupom_cliente || tefResultado?.tef_cupom_cliente || ''
-      const precisaEntrega = Boolean(tefResultado?.aprovado && (cupomEstabelecimento || cupomCliente))
-      if (precisaEntrega && !comprovanteEntregue) {
-        setComprovanteErro('Selecione e conclua a entrega do comprovante antes de finalizar.')
-        return
-      }
-
       setTefErro('')
       setComprovanteErro('')
       setTefProcessando(true)
@@ -1468,7 +1460,9 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   </div>
                 </div>
 
-                {precisaEntregaComprovante && (
+                {/* Entrega do comprovante removida a pedido da recepcao: os botoes
+                    Ver/Imprimir de cada cupom acima ja cobrem a necessidade. */}
+                {false && (
                   <div className="rounded border bg-white p-4 space-y-3">
                     <p className="font-semibold">Entrega do comprovante TEF</p>
                     <div className="flex flex-wrap gap-4 text-sm">
@@ -1598,7 +1592,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
                   <button
                     type="button"
                     onClick={concluirFluxoTef}
-                    disabled={tefProcessando || (precisaEntregaComprovante && !comprovanteEntregue)}
+                    disabled={tefProcessando}
                     className="bg-sky-600 hover:bg-sky-700 text-white font-semibold px-6 py-2 rounded disabled:opacity-60"
                   >
                     {tefProcessando ? '...' : 'Concluir'}
