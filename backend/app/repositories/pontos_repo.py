@@ -437,12 +437,13 @@ class PontosRepository:
                     usuario_pontos_id,
                 )
                 if not usuario_rows:
-                    # 48h e o teto maximo de tentativas (RF01/RF02): se passou
-                    # desse prazo e ainda nao da pra resolver (inconsistencia
-                    # de dados), escalona para "falha" em vez de ficar preso
-                    # em pendente para sempre.
+                    # Teto INTERNO de 24h (prazo publico prometido ao cliente e
+                    # 48h): se em 24h de retentativas ainda nao da pra resolver
+                    # (inconsistencia de dados), escalona para "falha" — assim
+                    # sobra 24h de margem para tratamento manual antes de
+                    # estourar o prazo comunicado. Nunca expor as 24h ao cliente.
                     criado_em = to_utc(transacao.get("created_at"))
-                    if criado_em and (agora_ref - criado_em) > timedelta(hours=48):
+                    if criado_em and (agora_ref - criado_em) > timedelta(hours=24):
                         await transaction.execute_raw(
                             """
                             UPDATE transacoes_pontos
