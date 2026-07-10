@@ -342,6 +342,10 @@ async def creditar_bonus_cupom_no_checkout(
     if not cupom_uso or not getattr(cupom_uso, "cupom", None):
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Reserva sem cupom"}
 
+    tipo_campanha = str(getattr(cupom_uso.cupom, "tipoCampanha", "") or "").upper()
+    if tipo_campanha == "CUPOM_AMIGO":
+        return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cupom Amigo concede apenas desconto"}
+
     pontos_bonus = int(getattr(cupom_uso.cupom, "pontosBonus", 0) or 0)
     if pontos_bonus <= 0:
         return {"success": True, "creditado": False, "pontos": 0, "motivo": "Cupom sem bonus de pontos"}

@@ -14,8 +14,10 @@ from app.services.programa_pontos_service import ProgramaPontosService
 from app.utils.datetime_utils import now_utc
 
 
-PONTOS_CONVITE_REAL = 50
-ORIGEM_CONVITE_REAL = "CONVITE_REAL"
+PONTOS_CONVITE_REAL = 5
+ORIGEM_FRIEND_REFERRAL = "FRIEND_REFERRAL"
+ORIGEM_CONVITE_REAL_LEGADA = "CONVITE_REAL"
+ORIGENS_REFERRAL = [ORIGEM_FRIEND_REFERRAL, ORIGEM_CONVITE_REAL_LEGADA]
 
 
 class IndicacaoService:
@@ -191,7 +193,7 @@ class IndicacaoService:
                 where={
                     "reservaId": reserva_id,
                     "tipo": "CREDITO",
-                    "origem": ORIGEM_CONVITE_REAL,
+                    "origem": {"in": ORIGENS_REFERRAL},
                 }
             )
             if transacao_existente:
@@ -261,11 +263,23 @@ class IndicacaoService:
                     "funcionarioId": funcionario_id,
                     "reservaId": reserva_id,
                     "tipo": "CREDITO",
-                    "origem": ORIGEM_CONVITE_REAL,
+                    "origem": ORIGEM_FRIEND_REFERRAL,
                     "pontos": PONTOS_CONVITE_REAL,
                     "saldoAnterior": saldo_anterior,
                     "saldoPosterior": saldo_posterior,
-                    "motivo": f"Convite Real - reserva {codigo_reserva}",
+                    "motivo": f"Friend Referral - reserva {codigo_reserva}",
+                    "metadata": {
+                        "source": ORIGEM_FRIEND_REFERRAL,
+                        "reward_type": ORIGEM_FRIEND_REFERRAL,
+                        "operation_key": f"friend_referral:{indicacao_id}:{reserva_id}",
+                        "indicacao_id": indicacao_id,
+                        "reserva_id": reserva_id,
+                        "cliente_indicador_id": cliente_indicador_id,
+                        "cliente_indicado_id": getattr(reserva, "clienteId", None),
+                        "pontos_r": PONTOS_CONVITE_REAL,
+                        "pontos_n": PONTOS_CONVITE_REAL,
+                        "idempotency_scope": "reservation_referral_reward",
+                    },
                 }
             )
 

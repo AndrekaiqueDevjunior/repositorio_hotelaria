@@ -70,6 +70,15 @@ class PagamentoService:
         self.cielo_api = CieloAPI()
         self.tef_service = TefService()
 
+    async def _valor_oficial_reserva(self, reserva_id: int, valor_recebido: float | None = None) -> float:
+        valor_oficial = await self.pagamento_repo.obter_valor_esperado_reserva(reserva_id)
+        if valor_recebido is not None and abs(float(valor_recebido) - valor_oficial) > 0.01:
+            print(
+                "[PAGAMENTO] Valor recebido divergente ignorado "
+                f"(reserva_id={reserva_id}, recebido={float(valor_recebido):.2f}, oficial={valor_oficial:.2f})"
+            )
+        return valor_oficial
+
     async def _registrar_pagamento_tef_finalizado(
         self,
         reserva_id: int,
@@ -335,8 +344,9 @@ class PagamentoService:
         session_id: str | None = None,
     ) -> Dict[str, Any]:
         try:
+            valor_oficial = await self._valor_oficial_reserva(reserva_id, valor)
             return await self.tef_service.iniciar_fluxo_interativo(
-                valor=valor,
+                valor=valor_oficial,
                 reserva_id=reserva_id,
                 function_id=function_id,
                 cupom_fiscal=cupom_fiscal,
@@ -460,9 +470,10 @@ class PagamentoService:
 
             if reserva_id and valor is not None and tef_response.get("success"):
                 payment_idempotency_key = idempotency_key or f"tef-session:{session_id}"
+                valor_oficial = await self._valor_oficial_reserva(reserva_id, valor)
                 pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
                     reserva_id=reserva_id,
-                    valor=valor,
+                    valor=valor_oficial,
                     tef_response=tef_response,
                     idempotency_key=payment_idempotency_key,
                 )
@@ -490,9 +501,10 @@ class PagamentoService:
 
             if reserva_id and valor is not None:
                 payment_idempotency_key = idempotency_key or f"tef-session:{session_id}"
+                valor_oficial = await self._valor_oficial_reserva(reserva_id, valor)
                 pagamento_atualizado = await self._registrar_pagamento_tef_finalizado(
                     reserva_id=reserva_id,
-                    valor=valor,
+                    valor=valor_oficial,
                     tef_response=tef_response,
                     idempotency_key=payment_idempotency_key,
                 )
@@ -823,4 +835,3 @@ async def obter_pagamento(pagamento_id: int):
 async def listar_pagamentos_reserva(reserva_id: int):
     service = await get_pagamento_service()
     return await service.list_by_reserva(reserva_id)
-

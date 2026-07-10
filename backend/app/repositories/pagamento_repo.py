@@ -47,6 +47,9 @@ class PagamentoRepository:
         if cupom_uso:
             return float(cupom_uso.valorFinal or valor_base)
         return float(valor_base)
+
+    async def obter_valor_esperado_reserva(self, reserva_id: int, reserva=None) -> float:
+        return await self._obter_valor_esperado_reserva(reserva_id, reserva)
     
     async def create(
         self,

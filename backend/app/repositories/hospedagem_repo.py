@@ -209,7 +209,7 @@ class HospedagemRepository:
         # Buscar dados completos
         reserva = await self.db.reserva.find_unique(
             where={"id": reserva_id},
-            include={"hospedagem": True, "pagamentos": True, "cliente": True}
+            include={"hospedagem": True, "pagamentos": True, "cliente": True, "cupomUso": True}
         )
         
         if not reserva:
@@ -242,11 +242,12 @@ class HospedagemRepository:
         
         total_extras = float(consumo_frigobar or 0) + float(servicos_extras or 0)
         if total_extras > 0:
-            valor_hospedagem = (
-                float(reserva.valorTotal)
+            cupom_uso = getattr(reserva, "cupomUso", None)
+            valor_hospedagem = float(getattr(cupom_uso, "valorFinal", None) or (
+                reserva.valorTotal
                 if getattr(reserva, "valorTotal", None) is not None
                 else float(reserva.valorDiaria or 0) * int(reserva.numDiarias or 0)
-            )
+            ))
             total_pago = sum(
                 float(p.valor or 0)
                 for p in (reserva.pagamentos or [])

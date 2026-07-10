@@ -76,7 +76,7 @@ Ao usar `🟡`, escreva exatamente o que falta. Exemplo: "endpoint existe, mas f
 
 | ID | Funcionalidade | Status Atual | Prioridade | Contrato Principal |
 |---|---|---|---|---|
-| JR-01 | Cupom Amigo | 🟡 Backend ✅ | Alta | Código único, desconto para indicado, +50 pontos para indicador no checkout do indicado |
+| JR-01 | Cupom Amigo | ✅ | Alta | Código único, desconto para indicado, +5 pontos para indicador no checkout do indicado |
 | JR-02 | Benefícios dos Níveis | 🟡 Backend ✅ | Alta | Bônus percentual aplicado ao crédito de pontos e auditado na transação |
 | JR-03 | Barras de Progresso | 🟡 Backend ✅ | Alta | API de loyalty retorna saldo, nível, próximo nível e progresso de prêmios |
 | JR-04 | Aviso de Prêmio Próximo | 🟡 Backend ✅ WhatsApp ✅ | Média | Detectar cliente perto de prêmio, enviar WhatsApp e deduplicar |
@@ -105,7 +105,7 @@ Ao usar `🟡`, escreva exatamente o que falta. Exemplo: "endpoint existe, mas f
 - Gera código único por cliente ou reutiliza ativo de forma previsível.
 - Valida status ativo, validade e limite de uso.
 - Indicado recebe o benefício oficial da primeira reserva.
-- Indicador recebe +50 pontos somente quando a reserva do indicado virar checkout confirmado.
+- Indicador recebe +5 pontos somente quando a reserva do indicado virar checkout confirmado.
 - O mesmo indicado não pode gerar pontos repetidos para o mesmo indicador.
 - Uso fica auditado em `CupomUso`/`Indicacao` ou equivalente.
 
@@ -115,7 +115,7 @@ Ao usar `🟡`, escreva exatamente o que falta. Exemplo: "endpoint existe, mas f
 - validar cupom ativo;
 - rejeitar expirado/max uso;
 - aplicar na reserva;
-- checkout do indicado credita +50 ao indicador uma única vez.
+- checkout do indicado credita +5 ao indicador uma única vez.
 
 ### JR-02 - Benefícios dos Níveis
 

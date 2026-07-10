@@ -262,6 +262,11 @@ async def consultar_reserva_publica(codigo: str):
                 "valor_diaria": float(reserva.get("valor_diaria", 0.0)),
                 "num_diarias": reserva.get("num_diarias", 0),
                 "valor_total": float(reserva.get("valor_total", 0.0)),
+                "valor_desconto": float(reserva.get("valor_desconto", 0.0) or 0.0),
+                "valor_total_com_desconto": float(
+                    reserva.get("valor_total_com_desconto", reserva.get("valor_total", 0.0)) or 0.0
+                ),
+                "cupom_uso": reserva.get("cupom_uso"),
                 "data_criacao": reserva.get("created_at")
             },
             "instrucoes": {

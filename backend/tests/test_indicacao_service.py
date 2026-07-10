@@ -204,8 +204,8 @@ async def test_checkout_duplicado_nao_credita_novamente():
 
 
 @pytest.mark.asyncio
-async def test_checkout_credita_50_pontos_para_indicador():
-    assert PONTOS_CONVITE_REAL == 50
+async def test_checkout_credita_5_pontos_para_indicador():
+    assert PONTOS_CONVITE_REAL == 5
     db = FakeDbForCheckoutCredito()
     service = IndicacaoService(db)
 
@@ -213,18 +213,21 @@ async def test_checkout_credita_50_pontos_para_indicador():
 
     assert resultado["success"] is True
     assert resultado["creditado"] is True
-    assert resultado["pontos"] == 50
+    assert resultado["pontos"] == 5
     assert resultado["saldo_anterior"] == 12
-    assert resultado["saldo_posterior"] == 62
+    assert resultado["saldo_posterior"] == 17
 
     transacao = db.tx_context.transacaopontos.created_data
     assert transacao["clienteId"] == 1
     assert transacao["funcionarioId"] == 9
     assert transacao["reservaId"] == 10
-    assert transacao["origem"] == "CONVITE_REAL"
-    assert transacao["pontos"] == 50
+    assert transacao["origem"] == "FRIEND_REFERRAL"
+    assert transacao["pontos"] == 5
     assert transacao["saldoAnterior"] == 12
-    assert transacao["saldoPosterior"] == 62
+    assert transacao["saldoPosterior"] == 17
+    assert transacao["metadata"]["reward_type"] == "FRIEND_REFERRAL"
+    assert transacao["metadata"]["pontos_r"] == 5
+    assert transacao["metadata"]["pontos_n"] == 5
 
 
 @pytest.mark.asyncio

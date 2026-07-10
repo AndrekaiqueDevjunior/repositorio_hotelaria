@@ -12,7 +12,13 @@ from app.schemas.pontos_schema import (
 # Constantes de segurança
 MAX_PONTOS_POR_TRANSACAO = 1000
 MIN_PONTOS_POR_TRANSACAO = -1000
-ORIGENS_IDEMPOTENTES_POR_RESERVA = {"CHECKOUT", "BONUS_CUPOM", "CONVITE_REAL", "RESERVA"}
+ORIGENS_IDEMPOTENTES_POR_RESERVA = {
+    "CHECKOUT",
+    "BONUS_CUPOM",
+    "CONVITE_REAL",
+    "FRIEND_REFERRAL",
+    "RESERVA",
+}
 
 
 class PontosRepository:

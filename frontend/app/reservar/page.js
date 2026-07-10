@@ -80,6 +80,25 @@ export default function Reservar() {
   const cpfLimpo = onlyDigits(hospedeData.documento)
   const telefoneLimpo = onlyDigits(hospedeData.telefone)
   const isCustomerAuthenticated = Boolean(customerAuth.accessToken && customerAuth.customer)
+  const valoresReserva = useMemo(() => {
+    const subtotal = Number(quartoSelecionado?.preco_total || 0)
+    const desconto = cupomValidacao?.valido
+      ? Number(cupomValidacao?.valor_desconto_calculado || 0)
+      : 0
+    const totalEstimado = cupomValidacao?.valido
+      ? Number(cupomValidacao?.valor_final_estimado ?? subtotal - desconto)
+      : subtotal
+
+    return {
+      subtotal,
+      desconto,
+      total: Math.max(totalEstimado, 0),
+      percentualCupom: cupomValidacao?.valido
+        ? Number(cupomValidacao?.valor_desconto || 10)
+        : 0,
+    }
+  }, [quartoSelecionado, cupomValidacao])
+  const formatCurrency = (value) => `R$ ${Number(value || 0).toFixed(2)}`
 
   // Estimativa de pontos ganhos nesta reserva: Pontos N = pontuacao-base da
   // suite (nunca recebe bonus), Pontos R = pontuacao-base x multiplicador do
@@ -134,6 +153,15 @@ export default function Reservar() {
       .toUpperCase()
       .replace(/[^A-Z0-9_-]/g, '')
       .slice(0, 50)
+
+  const handleSearchDataChange = (field, value) => {
+    setSearchData((current) => ({ ...current, [field]: value }))
+    if (field === 'data_checkin' || field === 'data_checkout') {
+      setCupomValidacao(null)
+      setQuartoSelecionado(null)
+      setTiposDisponiveis([])
+    }
+  }
 
   useEffect(() => {
     const codigoCupom = searchParams.get('cupom') || searchParams.get('codigo') || ''
@@ -243,6 +271,7 @@ export default function Reservar() {
   
   // Selecionar quarto
   const selecionarQuarto = (tipo, quarto) => {
+    setCupomValidacao(null)
     setQuartoSelecionado({
       numero: quarto.numero,
       tipo: tipo.tipo,
@@ -755,7 +784,7 @@ export default function Reservar() {
                         type="date"
                         min={today}
                         value={searchData.data_checkin}
-                        onChange={(e) => setSearchData({ ...searchData, data_checkin: e.target.value })}
+                        onChange={(e) => handleSearchDataChange('data_checkin', e.target.value)}
                         className="royal-date-input peer w-full border-0 border-b border-white/10 bg-transparent py-2 pr-12 text-2xl uppercase text-[#f4ead2] outline-none [color-scheme:dark] focus:border-[#e5b84a]"
                       />
                       <CalendarDays className="hidden" size={30} />
@@ -775,7 +804,7 @@ export default function Reservar() {
                         type="date"
                         min={searchData.data_checkin || today}
                         value={searchData.data_checkout}
-                        onChange={(e) => setSearchData({ ...searchData, data_checkout: e.target.value })}
+                        onChange={(e) => handleSearchDataChange('data_checkout', e.target.value)}
                         className="royal-date-input w-full border-0 border-b border-white/10 bg-transparent py-2 pr-12 text-2xl uppercase text-[#f4ead2] outline-none [color-scheme:dark] focus:border-[#e5b84a]"
                       />
                       <CalendarDays className="hidden" size={30} />
@@ -858,7 +887,7 @@ export default function Reservar() {
                     type="date"
                     min={today}
                     value={searchData.data_checkin}
-                    onChange={(e) => setSearchData({ ...searchData, data_checkin: e.target.value })}
+                    onChange={(e) => handleSearchDataChange('data_checkin', e.target.value)}
                     className="w-full rounded-xl border border-[#d4af37]/28 bg-[#241611] p-4 text-lg text-[#fff4d6] focus:border-[#f4cf65] focus:outline-none focus:shadow-[0_0_18px_rgba(212,175,55,0.18)]"
                   />
                   <p className="text-sm text-[#cdbb97] mt-1">A partir das 12:00</p>
@@ -870,7 +899,7 @@ export default function Reservar() {
                     type="date"
                     min={searchData.data_checkin || today}
                     value={searchData.data_checkout}
-                    onChange={(e) => setSearchData({ ...searchData, data_checkout: e.target.value })}
+                    onChange={(e) => handleSearchDataChange('data_checkout', e.target.value)}
                     className="w-full rounded-xl border border-[#d4af37]/28 bg-[#241611] p-4 text-lg text-[#fff4d6] focus:border-[#f4cf65] focus:outline-none focus:shadow-[0_0_18px_rgba(212,175,55,0.18)]"
                   />
                   <p className="text-sm text-[#cdbb97] mt-1">Até as 11:00</p>
@@ -1303,7 +1332,7 @@ export default function Reservar() {
                 <div className="text-right">
                   <p className="text-sm text-gray-600">Total</p>
                   <p className="text-2xl font-bold text-green-600">
-                    R$ {Number(cupomValidacao?.valor_final_estimado || quartoSelecionado.preco_total).toFixed(2)}
+                    {formatCurrency(valoresReserva.total)}
                   </p>
                   {cupomValidacao?.valido && (
                     <p className="text-xs font-semibold text-amber-700">
@@ -1364,10 +1393,11 @@ export default function Reservar() {
                   }`}>
                     <p className="font-semibold">{cupomValidacao.mensagem}</p>
                     {cupomValidacao.valido && (
-                      <div className="mt-2 grid gap-1 sm:grid-cols-3">
-                        <span>Desconto: R$ {Number(cupomValidacao.valor_desconto_calculado || 0).toFixed(2)}</span>
-                        <span>Total: R$ {Number(cupomValidacao.valor_final_estimado || quartoSelecionado.preco_total).toFixed(2)}</span>
-                        <span>Bonus: {cupomValidacao.pontos_bonus || 0} RP</span>
+                      <div className="mt-2 grid gap-1 sm:grid-cols-4">
+                        <span>Subtotal: {formatCurrency(valoresReserva.subtotal)}</span>
+                        <span>Cupom Amigo: -{valoresReserva.percentualCupom}%</span>
+                        <span>Desconto: {formatCurrency(valoresReserva.desconto)}</span>
+                        <span>Total: {formatCurrency(valoresReserva.total)}</span>
                       </div>
                     )}
                   </div>

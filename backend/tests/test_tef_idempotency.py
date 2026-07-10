@@ -58,23 +58,54 @@ from app.services.pagamento_service import PagamentoService
 from app.services.tef_service import TEF_FINALIZED_SESSIONS, TEF_INTERACTIVE_SESSIONS, TefService
 
 
-class FakePagamentoRepo:
+class FakeTxReserva:
+    async def find_unique(self, where):
+        return types.SimpleNamespace(statusReserva="PENDENTE")
+
+    async def update(self, where, data):
+        return types.SimpleNamespace(id=where["id"], **data)
+
+
+class NoopTx:
     def __init__(self):
+        self.reserva = FakeTxReserva()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class FakeRepoDb:
+    def tx(self):
+        return NoopTx()
+
+
+class FakePagamentoRepo:
+    def __init__(self, valor_oficial=100.0):
         self.by_key = {}
         self.created = 0
         self.updated = 0
+        self.valor_oficial = valor_oficial
+        self.valor_consultas = []
+        self.db = FakeRepoDb()
 
     async def get_by_idempotency_key(self, idempotency_key):
         return self.by_key.get(idempotency_key)
 
-    async def create(self, pagamento, idempotency_key=None):
+    async def obter_valor_esperado_reserva(self, reserva_id, reserva=None):
+        self.valor_consultas.append(reserva_id)
+        return self.valor_oficial
+
+    async def create(self, pagamento, idempotency_key=None, db=None, status_inicial=None):
         self.created += 1
         registro = {
             "id": self.created,
             "reserva_id": pagamento.reserva_id,
             "valor": pagamento.valor,
             "metodo": pagamento.metodo,
-            "status": "PENDENTE",
+            "status": status_inicial or "PENDENTE",
         }
         if idempotency_key:
             self.by_key[idempotency_key] = registro
@@ -93,6 +124,15 @@ class FakePagamentoRepo:
                 )
                 return dict(registro)
         return {"id": pagamento_id, "status": status}
+
+
+class FakeStartTefService:
+    def __init__(self):
+        self.calls = []
+
+    async def iniciar_fluxo_interativo(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"success": True, "session_id": kwargs.get("session_id"), "valor": kwargs["valor"]}
 
 
 class FakeTefService:
@@ -127,14 +167,36 @@ class SlowCountingTefService:
 
 
 class SlowPagamentoRepo(FakePagamentoRepo):
-    async def create(self, pagamento, idempotency_key=None):
+    async def create(self, pagamento, idempotency_key=None, db=None, status_inicial=None):
         await asyncio.sleep(0.02)
-        return await super().create(pagamento, idempotency_key=idempotency_key)
+        return await super().create(
+            pagamento,
+            idempotency_key=idempotency_key,
+            db=db,
+            status_inicial=status_inicial,
+        )
+
+
+@pytest.mark.asyncio
+async def test_iniciar_fluxo_tef_usa_valor_oficial_com_desconto():
+    repo = FakePagamentoRepo(valor_oficial=90.0)
+    service = PagamentoService(repo)
+    service.tef_service = FakeStartTefService()
+
+    result = await service.iniciar_fluxo_tef(
+        reserva_id=10,
+        valor=100.0,
+        session_id="sess-cupom",
+    )
+
+    assert result["success"] is True
+    assert service.tef_service.calls[0]["valor"] == 90.0
+    assert repo.valor_consultas == [10]
 
 
 @pytest.mark.asyncio
 async def test_pagamento_tef_finalizado_reusa_idempotency_key():
-    repo = FakePagamentoRepo()
+    repo = FakePagamentoRepo(valor_oficial=90.0)
     service = PagamentoService(repo)
     service.tef_service = FakeTefService()
 
@@ -155,6 +217,7 @@ async def test_pagamento_tef_finalizado_reusa_idempotency_key():
 
     assert primeiro["success"] is True
     assert segundo["idempotent_replay"] is True
+    assert primeiro["valor"] == 90.0
     assert repo.created == 1
     assert repo.updated == 1
 

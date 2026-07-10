@@ -7,7 +7,7 @@ from app.services.programa_pontos_service import ProgramaPontosService
 from app.services.real_points_service import RealPointsService
 from app.repositories.premio_repo_atomic import PremioRepositoryAtomic
 from app.repositories.pontos_repo import PontosRepository
-from app.services.pontos_checkout_service import creditar_rp_no_checkout
+from app.services.pontos_checkout_service import creditar_bonus_cupom_no_checkout, creditar_rp_no_checkout
 
 
 class FakeModel:
@@ -209,6 +209,15 @@ class FakeDbCheckout(FakeDbPontos):
         self.transacaopontos = FakeTransacaoModel()
 
 
+class FakeDbBonusCupomAmigo:
+    def __init__(self):
+        self.reserva = FakeModelValue(SimpleNamespace(id=10, clienteId=1))
+        self.cupomuso = FakeModelValue(SimpleNamespace(
+            cupom=SimpleNamespace(codigo="AMIGO10ABCD", pontosBonus=50, tipoCampanha="CUPOM_AMIGO")
+        ))
+        self.transacaopontos = FakeTransacaoModel()
+
+
 @pytest.mark.asyncio
 async def test_checkout_credita_pontos_imediatamente():
     from datetime import datetime, timezone
@@ -313,6 +322,18 @@ async def test_reserva_cancelada_nao_gera_pontos():
     assert resultado["success"] is True
     assert resultado["creditado"] is False
     assert resultado["pontos"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cupom_amigo_nao_credita_bonus_para_indicado():
+    db = FakeDbBonusCupomAmigo()
+
+    resultado = await creditar_bonus_cupom_no_checkout(db, reserva_id=10)
+
+    assert resultado["success"] is True
+    assert resultado["creditado"] is False
+    assert resultado["pontos"] == 0
+    assert "Cupom Amigo" in resultado["motivo"]
 
 
 class FakeCodigoTx:

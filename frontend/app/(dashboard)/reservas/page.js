@@ -47,6 +47,14 @@ export default function Reservas() {
   const STATUS_PODE_PAGAR = ['PENDENTE', 'PENDENTE_PAGAMENTO', 'PAGA_REJEITADA', 'CONFIRMADA']
   const STATUS_PODE_CANCELAR = ['PENDENTE', 'PENDENTE_PAGAMENTO', 'AGUARDANDO_COMPROVANTE', 'EM_ANALISE', 'CONFIRMADA', 'PAGA_APROVADA', 'CHECKIN_LIBERADO', 'PAGA_REJEITADA']
   const STATUS_PODE_CHECKIN = ['CONFIRMADA', 'PAGA_APROVADA', 'CHECKIN_LIBERADO']
+  const getValorTotalReserva = (reserva) => Number(
+    reserva?.valor_total_com_desconto ??
+    reserva?.cupom_uso?.valor_final ??
+    reserva?.cupomUso?.valorFinal ??
+    reserva?.valor_total ??
+    reserva?.valor_previsto ??
+    0
+  )
   
   // Estados para visão operacional profissional
   const [activeTab, setActiveTab] = useState('ativas')
@@ -241,7 +249,7 @@ export default function Reservas() {
     const hospedadas = reservas.filter(r => STATUS_HOSPEDADAS.includes(r.status)).length
     const checkouts = reservas.filter(r => STATUS_CHECKOUTS.includes(r.status)).length
     const canceladas = reservas.filter(r => STATUS_CANCELADAS.includes(r.status)).length
-    const valorPrevisto = reservas.reduce((sum, r) => sum + (Number(r.valor_total) || 0), 0)
+    const valorPrevisto = reservas.reduce((sum, r) => sum + getValorTotalReserva(r), 0)
     
     return {
       total: reservas.length,
@@ -850,7 +858,7 @@ export default function Reservas() {
       r.quarto_numero,
       r.checkin_previsto ? new Date(r.checkin_previsto).toLocaleDateString('pt-BR') : '-',
       r.checkout_previsto ? new Date(r.checkout_previsto).toLocaleDateString('pt-BR') : '-',
-      `R$ ${Number(r.valor_total || 0).toFixed(2)}`,
+      `R$ ${getValorTotalReserva(r).toFixed(2)}`,
       r.status
     ])
     
@@ -899,7 +907,7 @@ export default function Reservas() {
         reserva_id: selectedReserva.id,
         cliente_id: selectedReserva.cliente_id,
         metodo: pagamentoForm.forma,
-        valor: Number(selectedReserva.valor_total),
+        valor: getValorTotalReserva(selectedReserva),
         observacao: `Pagamento via ${pagamentoForm.forma}`
       }
       
@@ -1167,7 +1175,7 @@ export default function Reservas() {
                             {r.checkout_previsto ? new Date(r.checkout_previsto).toLocaleDateString('pt-BR') : '-'}
                           </td>
                           <td className="px-4 py-3 text-sm font-semibold text-gray-900">
-                            R$ {Number(r.valor_total || 0).toFixed(2)}
+                            R$ {getValorTotalReserva(r).toFixed(2)}
                           </td>
                           <td className="px-4 py-3">
                             <StatusBadge status={r.status} />
@@ -1333,7 +1341,7 @@ export default function Reservas() {
                             {r.checkout_previsto ? new Date(r.checkout_previsto).toLocaleDateString('pt-BR') : '-'}
                           </td>
                           <td className="px-4 py-3 text-sm font-semibold text-gray-900">
-                            R$ {Number(r.valor_total || 0).toFixed(2)}
+                            R$ {getValorTotalReserva(r).toFixed(2)}
                           </td>
                           <td className="px-4 py-3">
                             <StatusBadge status={r.status} />
@@ -1937,7 +1945,7 @@ export default function Reservas() {
                 <div><strong>Cliente:</strong> {selectedReserva.cliente_nome}</div>
                 <div><strong>Quarto:</strong> {selectedReserva.quarto_numero}</div>
                 <div><strong>Diárias:</strong> {selectedReserva.num_diarias || 0}</div>
-                <div><strong>Valor Total:</strong> R$ {Number(selectedReserva.valor_total || 0).toFixed(2)}</div>
+                <div><strong>Valor Total:</strong> R$ {getValorTotalReserva(selectedReserva).toFixed(2)}</div>
               </div>
             </div>
 
@@ -2045,7 +2053,7 @@ export default function Reservas() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600"><strong>Valor Total:</strong></p>
-                  <p className="text-2xl font-bold text-green-600">R$ {Number(selectedReserva.valor_total || 0).toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-600">R$ {getValorTotalReserva(selectedReserva).toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -2090,7 +2098,7 @@ export default function Reservas() {
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div><strong>Valor Diária:</strong> R$ {Number(selectedReserva.valor_diaria || 0).toFixed(2)}</div>
                 <div><strong>Nº Diárias:</strong> {selectedReserva.num_diarias || 0}</div>
-                <div><strong>Valor Total:</strong> R$ {Number(selectedReserva.valor_total || 0).toFixed(2)}</div>
+                <div><strong>Valor Total:</strong> R$ {getValorTotalReserva(selectedReserva).toFixed(2)}</div>
               </div>
             </div>
 
@@ -2352,7 +2360,7 @@ export default function Reservas() {
                               </div>
                               <div className="text-right">
                                 <div className="text-sm font-semibold text-gray-900">
-                                  R$ {reserva.valor_total || '0.00'}
+                                  R$ {getValorTotalReserva(reserva).toFixed(2)}
                                 </div>
                               </div>
                             </div>

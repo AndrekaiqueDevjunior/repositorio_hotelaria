@@ -81,7 +81,7 @@ class TestJR01CupomAmigo:
         r = s.post(f"{BASE}/referrals/generate", json={
             "customer_id": cliente1_id,
             "discount_percentage": 10,
-            "bonus_points": 50,
+            "bonus_points": 0,
             "valid_days": 30,
             "max_uses": 5,
             "send_whatsapp": False,

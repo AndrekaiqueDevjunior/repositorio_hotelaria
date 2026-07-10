@@ -92,6 +92,13 @@ class ReservaRepository:
             return float(valor_total_salvo)
         return float(getattr(reserva, "valorDiaria", 0) or 0) * int(getattr(reserva, "numDiarias", 0) or 0)
 
+    async def _obter_valor_total_devido(self, reserva_id: int, reserva=None) -> float:
+        valor_bruto = self._calcular_valor_total_model(reserva) if reserva else 0.0
+        cupom_uso = await self.db.cupomuso.find_first(where={"reservaId": reserva_id})
+        if cupom_uso:
+            return float(getattr(cupom_uso, "valorFinal", None) or valor_bruto)
+        return valor_bruto
+
     def _normalizar_valor_texto(self, valor: Any) -> Optional[str]:
         if valor is None:
             return None
@@ -462,8 +469,7 @@ class ReservaRepository:
             where={"reservaId": reserva_id}
         )
         
-        # Calcular valor total da reserva
-        valor_total_reserva = float(reserva.valorDiaria) * reserva.numDiarias if reserva.valorDiaria and reserva.numDiarias else 0.0
+        valor_total_reserva = await self._obter_valor_total_devido(reserva_id, reserva)
         
         # Calcular total pago (apenas pagamentos aprovados)
         total_pago = sum(

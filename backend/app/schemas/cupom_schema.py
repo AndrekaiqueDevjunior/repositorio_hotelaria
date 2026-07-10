@@ -122,7 +122,7 @@ class CupomStatusRequest(BaseModel):
 class CupomAmigoRequest(BaseModel):
     cliente_id: int = Field(..., ge=1)
     percentual_desconto: Decimal = Field(Decimal("10"), gt=0, le=100)
-    pontos_bonus: int = Field(50, ge=0, le=1000)
+    pontos_bonus: int = Field(0, ge=0, le=1000)
     dias_validade: int = Field(30, ge=1, le=365)
     limite_total_usos: int = Field(5, ge=1)
     telefone_destino: Optional[str] = None
@@ -144,7 +144,7 @@ class ReferralGenerateRequest(BaseModel):
         le=100,
     )
     bonus_points: int = Field(
-        50,
+        0,
         validation_alias=AliasChoices("bonus_points", "pontos_bonus"),
         ge=0,
         le=1000,

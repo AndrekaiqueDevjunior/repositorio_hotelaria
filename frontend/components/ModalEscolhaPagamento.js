@@ -344,7 +344,14 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
   ]
 
   const valorReserva = useMemo(() => {
-    return Number(reserva?.valor_total || reserva?.valor_previsto || 0)
+    return Number(
+      reserva?.valor_total_com_desconto ||
+      reserva?.cupom_uso?.valor_final ||
+      reserva?.valor_previsto_com_desconto ||
+      reserva?.valor_total ||
+      reserva?.valor_previsto ||
+      0
+    )
   }, [reserva])
 
   const nfpagTypeOptions = useMemo(() => getNfpagTypeOptions(tefResultado?.nfpag), [tefResultado])
@@ -2024,7 +2031,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
           <div className="text-center">
             <p className="text-sm text-gray-600 mb-1">Valor Total da Reserva</p>
             <p className="text-4xl font-bold text-blue-600">
-              {formatCurrency(reserva?.valor_total || reserva?.valor_previsto)}
+              {formatCurrency(valorReserva)}
             </p>
             <p className="text-sm text-gray-500 mt-2">
               {reserva?.num_diarias} diaria(s) x {formatCurrency(reserva?.valor_diaria)}

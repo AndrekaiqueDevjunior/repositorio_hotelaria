@@ -22,7 +22,7 @@ class FakeCupomService:
             "codigo": "AMIGO10ABCD",
             "status": "active",
             "valor_desconto": 10.0,
-            "pontos_bonus": 50,
+            "pontos_bonus": 0,
             "total_usos": 0,
             "limite_total_usos": 5,
             "data_fim": "2026-07-04T12:00:00+00:00",
@@ -40,7 +40,7 @@ class FakeCupomService:
             "valor_original": 500.0,
             "valor_desconto": 50.0,
             "valor_final": 450.0,
-            "pontos_bonus": 50,
+            "pontos_bonus": 0,
             "status": "active",
             "indicacao": {"success": True},
         }
@@ -52,7 +52,7 @@ async def test_generate_referral_usa_core_cupom_e_twilio():
     payload = ReferralGenerateRequest(
         customer_id=10,
         discount_percentage=10,
-        bonus_points=50,
+        bonus_points=0,
         valid_days=30,
         max_uses=5,
         recipient_phone="+5522999999999",
@@ -68,12 +68,12 @@ async def test_generate_referral_usa_core_cupom_e_twilio():
     assert result["success"] is True
     assert result["code"] == "AMIGO10ABCD"
     assert result["discount_percentage"] == 10.0
-    assert result["bonus_points"] == 50
+    assert result["bonus_points"] == 0
     assert result["twilio"]["message_sid"] == "SM123"
     assert service.criar_args == {
         "cliente_id": 10,
         "percentual_desconto": 10,
-        "pontos_bonus": 50,
+        "pontos_bonus": 0,
         "dias_validade": 30,
         "limite_total_usos": 5,
         "telefone_destino": "+5522999999999",
@@ -93,5 +93,5 @@ async def test_apply_referral_to_reservation_mapeia_desconto():
     assert result["reservation_id"] == 99
     assert result["code"] == "AMIGO10ABCD"
     assert result["discount"]["amount"] == 50.0
-    assert result["bonus_points_future"] == 50
+    assert result["bonus_points_future"] == 0
     assert service.aplicar_args == {"reserva_id": 99, "codigo": "AMIGO10ABCD"}

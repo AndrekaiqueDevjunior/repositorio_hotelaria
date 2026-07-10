@@ -1,8 +1,10 @@
 # Jornada Real - Checklist de Funcionalidades
 
+**Atualizacao executiva 2026-07-10:** JR-01 alinhado a regra vigente: indicado recebe somente 10% de desconto real no backend/pagamento, e indicador recebe `PONTOS_CONVITE_REAL = 5` somente apos checkout concluido, com origem canonica `FRIEND_REFERRAL` e dedupe tambem contra a origem legada `CONVITE_REAL`. Fluxos TEF, pagamento, consulta publica, saldo de checkout e hospedagem passaram a usar o valor oficial com desconto. Cupom Amigo nao gera bonus direto de pontos para o indicado. `/reservar` mostra subtotal/desconto/total e invalida validacao antiga ao trocar data/quarto. `/clientes` ficou sem abas/estados/chamadas de Admin Pontos e Antifraude. Validado: `29 passed` na suite focada e `npx next build` OK.
+
 **Atualizacao executiva 2026-07-06:** Fechadas as 3 pendencias de frontend que restavam. JR-01: nova tela publica `/meu-cupom` (codigo, copiar link, compartilhar WhatsApp via `whatsapp_share_url`, historico de amigos e pontos ganhos), servida pelos novos endpoints publicos `GET /jornada/meu-cupom` e `POST /jornada/meu-cupom/gerar` (cupom amigo e criado automaticamente no primeiro acesso; regenera so quando expirado/esgotado). JR-07: `/resgate_dos_premios` ganhou secao "Meus resgates" com status do codigo (ativo/utilizado/expirado/cancelado) e botao "Renovar codigo" chamando `POST /jornada/resgates/{id}/renovar` (novo endpoint publico com checagem de posse por CPF); tela Meu Cupom mostra "X/5 usos" e "gere um novo". JR-09: painel `/(dashboard)/pontos-admin` agora exibe/copia o link rastreado e tem modal "Detalhes" com metricas reais (usos, clientes unicos, bruto/desconto/liquido, comissao estimada) e ultimos usos via `GET /admin/coupons/{code}`. JR-02 ja estava completo no codigo desde 2026-07-04 (badge em `/consultar-pontos` + estimativa em `/reservar`); checklist sincronizado. Validado: `70 passed` na suite unitaria (inclui 6 novos em `test_meu_cupom_service.py`) e `next build` OK.
 
-**Atualizacao executiva 2026-07-04:** JR-01 foi validado em service/API/schema/model com `7/7` testes focados passando (`test_indicacao_service.py` + `test_referral_routes.py`); backend corrigido para creditar `50` pontos no Convite Real. Frontend de JR-01 ficou parcial: `/reservar` agora le `?cupom=`/`?codigo=`, valida em `/cupons/validar`, envia `cupom_codigo` para `/public/reservas` e mostra desconto/total, mas ainda falta tela "Meu Cupom" com copiar/WhatsApp/historico. JR-09 foi reconectado parcialmente no admin: `/(dashboard)/pontos-admin` agora usa `/admin/coupons`, gera/edita/desativa por codigo e aceita campanha influencer/comissao; ainda falta UX completa de link rastreado, metricas e detalhes. Validacao rodada: `45 passed` no pacote focado Jornada Real e `next build` OK no frontend.
+**Atualizacao executiva 2026-07-04:** JR-01 foi validado em service/API/schema/model com `7/7` testes focados passando (`test_indicacao_service.py` + `test_referral_routes.py`). Frontend de JR-01 ficou parcial: `/reservar` agora le `?cupom=`/`?codigo=`, valida em `/cupons/validar`, envia `cupom_codigo` para `/public/reservas` e mostra desconto/total, mas ainda falta tela "Meu Cupom" com copiar/WhatsApp/historico. JR-09 foi reconectado parcialmente no admin: `/(dashboard)/pontos-admin` agora usa `/admin/coupons`, gera/edita/desativa por codigo e aceita campanha influencer/comissao; ainda falta UX completa de link rastreado, metricas e detalhes. Validacao rodada: `45 passed` no pacote focado Jornada Real e `next build` OK no frontend.
 
 Roadmap completo com 11 funcionalidades críticas para produção.
 
@@ -12,7 +14,7 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 
 | # | Funcionalidade | Prioridade | Complexidade | Backend | Frontend | WhatsApp | Testes | Est. |
 |---|---|----------|--------------|---------|----------|----------|--------|------|
-| 1️⃣ | Cupom Amigo | 🔴 Alta | Média | ✅ | ✅ | ✅ | ✅ 13/13 | 3-4d |
+| 1️⃣ | Cupom Amigo | 🔴 Alta | Média | ✅ | ✅ | ✅ | ✅ 29/29 | 3-4d |
 | 2️⃣ | Benefícios Níveis | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 5/5 | 2-3d |
 | 3️⃣ | Barras Progresso | 🔴 Alta | Baixa | ✅ | ✅ | N/A | ✅ 2/2 | 1-2d |
 | 4️⃣ | Aviso Prêmio Próximo | 🟡 Média | Média | ✅ | N/A | ✅ | ✅ 2/2 | 2d |
@@ -26,7 +28,7 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 
 ### Sincronizacao dominio + backend + frontend
 
-- [x] ✅ 1️⃣ Cupom Amigo / Convite Real: backend, API e reserva publica sincronizados; `/reservar` valida/aplica cupom; tela `/meu-cupom` com copiar, WhatsApp direto e historico de usos/pontos.
+- [x] ✅ 1️⃣ Cupom Amigo / Convite Real: backend, API, pagamento e reserva publica sincronizados; indicado recebe 10% de desconto real; indicador recebe 5 pontos apos checkout; `/reservar` valida/aplica cupom; tela `/meu-cupom` com copiar, WhatsApp direto e historico de usos/pontos.
 - [x] ✅ 2️⃣ Beneficios dos niveis: backend calcula Experiencia 2x e Real 4x; `/consultar-pontos` exibe badge do bonus e `/reservar` mostra estimativa de pontos com multiplicador real.
 - [x] ✅ 3️⃣ Barras de progresso: backend entrega progresso de nivel/premios e `/consultar-pontos` exibe dados reais.
 - [x] ✅ 4️⃣ Aviso de premio proximo: backend + WhatsApp sincronizados; sem tela obrigatoria.
@@ -52,7 +54,7 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 
 ## 1️⃣ Cupom Amigo - CONVITE REAL
 
-**Atualizacao 2026-07-04:** backend/service/API/schema/model revalidado; `PONTOS_CONVITE_REAL` corrigido para `50` e rotas `/referrals/*` passaram. Frontend agora tem integracao real parcial no `/reservar`: aceita cupom por query string ou digitacao, valida em `/cupons/validar`, envia `cupom_codigo` para `/public/reservas` e mostra desconto/total. Falta "Meu Cupom" com copiar, compartilhar WhatsApp e historico de usos. WhatsApp permanece parcial: backend monta mensagem/link e rota de referral cobre envio via Twilio quando solicitado, mas falta UX de compartilhamento do cliente.
+**Atualizacao 2026-07-10:** backend/service/API/schema/model revalidado; `PONTOS_CONVITE_REAL` agora e `5`, com origem `FRIEND_REFERRAL`, idempotencia por reserva e compatibilidade contra origem legada `CONVITE_REAL`. O indicado recebe desconto de 10% aplicado em `CupomUso.valorFinal`, pagamento/TEF/checkout/consulta publica usam o valor com desconto, e Cupom Amigo nao concede bonus direto de pontos ao indicado. Frontend `/reservar` mostra subtotal/desconto/total e invalida cupom ao trocar data/quarto. `/clientes` removeu Admin Pontos e Antifraude. WhatsApp permanece completo para compartilhamento via link e envio via Twilio quando solicitado.
 
 ### Descrição
 Hóspede recebe código único de indicação. Compartilha via WhatsApp com amigos. Se amigo reservar usando código, ambos ganham benefícios.
@@ -66,17 +68,17 @@ Depois me conta 🔥
 ```
 
 ### Backend Necessário
-**Status Backend:** ✅ Completo — implementado via `Cupom` + `CupomUso` + `Indicacao` e rotas `/referrals/*`; indicador recebe +50 pontos no checkout do indicado com proteção idempotente.
+**Status Backend:** ✅ Completo — implementado via `Cupom` + `CupomUso` + `Indicacao` e rotas `/referrals/*`; indicador recebe +5 pontos no checkout do indicado com protecao idempotente.
 
 - [x] ✅ Model equivalente a `ReferralCode`: `Cupom`, `CupomUso`, `Indicacao` (não existe model literal `ReferralCode`)
 - [x] ✅ Endpoint `POST /referrals/generate` → gera código único
 - [x] ✅ Endpoint `GET /referrals/{code}` → valida código
 - [x] ✅ Endpoint `POST /referrals/apply-to-reservation` → aplica benefício
-- [x] ✅ Lógica: indicado recebe desconto/pontos do cupom; indicador recebe `PONTOS_CONVITE_REAL = 50` no checkout do indicado
+- [x] ✅ Logica: indicado recebe desconto de 10% do cupom; indicador recebe `PONTOS_CONVITE_REAL = 5` no checkout do indicado
 - [x] ✅ Validação: código ativo, não expirado, sem max uso atingido
 
 ### Frontend Necessário
-**Status Frontend:** ✅ Completo — `/reservar` valida/aplica cupom e a nova tela `/meu-cupom` (2026-07-06) cobre codigo, copiar, WhatsApp e historico, alimentada por `GET /jornada/meu-cupom?cpf=` (cria o primeiro cupom automaticamente) e `POST /jornada/meu-cupom/gerar` (regenera quando expirado/esgotado).
+**Status Frontend:** ✅ Completo — `/reservar` valida/aplica cupom, exibe subtotal/desconto/total e limpa validacao obsoleta ao trocar data/quarto; `/meu-cupom` (2026-07-06) cobre codigo, copiar, WhatsApp e historico, alimentada por `GET /jornada/meu-cupom?cpf=` (cria o primeiro cupom automaticamente) e `POST /jornada/meu-cupom/gerar` (regenera quando expirado/esgotado). `/clientes` nao contem mais Admin Pontos/Antifraude.
 
 - [x] ✅ Tela "Meu Cupom" no novo route `/meu-cupom` (link "Convidar amigos" em `/consultar-pontos`)
 - [x] ✅ Exibe código gerado
@@ -97,7 +99,7 @@ Depois me conta 🔥
   ```
 
 ### Benefício
-- Indicador: +50 pontos quando indicado fizer check-out
+- Indicador: +5 pontos quando indicado fizer check-out
 - Indicado: 10% desconto primeira reserva
 
 ### Testes
@@ -112,14 +114,14 @@ GET /referrals/AMIGO_ABC123XYZ
 
 # 3. Aplicar na reserva
 POST /reservations { referral_code: "AMIGO_ABC123XYZ" }
-→ desconto aplicado + pontos futuros prometidos
+→ desconto aplicado no total oficial da reserva
 
 # 4. Checkout do indicado
 Checkout reserva indicada
-→ indicador recebe +50 pontos uma única vez (origem CONVITE_REAL)
+→ indicador recebe +5 pontos uma unica vez (origem FRIEND_REFERRAL; dedupe tambem cobre CONVITE_REAL)
 ```
 
-**Resultado testes:** ✅ 5/5 — `test_indicacao_service.py`: bloqueia auto-indicação, bloqueia CPF duplicado, dedupe checkout, credita 50 pontos, calcula faltam pontos para próximo prêmio.
+**Resultado testes:** ✅ 29/29 — `test_indicacao_service.py`, `test_referral_routes.py`, `test_tef_idempotency.py`, `test_reserva_logic_guards.py` e `test_programa_pontos_service.py`; tambem validado `npx next build`.
 
 **Prioridade:** 🔴 ALTA | **Complexidade:** Média | **Est:** 3-4 dias
 

@@ -76,7 +76,7 @@ class CupomService:
             "descricao": f"Cupom amigo de {getattr(cliente, 'nomeCompleto', 'cliente')}",
             "tipo_desconto": "PERCENTUAL",
             "valor_desconto": percentual_desconto,
-            "pontos_bonus": pontos_bonus,
+            "pontos_bonus": 0,
             "data_inicio": agora,
             "data_fim": agora + timedelta(days=int(dias_validade or 30)),
             "limite_total_usos": int(limite_total_usos or 1),

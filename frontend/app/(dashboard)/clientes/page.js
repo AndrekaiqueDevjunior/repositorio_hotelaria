@@ -39,7 +39,7 @@ export default function Clientes() {
   const [funcionarios, setFuncionarios] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [showFuncionarioForm, setShowFuncionarioForm] = useState(false)
-  const [activeTab, setActiveTab] = useState('admin-pontos')
+  const [activeTab, setActiveTab] = useState('clientes')
   const [editingFuncionario, setEditingFuncionario] = useState(null)
   const [showClienteDetailsModal, setShowClienteDetailsModal] = useState(false)
   const [clienteDetalhes, setClienteDetalhes] = useState(null)
@@ -61,20 +61,8 @@ export default function Clientes() {
     observacoes: ''
   })
 
-  // Estados para Admin Pontos
-  const [clientesPontos, setClientesPontos] = useState([])
-  const [historicoAntifraude, setHistoricoAntifraude] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [showAjusteModal, setShowAjusteModal] = useState(false)
-  const [selectedCliente, setSelectedCliente] = useState(null)
-
-  // Form de ajuste manual
-  const [ajusteForm, setAjusteForm] = useState({
-    cliente_id: '',
-    pontos: '',
-    motivo: ''
-  })
 
   // Estados para filtros e busca
   const [filters, setFilters] = useState({
@@ -117,131 +105,8 @@ export default function Clientes() {
       loadClientes()
     } else if (activeTab === 'funcionarios' && isAdmin) {
       loadFuncionarios()
-    } else if (activeTab === 'admin-pontos') {
-      loadClientesPontos()
-    } else if (activeTab === 'antifraude') {
-      loadHistoricoAntifraude()
     }
   }, [activeTab, pagination.page, filters, isAdmin])
-
-  const loadClientesPontos = async () => {
-    try {
-      setLoading(true)
-      const res = await api.get('/clientes')
-      // Buscar clientes e seus pontos
-      const clientes = res.data.clientes || []
-      setClientesPontos(clientes)
-      setError('')
-    } catch (error) {
-      console.error('Erro ao carregar clientes:', error)
-      setError('Erro ao conectar com o servidor')
-      setClientesPontos([]) // Garantir array vazio
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const loadHistoricoAntifraude = async () => {
-    try {
-      setLoading(true)
-      const res = await api.get('/antifraude/transacoes-suspeitas?limit=50')
-      
-      if (res.data.success) {
-        const transacoes = res.data.transacoes || []
-        // Transformar para formato esperado
-        const operacoes = transacoes.map(t => ({
-          id: t.cliente_id,
-          operacao_id: `OP-${t.cliente_id}`,
-          reserva_codigo: '-',
-          cliente_nome: `Cliente #${t.cliente_id}`,
-          cpf_hospede: t.documento || '-',
-          pontos_calculados: 0,
-          status: t.risco === 'ALTO' ? 'RECUSADO' : 'SUCESSO',
-          motivo_recusa: t.alertas?.join(', ') || '-',
-          created_at: new Date().toISOString(),
-          ...t
-        }))
-        setHistoricoAntifraude(operacoes)
-        setPagination(prev => ({
-          ...prev,
-          total: operacoes.length
-        }))
-        setError('')
-      } else {
-        setError(res.data.message || 'Erro ao carregar histórico antifraude')
-        setHistoricoAntifraude([])
-      }
-    } catch (error) {
-      console.error('Erro ao carregar histórico antifraude:', error)
-      setError('Erro ao conectar com o servidor')
-      setHistoricoAntifraude([]) // Garantir array vazio
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleAjusteManual = async (e) => {
-    e.preventDefault()
-
-    // Validar limite de ±4 pontos
-    const pontos = parseInt(ajusteForm.pontos)
-    if (Math.abs(pontos) > 4) {
-      setError('Ajuste manual limitado a ±4 pontos')
-      return
-    }
-
-    try {
-      setLoading(true)
-      const res = await api.post('/pontos/ajustar', {
-        cliente_id: parseInt(ajusteForm.cliente_id),
-        pontos: pontos,
-        motivo: ajusteForm.motivo,
-        usuario_id: 1 // ID do usuário admin (simulado)
-      })
-
-      if (res.data.success) {
-        alert('Ajuste realizado com sucesso!')
-        setShowAjusteModal(false)
-        setAjusteForm({ cliente_id: '', pontos: '', motivo: '' })
-        loadClientesPontos() // Recarregar para atualizar saldos
-      } else {
-        setError(res.data.error || 'Erro ao realizar ajuste')
-      }
-    } catch (error) {
-      console.error('Erro ao realizar ajuste:', error)
-      setError('Erro ao conectar com o servidor')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'SUCESSO': return 'bg-green-100 text-green-800'
-      case 'RECUSADO': return 'bg-red-100 text-red-800'
-      case 'DUPLICADO': return 'bg-yellow-100 text-yellow-800'
-      case 'ERRO_API': return 'bg-gray-100 text-gray-800'
-      default: return 'bg-gray-100 text-gray-800'
-    }
-  }
-
-  const getSaldoColor = (saldo) => {
-    if (saldo >= 100) return 'text-purple-600 font-bold'
-    if (saldo >= 20) return 'text-green-600 font-bold'
-    if (saldo >= 5) return 'text-blue-600'
-    return 'text-gray-600'
-  }
-
-  const getTotalStats = () => {
-    const totalClientes = clientesPontos.length || 0
-    const totalPontos = clientesPontos.reduce((acc, c) => acc + (c.saldo_pontos || 0), 0)
-    const clientesComPontos = clientesPontos.filter(c => (c.saldo_pontos || 0) > 0).length
-    const clientesAltos = clientesPontos.filter(c => (c.saldo_pontos || 0) >= 50).length
-
-    return { totalClientes, totalPontos, clientesComPontos, clientesAltos }
-  }
-
-  const stats = getTotalStats()
 
   const loadClientes = async () => {
     console.log('🔄 [DEBUG] Carregando clientes com filtros:', filters)
@@ -456,10 +321,9 @@ export default function Clientes() {
 
     try {
       const res = await api.delete(`/clientes/${clienteToDelete.id}`)
-      
+
       toast.success('Cliente excluído com sucesso! ✅')
       await loadClientes()
-      await loadClientesPontos()
       setShowDeleteModal(false)
       setClienteToDelete(null)
     } catch (error) {
@@ -546,10 +410,9 @@ export default function Clientes() {
     try {
       const res = await api.put(`/clientes/${editingCliente.id}`, editForm)
       
-      if (res.data) {
+        if (res.data) {
         toast.success('Cliente atualizado com sucesso! ✅')
         await loadClientes()
-        await loadClientesPontos()
         setShowClienteEditModal(false)
         setEditingCliente(null)
         setEditForm({ nome_completo: '', documento: '', telefone: '', email: '' })
@@ -670,8 +533,6 @@ export default function Clientes() {
           {[
             isAdmin && { id: 'funcionarios', label: 'Funcionários', icon: '👔', count: funcionarios.length },
             { id: 'clientes', label: 'Clientes', icon: '🧳', count: clientes.length },
-            { id: 'admin-pontos', label: 'Admin Pontos', icon: '🎯', count: clientesPontos.length },
-            { id: 'antifraude', label: 'Antifraude', icon: '🛡️', count: historicoAntifraude.length },
           ].filter(Boolean).map((tab) => (
             <button
               key={tab.id}
@@ -708,263 +569,6 @@ export default function Clientes() {
           >
             ×
           </button>
-        </div>
-      )}
-
-      {activeTab === 'admin-pontos' && (
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-lg">
-            <h2 className="text-2xl font-bold mb-2">🔧 Admin Real Points</h2>
-            <p className="text-red-100">Painel administrativo do sistema de fidelidade</p>
-          </div>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-gray-600 text-sm mb-1">Total de Clientes</h3>
-              <p className="text-3xl font-bold text-blue-600">{stats.totalClientes}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-gray-600 text-sm mb-1">Pontos Distribuídos</h3>
-              <p className="text-3xl font-bold text-green-600">{stats.totalPontos.toLocaleString('pt-BR')}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-gray-600 text-sm mb-1">Clientes com Pontos</h3>
-              <p className="text-3xl font-bold text-yellow-600">{stats.clientesComPontos}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-gray-600 text-sm mb-1">Clientes Premium</h3>
-              <p className="text-3xl font-bold text-purple-600">{stats.clientesAltos}</p>
-            </div>
-          </div>
-
-          {/* Actions Bar */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-semibold">Lista de Clientes</h3>
-              <button
-                onClick={() => setShowAjusteModal(true)}
-                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-              >
-                ⚙️ Ajuste Manual
-              </button>
-            </div>
-          </div>
-
-          {/* Clients Table */}
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Cliente
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Documento
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Email
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Saldo RP
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Ações
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {clientesPontos.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="px-6 py-8 text-center text-gray-500">
-                        {loading ? 'Carregando...' : 'Nenhum cliente encontrado'}
-                      </td>
-                    </tr>
-                  ) : (
-                    clientesPontos.map((cliente) => (
-                      <tr key={cliente.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">
-                            {cliente.nomeCompleto || cliente.nome || `Cliente #${cliente.id}`}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {cliente.documento || '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {cliente.email || '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`text-lg ${getSaldoColor(cliente.saldo_pontos || 0)}`}>
-                            {(cliente.saldo_pontos || 0).toLocaleString('pt-BR')} RP
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                            ATIVO
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <button
-                            onClick={() => {
-                              setSelectedCliente(cliente)
-                              setAjusteForm({
-                                cliente_id: cliente.id,
-                                pontos: '',
-                                motivo: ''
-                              })
-                              setShowAjusteModal(true)
-                            }}
-                            className="text-blue-600 hover:text-blue-900 mr-3"
-                          >
-                            Ajustar
-                          </button>
-                          <button
-                            onClick={() => {
-                              alert('Funcionalidade em desenvolvimento')
-                            }}
-                            className="text-gray-600 hover:text-gray-900"
-                          >
-                            Histórico
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'antifraude' && (
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-lg">
-            <h2 className="text-2xl font-bold mb-2">🛡️ Histórico Antifraude</h2>
-            <p className="text-red-100">Operações de validação de pontos</p>
-          </div>
-
-          {/* Operations Table */}
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="p-6 border-b">
-              <h3 className="text-lg font-semibold">Operações Antifraude</h3>
-              <p className="text-sm text-gray-500 mt-1">
-                Total: {pagination.total} operações
-              </p>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      ID Operação
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Reserva
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Cliente
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      CPF
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Pontos
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Motivo
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Data
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {historicoAntifraude.length === 0 ? (
-                    <tr>
-                      <td colSpan="8" className="px-6 py-8 text-center text-gray-500">
-                        {loading ? 'Carregando...' : 'Nenhuma operação encontrada'}
-                      </td>
-                    </tr>
-                  ) : (
-                    historicoAntifraude.map((operacao) => (
-                      <tr key={operacao.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {operacao.operacao_id}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {operacao.reserva_codigo || '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {operacao.cliente_nome || '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {operacao.cpf_hospede}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <span className="font-medium text-blue-600">
-                            {operacao.pontos_calculados} RP
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(operacao.status)}`}>
-                            {operacao.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                          {operacao.motivo_recusa || '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {new Date(operacao.created_at).toLocaleDateString('pt-BR')}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination */}
-            {pagination.total > pagination.pageSize && (
-              <div className="px-6 py-4 border-t flex items-center justify-between">
-                <div className="text-sm text-gray-700">
-                  Mostrando {((pagination.page - 1) * pagination.pageSize) + 1} a{' '}
-                  {Math.min(pagination.page * pagination.pageSize, pagination.total)} de{' '}
-                  {pagination.total} resultados
-                </div>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => setPagination(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
-                    disabled={pagination.page === 1}
-                    className="px-3 py-1 border rounded text-sm disabled:opacity-50"
-                  >
-                    Anterior
-                  </button>
-                  <span className="px-3 py-1 text-sm">
-                    Página {pagination.page}
-                  </span>
-                  <button
-                    onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                    disabled={pagination.page * pagination.pageSize >= pagination.total}
-                    className="px-3 py-1 border rounded text-sm disabled:opacity-50"
-                  >
-                    Próxima
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 

@@ -80,6 +80,16 @@ class _FakeDb:
         self.reserva = _FakeReservaTable()
 
 
+class _FakeCupomUsoTable:
+    def __init__(self, valor_final):
+        self.valor_final = valor_final
+        self.where = None
+
+    async def find_first(self, where):
+        self.where = where
+        return SimpleNamespace(valorFinal=self.valor_final)
+
+
 @pytest.mark.asyncio
 async def test_update_quarto_numero_tambem_atualiza_quarto_id():
     db = _FakeDb()
@@ -89,3 +99,15 @@ async def test_update_quarto_numero_tambem_atualiza_quarto_id():
 
     assert db.reserva.updated_data["quartoNumero"] == "202A"
     assert db.reserva.updated_data["quartoId"] == 77
+
+
+@pytest.mark.asyncio
+async def test_valor_total_devido_usa_total_com_desconto_do_cupom():
+    db = SimpleNamespace(cupomuso=_FakeCupomUsoTable(valor_final=630.0))
+    repo = ReservaRepository(db)
+    reserva = SimpleNamespace(valorTotal=700.0, valorDiaria=350.0, numDiarias=2)
+
+    valor_total = await repo._obter_valor_total_devido(10, reserva)
+
+    assert valor_total == 630.0
+    assert db.cupomuso.where == {"reservaId": 10}
