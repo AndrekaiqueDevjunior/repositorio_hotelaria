@@ -51,6 +51,11 @@ def _format_datetime(value: Any) -> str:
 
 
 def _valor_total_reserva(reserva) -> float:
+    # Integridade do desconto: se a reserva tem cupom aplicado, o valor
+    # comunicado no voucher e o valor FINAL devido, nao o bruto.
+    cupom_uso = getattr(reserva, "cupomUso", None)
+    if cupom_uso is not None and getattr(cupom_uso, "valorFinal", None) is not None:
+        return float(cupom_uso.valorFinal)
     valor_total = getattr(reserva, "valorTotal", None)
     if valor_total is not None:
         return float(valor_total)
@@ -101,7 +106,8 @@ async def obter_voucher_por_reserva(
                 'include': {
                     'cliente': True,
                     'pagamentos': True,
-                    'hospedagem': True
+                    'hospedagem': True,
+                    'cupomUso': True
                 }
             }
         }
@@ -165,7 +171,8 @@ async def obter_voucher(codigo: str):
                 'include': {
                     'cliente': True,
                     'pagamentos': True,
-                    'hospedagem': True
+                    'hospedagem': True,
+                    'cupomUso': True
                 }
             }
         }
@@ -435,7 +442,8 @@ async def gerar_pdf_voucher(codigo: str):
                 'include': {
                     'cliente': True,
                     'pagamentos': True,
-                    'hospedagem': True
+                    'hospedagem': True,
+                    'cupomUso': True
                 }
             }
         }

@@ -33,7 +33,10 @@ class ReservaRepository:
     async def _notificar_whatsapp_reserva(self, reserva, evento: str, detalhe: str = None) -> None:
         try:
             whatsapp_service = get_whatsapp_service()
-            valor_total = self._calcular_valor_total_model(reserva)
+            # Valor comunicado = valor final devido (com desconto de cupom).
+            valor_total = await self._obter_valor_total_devido(
+                getattr(reserva, "id", 0), reserva
+            )
             cliente = getattr(reserva, "cliente", None)
             await whatsapp_service.enviar_notificacao_evento_reserva(
                 evento=evento,

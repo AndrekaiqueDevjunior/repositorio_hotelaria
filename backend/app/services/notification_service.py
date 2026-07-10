@@ -201,6 +201,16 @@ class NotificationService:
             except (ValueError, TypeError):
                 pass
 
+            # Integridade do desconto: se ha cupom aplicado, TODO valor
+            # comunicado (dashboard, email, WhatsApp cliente/admin) deve ser
+            # o valor FINAL devido, igual ao que o pagamento vai cobrar.
+            try:
+                cupom_uso = await db.cupomuso.find_first(where={"reservaId": int(reserva_id)})
+                if cupom_uso is not None and getattr(cupom_uso, "valorFinal", None) is not None:
+                    valor_total = float(cupom_uso.valorFinal)
+            except Exception as cupom_error:
+                print(f"[NOTIFICAÇÃO] Falha ao buscar cupom da reserva {reserva_id}: {cupom_error}")
+
             # Formatar mensagem da notificação
             mensagem = f"🆕 Nova Reserva #{reserva_id}"
             detalhes = f"Cliente: {cliente_nome} | Quarto: {quarto_numero}"
