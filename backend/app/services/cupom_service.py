@@ -316,6 +316,10 @@ class CupomService:
                         cliente_indicador_id=int(cupom_uso["cliente_indicador_id"]),
                     )
                 except Exception as exc:
+                    # Nunca engolir em silencio: sem este log, o cupom aplica,
+                    # o vinculo nao nasce e o indicador fica sem os 5 pontos
+                    # sem ninguem perceber (incidente de 2026-07-10).
+                    print(f"[CUPOM AMIGO] Falha ao registrar indicacao da reserva {reserva_id}: {exc}")
                     cupom_uso["indicacao"] = {
                         "success": False,
                         "motivo": f"falha_ao_registrar_indicacao: {str(exc)}",

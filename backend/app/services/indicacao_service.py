@@ -182,7 +182,64 @@ class IndicacaoService:
             )
 
             if not rows:
-                return {"success": True, "creditado": False, "motivo": "sem_indicacao"}
+                # Autocura: se o vinculo nao foi criado quando o cupom amigo
+                # foi aplicado (ex.: falha silenciosa historica do INSERT),
+                # deriva a indicacao diretamente do cupom da reserva e segue
+                # para o credito na mesma transacao.
+                cupom_rows = await transaction.query_raw(
+                    """
+                    SELECT c.cliente_indicador_id
+                    FROM cupons_usos cu
+                    JOIN cupons c ON c.id = cu.cupom_id
+                    WHERE cu.reserva_id = $1
+                      AND UPPER(COALESCE(c.tipo_campanha, '')) = 'CUPOM_AMIGO'
+                      AND c.cliente_indicador_id IS NOT NULL
+                    LIMIT 1
+                    """,
+                    reserva_id,
+                )
+                indicador_id_cupom = int(cupom_rows[0]["cliente_indicador_id"]) if cupom_rows else 0
+                if not indicador_id_cupom or indicador_id_cupom == int(getattr(reserva, "clienteId", 0) or 0):
+                    return {"success": True, "creditado": False, "motivo": "sem_indicacao"}
+
+                indicador_rows = await transaction.query_raw(
+                    "SELECT documento FROM clientes WHERE id = $1 LIMIT 1",
+                    indicador_id_cupom,
+                )
+                cpf_indicador = normalizar_documento(indicador_rows[0]["documento"]) if indicador_rows else ""
+                if not cpf_indicador or not cpf_indicado or cpf_indicador == cpf_indicado:
+                    return {"success": True, "creditado": False, "motivo": "sem_indicacao"}
+
+                rows = await transaction.query_raw(
+                    """
+                    INSERT INTO indicacoes (
+                        cliente_indicador_id, cliente_indicado_id, reserva_id,
+                        cpf_indicador, cpf_indicado, status, data_envio,
+                        data_reserva, pontos_creditados, updated_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, 'reservado', now(), $6, false, now())
+                    ON CONFLICT (cpf_indicado) DO NOTHING
+                    RETURNING *
+                    """,
+                    indicador_id_cupom,
+                    getattr(reserva, "clienteId", None),
+                    reserva_id,
+                    cpf_indicador,
+                    cpf_indicado,
+                    getattr(reserva, "createdAt", None) or now_utc(),
+                )
+                if not rows:
+                    # CPF indicado ja tinha indicacao registrada: recarrega com lock.
+                    rows = await transaction.query_raw(
+                        "SELECT * FROM indicacoes WHERE cpf_indicado = $1 LIMIT 1 FOR UPDATE",
+                        cpf_indicado,
+                    )
+                if not rows:
+                    return {"success": True, "creditado": False, "motivo": "sem_indicacao"}
+                print(
+                    f"[INDICACAO] Autocura: vinculo criado a partir do cupom amigo "
+                    f"(reserva {reserva_id}, indicador {indicador_id_cupom})"
+                )
 
             indicacao = rows[0]
             indicacao_id = int(indicacao["id"])
