@@ -2795,7 +2795,7 @@ function PontosContent() {
   }
 
   return (
-    <ProtectedRoute requiredRoles={['ADMIN']}>
+    <ProtectedRoute requiredRoles={['ADMIN', 'GERENTE', 'RECEPCAO', 'RECEPCIONISTA', 'FUNCIONARIO']}>
       {renderContent()}
     </ProtectedRoute>
   )

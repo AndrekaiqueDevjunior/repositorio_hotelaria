@@ -251,9 +251,11 @@ async def obter_historico_cliente(
 @router.get("/estatisticas", response_model=dict)
 async def obter_estatisticas_pontos(
     service: PontosService = Depends(get_pontos_service),
-    current_user: User = Depends(require_admin_or_manager)
+    # Leitura liberada para todo funcionario autenticado (a tela de pontos e
+    # somente-leitura para nao-ADMIN); escritas seguem exigindo ADMIN.
+    current_user: User = Depends(get_current_active_user)
 ):
-    """Obter estatísticas gerais do sistema de pontos - Requer ADMIN ou GERENTE"""
+    """Obter estatísticas gerais do sistema de pontos (leitura para staff)"""
     return await service.get_estatisticas()
 
 
