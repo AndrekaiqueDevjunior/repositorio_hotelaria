@@ -1,5 +1,5 @@
- ============================================================
-# DOCKER COMPOSE - PRODUÃ‡ÃƒO HOTEL CABO FRIO
+# ============================================================
+# DOCKER COMPOSE - PRODUÇÃO HOTEL CABO FRIO
 # ============================================================
 # Uso: docker-compose -f docker-compose.production.yml --env-file .env.production up -d
 # ============================================================
