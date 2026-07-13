@@ -12,7 +12,7 @@ x-production-env: &production_env
 
 services:
   # ============================================================
-  # POSTGRESQL - BANCO DE DADOS PRODUÃ‡ÃƒO
+  # POSTGRESQL - BANCO DE DADOS PRODUCAO
   # ============================================================
   postgres:
     <<: *production_env
@@ -43,7 +43,7 @@ services:
         max-file: "3"
 
   # ============================================================
-  # REDIS - CACHE E SESSÃ•ES
+  # REDIS - CACHE E SESSOES
   # ============================================================
   redis:
     <<: *production_env
@@ -88,7 +88,7 @@ services:
       - hotel_network
 
   # ============================================================
-  # BACKEND - FASTAPI PRODUÃ‡ÃƒO
+  # BACKEND - FASTAPI PRODUCAO
   # ============================================================
   backend:
     <<: *production_env
@@ -197,7 +197,7 @@ services:
         prisma migrate deploy &&
         echo '[BACKEND] Aplicando migrations SQL idempotentes (001-020)...' &&
         for f in $$(ls migrations/*.sql | sort -V); do echo \"[BACKEND] -> $$f\" && psql \"$$DATABASE_URL\" -f \"$$f\" || exit 1; done &&
-        echo '[BACKEND] Iniciando servidor produÃ§Ã£o com Gunicorn...' &&
+        echo '[BACKEND] Iniciando servidor producao com Gunicorn...' &&
         gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --access-logfile - --error-logfile -
       "
     healthcheck:
@@ -213,7 +213,7 @@ services:
         max-file: "5"
 
   # ============================================================
-  # FRONTEND - NEXT.JS PRODUÃ‡ÃƒO
+  # FRONTEND - NEXT.JS PRODUCAO
   # ============================================================
   frontend:
     <<: *production_env
