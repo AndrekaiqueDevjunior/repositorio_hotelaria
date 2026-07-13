@@ -19,8 +19,9 @@ def get_otp_service() -> OtpService:
 
 
 def _request_meta(request: Request) -> tuple[str, str]:
-    forwarded = request.headers.get("X-Forwarded-For")
-    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    # O WAF sobrescreve X-Forwarded-For; request.client ja contem o IP
+    # normalizado pelo servidor de aplicacao.
+    ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("User-Agent", "unknown")
     return ip, user_agent
 

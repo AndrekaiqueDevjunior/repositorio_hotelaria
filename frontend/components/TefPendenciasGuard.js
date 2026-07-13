@@ -9,8 +9,12 @@ import {
   markTefPendenciasChecked
 } from '../services/tefPendencias'
 import { useToast } from '../contexts/ToastContext'
+import { useUserActivity } from '../hooks/useUserActivity'
+import { apiCache } from '../lib/requestOptimization'
 
-const TEF_REQUEST_TIMEOUT_MS = 180000
+// Aumentado de 180s para 300s (5 min) + dependente de atividade do usuário
+const TEF_REQUEST_TIMEOUT_MS = 300000
+const TEF_CHECK_INTERVAL = 300000 // 5 minutos
 
 const formatarHorario = (value) => {
   if (!value) return ''
@@ -30,6 +34,7 @@ const formatarHorario = (value) => {
 const PERFIS_PERMITIDOS = ['ADMIN', 'GERENTE', 'RECEPCAO', 'FUNCIONARIO']
 
 export default function TefPendenciasGuard({ user }) {
+  const isUserActive = useUserActivity(300000) // Para após 5 min sem atividade
   const podeGerenciarTef = Boolean(user) && PERFIS_PERMITIDOS.includes(user.perfil)
   const { addToast } = useToast()
   const autoRunRef = useRef(false)
@@ -130,6 +135,19 @@ export default function TefPendenciasGuard({ user }) {
     setCheckedAt('')
     processarPendencias('dashboard_startup')
   }, [processarPendencias, podeGerenciarTef])
+
+  // Polling aumentado: 60s → 300s (5 min) + pausa quando usuário inativo
+  useEffect(() => {
+    if (!podeGerenciarTef || !isUserActive) return
+
+    const checkInterval = setInterval(() => {
+      if (isUserActive) {
+        verificarStatus()
+      }
+    }, TEF_CHECK_INTERVAL)
+
+    return () => clearInterval(checkInterval)
+  }, [isUserActive, podeGerenciarTef, verificarStatus])
 
   if (!podeGerenciarTef || collapsed) {
     return null

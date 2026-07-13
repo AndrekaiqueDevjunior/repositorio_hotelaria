@@ -2,8 +2,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
+import { useUserActivity } from '../../../hooks/useUserActivity'
+import { apiCache } from '../../../lib/requestOptimization'
+
+// Intervalo de refresh aumentado: 60s → 300s (5 minutos)
+const REFRESH_INTERVAL = 300000
 
 export default function Dashboard() {
+  const isUserActive = useUserActivity(300000) // Para polling após 5 min sem atividade
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -31,25 +37,38 @@ export default function Dashboard() {
     loadPagamentos()
     loadCheckoutAlerts()
 
-    // Atualizar hora
+    // Atualizar hora a cada minuto
     const updateTime = () => {
       setHoraAtual(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }))
     }
     updateTime()
-    const interval = setInterval(updateTime, 60000)
+    const timeInterval = setInterval(updateTime, 60000)
+
+    // Refresh aumentado para 300s E dependente de isUserActive
     const refreshInterval = setInterval(() => {
-      refreshAll()
-    }, 60000)
+      if (isUserActive) {
+        refreshAll()
+      }
+    }, REFRESH_INTERVAL)
+
     return () => {
-      clearInterval(interval)
+      clearInterval(timeInterval)
       clearInterval(refreshInterval)
     }
-  }, [])
+  }, [isUserActive])
 
   const loadStats = async (retryCount = 0) => {
     try {
       setLoading(true)
-      
+
+      // Verificar cache primeiro (TTL: 1 minuto)
+      const cached = apiCache.get('dashboard:stats')
+      if (cached) {
+        setStats(cached)
+        setLoading(false)
+        return
+      }
+
       // Tentar rota autenticada primeiro
       let res
       try {
@@ -62,10 +81,11 @@ export default function Dashboard() {
       
       if (res.data.success) {
         // Suportar formato antigo (data) e novo (kpis_principais)
+        let statsData
         if (res.data.data) {
           // O backend pode retornar o formato antigo (data) e também o novo (kpis_principais).
           // O card de comprovantes depende de total_comprovantes (novo), então mesclamos.
-          setStats({
+          statsData = {
             ...res.data.data,
             reservas_pendentes:
               res.data.data.reservas_pendentes ?? res.data.kpis_principais?.reservas_pendentes ?? 0,
@@ -75,10 +95,10 @@ export default function Dashboard() {
               res.data.data.reservas_finalizadas ?? res.data.kpis_principais?.reservas_finalizadas ?? 0,
             total_comprovantes:
               res.data.data.total_comprovantes ?? res.data.kpis_principais?.total_comprovantes ?? 0,
-          })
+          }
         } else if (res.data.kpis_principais) {
           // Converter formato novo para formato esperado pelo frontend
-          setStats({
+          statsData = {
             total_clientes: res.data.kpis_principais.total_clientes || 0,
             total_reservas: res.data.kpis_principais.total_reservas || 0,
             total_quartos: res.data.kpis_principais.total_quartos || 0,
@@ -93,10 +113,14 @@ export default function Dashboard() {
             reservas_ativas: res.data.kpis_principais.reservas_ativas || 0,
             reservas_finalizadas: res.data.kpis_principais.reservas_finalizadas || 0,
             total_comprovantes: res.data.kpis_principais.total_comprovantes || 0,
-          })
+          }
         } else {
           throw new Error('Formato de resposta inválido')
         }
+
+        // Armazenar em cache
+        apiCache.set('dashboard:stats', statsData)
+        setStats(statsData)
         setError(null)
       } else {
         throw new Error(res.data.message || 'Erro ao carregar estatísticas')
@@ -118,10 +142,20 @@ export default function Dashboard() {
 
   const loadUltimasReservas = async () => {
     try {
+      // Verificar cache primeiro
+      const cached = apiCache.get('dashboard:reservas')
+      if (cached) {
+        setReservasOperacionais(cached.all)
+        setUltimasReservas(cached.latest)
+        return
+      }
+
       const res = await api.get('/reservas')
       if (res.data.reservas) {
+        const latest = res.data.reservas.slice(0, 5)
+        apiCache.set('dashboard:reservas', { all: res.data.reservas, latest })
         setReservasOperacionais(res.data.reservas)
-        setUltimasReservas(res.data.reservas.slice(0, 5))
+        setUltimasReservas(latest)
       }
     } catch (err) {
       console.error('Erro ao carregar reservas:', err)
@@ -130,6 +164,13 @@ export default function Dashboard() {
 
   const loadPagamentos = async () => {
     try {
+      // Verificar cache primeiro
+      const cached = apiCache.get('dashboard:pagamentos')
+      if (cached) {
+        setPagamentos(cached)
+        return
+      }
+
       const res = await api.get('/pagamentos')
       if (res.data.success && res.data.pagamentos) {
         const total = res.data.pagamentos
@@ -138,7 +179,9 @@ export default function Dashboard() {
         const pendente = res.data.pagamentos
           .filter(p => p.status === 'PENDENTE' || p.status === 'AGUARDANDO')
           .reduce((acc, p) => acc + p.valor, 0)
-        setPagamentos({ total, pendente })
+        const pagData = { total, pendente }
+        apiCache.set('dashboard:pagamentos', pagData)
+        setPagamentos(pagData)
       }
     } catch (err) {
       console.error('Erro ao carregar pagamentos:', err)

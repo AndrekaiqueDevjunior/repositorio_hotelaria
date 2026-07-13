@@ -80,14 +80,9 @@ rate_limiter = RateLimiter()
 
 def get_client_identifier(request: Request) -> str:
     """Obter identificador único do cliente"""
-    # Tentar obter IP real (considerando proxies)
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        ip = forwarded.split(",")[0].strip()
-    else:
-        ip = request.client.host if request.client else "unknown"
-    
-    return ip
+    # O servidor normaliza request.client somente para proxies autorizados.
+    # Nunca confie diretamente em X-Forwarded-For enviado pelo cliente.
+    return request.client.host if request.client else "unknown"
 
 
 async def rate_limit_dependency(

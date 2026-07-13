@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_db, disconnect_db
+from app.utils.validation_errors import sanitize_validation_errors
 from app.api.v1 import (
     cliente_routes,
     reserva_routes,
@@ -56,18 +57,15 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
-    try:
-        body_bytes = await request.body()
-        body_preview = body_bytes[:4000].decode("utf-8", errors="replace")
-    except Exception:
-        body_preview = "<unavailable>"
+    # Nunca registre o corpo: erros 422 podem conter senha, OTP, CPF,
+    # comprovante base64, cookies de sessao ou parametros sensiveis do TEF.
+    safe_errors = sanitize_validation_errors(exc.errors())
 
     print("[422] RequestValidationError")
     print(f"[422] path={request.url.path}")
     print(f"[422] method={request.method}")
     print(f"[422] headers.content-type={request.headers.get('content-type')}")
-    print(f"[422] errors={exc.errors()}")
-    print(f"[422] body_preview={body_preview}")
+    print(f"[422] errors={safe_errors}")
 
     def _make_serializable(obj):
         if isinstance(obj, bytes):
@@ -80,7 +78,7 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
 
     return JSONResponse(
         status_code=422,
-        content={"detail": _make_serializable(exc.errors())},
+        content={"detail": _make_serializable(safe_errors)},
     )
 
 app.mount("/media", StaticFiles(directory="media"), name="media")

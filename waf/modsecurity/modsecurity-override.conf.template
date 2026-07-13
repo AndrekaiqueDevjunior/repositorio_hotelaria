@@ -1,0 +1,3 @@
+# Regras locais carregadas antes do OWASP CRS. Isso permite exclusoes de
+# runtime estreitas sem editar os arquivos oficiais do Core Rule Set.
+Include /etc/modsecurity.d/custom/*.conf
