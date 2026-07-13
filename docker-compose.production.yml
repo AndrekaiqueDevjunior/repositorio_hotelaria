@@ -1,5 +1,5 @@
 # ============================================================
-# DOCKER COMPOSE - PRODUÇÃO HOTEL CABO FRIO
+# DOCKER COMPOSE - PRODUO HOTEL CABO FRIO
 # ============================================================
 # Uso: docker-compose -f docker-compose.production.yml --env-file .env.production up -d
 # ============================================================
@@ -406,7 +406,7 @@ services:
         max-file: "3"
 
   # ============================================================
-  # BACKUP AUTOMÃTICO
+  # BACKUP AUTOMTICO
   # ============================================================
   backup:
     <<: *production_env
@@ -432,7 +432,7 @@ services:
         while true; do
           echo '[BACKUP] Iniciando backup agendado...' &&
           sh /backup.sh &&
-          echo '[BACKUP] Backup concluÃ­do. PrÃ³ximo em 24h.' &&
+          echo '[BACKUP] Backup concludo. Prximo em 24h.' &&
           sleep 86400
         done
       "
