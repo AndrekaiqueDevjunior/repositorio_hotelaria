@@ -1,7 +1,11 @@
 import asyncio
+import logging
 from typing import Callable, Awaitable, Any
 
 from app.core.celery_app import celery_app
+
+
+logger = logging.getLogger(__name__)
 
 
 async def _run_with_db(fn: Callable) -> Any:
@@ -10,15 +14,26 @@ async def _run_with_db(fn: Callable) -> Any:
     O worker Celery e um processo separado — o db global do FastAPI
     nunca e conectado aqui. Criamos uma instancia fresh por execucao.
     """
-    from prisma import Prisma
-    from app.core.database import get_database_url
+    from app.core.database import (
+        create_celery_prisma_client,
+        disconnect_prisma_client,
+    )
 
-    db = Prisma(datasource={"url": get_database_url()})
-    await db.connect()
+    db = create_celery_prisma_client()
     try:
+        # O connect precisa estar dentro do try: mesmo uma conexao que falha
+        # pode ter iniciado um query engine que precisa ser encerrado.
+        await db.connect()
         return await fn(db)
     finally:
-        await db.disconnect()
+        # Sem timeout, prisma-client-py 0.11 pode esperar indefinidamente
+        # pelo subprocesso do query engine depois de enviar SIGINT.
+        try:
+            await disconnect_prisma_client(db)
+        except Exception:
+            # A limpeza nao pode substituir a falha original nem provocar retry
+            # de uma task que ja concluiu mutacoes com sucesso.
+            logger.exception("Falha ao encerrar o Prisma da task Celery")
 
 
 @celery_app.task(name="jornada.liberar_pontos_pendentes")

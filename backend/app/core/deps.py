@@ -1,15 +1,12 @@
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from prisma import Prisma
+from app.core.database import db, get_db_connected
 from jose import jwt
 from datetime import datetime, timedelta
 from enum import Enum
 import os
 import secrets
-
-# Prisma client instance
-db = Prisma()
 
 class PerfilUsuario(str, Enum):
     ADMIN = "ADMIN"
@@ -82,11 +79,8 @@ async def get_current_user(
             detail="Invalid authentication credentials"
         )
     
-    # Connect to database if not already connected
-    try:
-        await db.connect()
-    except:
-        pass  # Already connected
+    # Reutiliza o mesmo cliente conectado pelo lifecycle do FastAPI.
+    await get_db_connected()
     
     user = await db.funcionario.find_unique(
         where={"id": user_id}

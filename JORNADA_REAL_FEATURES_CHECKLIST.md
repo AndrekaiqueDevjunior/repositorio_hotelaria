@@ -1,5 +1,9 @@
 # Jornada Real - Checklist de Funcionalidades
 
+**Atualizacao executiva 2026-07-13 - infraestrutura JR-04/JR-05/JR-07:** 🟡 patch validado, deploy operacional pendente. O runtime real e FastAPI com `prisma-client-py` (nao Prisma Client JS): 4 workers Gunicorn mantem um cliente canonico por processo e 4 workers Celery criam clientes isolados para os jobs. A URL de producao nao limitava o pool e as quatro tasks das 14h ficaram presas no `disconnect()` sem timeout, com os processos Python em `do_wait`, quatro query engines vivos e quatro conexoes `idle`; logs anteriores registram `too many clients already`. O factory Prisma foi centralizado, o pool ficou limitado a 5 conexoes por worker web e 1 por worker Celery, `connect()` passou a ficar dentro do `try/finally`, e tanto a falha interna de conexao quanto o encerramento ganharam timeout finito. Backend: codigo/testes ✅, rebuild/restart e validacao pos-deploy 🟡. Frontend e WhatsApp: sem alteracao de contrato. Validado: `101 passed` na suite sem o arquivo de integracao; na suite total, `104 passed` e `40 errors` no setup por login administrativo 401; `19 passed` tambem na imagem Linux de producao; prova real `SELECT 1` conectou/desconectou e deixou 0 conexoes residuais pelo `application_name` de teste.
+
+**Validacao operacional 2026-07-10 (reserva 46):** JR-01 reprocessado em producao pelo `IndicacaoService` canonico apos confirmar checkout `CHECKOUT_REALIZADO` e pagamento `PAGO`. A autocura vinculou a indicacao 3 e criou a transacao 26 (`FRIEND_REFERRAL`, +5 pontos) para Alair Junior, elevando o saldo de 52 para 57; uma segunda chamada retornou `indicacao_ja_creditada`, comprovando idempotencia. O service passou a bloquear credito sem checkout/pagamento confirmado, serializar corretamente o metadata JSON e tipar timestamps nos SQLs de autocura. Validado: `29 passed` na suite focada JR-01.
+
 **Atualizacao executiva 2026-07-10:** JR-01 alinhado a regra vigente: indicado recebe somente 10% de desconto real no backend/pagamento, e indicador recebe `PONTOS_CONVITE_REAL = 5` somente apos checkout concluido, com origem canonica `FRIEND_REFERRAL` e dedupe tambem contra a origem legada `CONVITE_REAL`. Fluxos TEF, pagamento, consulta publica, saldo de checkout e hospedagem passaram a usar o valor oficial com desconto. Cupom Amigo nao gera bonus direto de pontos para o indicado. `/reservar` mostra subtotal/desconto/total e invalida validacao antiga ao trocar data/quarto. `/clientes` ficou sem abas/estados/chamadas de Admin Pontos e Antifraude. Validado: `29 passed` na suite focada e `npx next build` OK.
 
 **Atualizacao executiva 2026-07-06:** Fechadas as 3 pendencias de frontend que restavam. JR-01: nova tela publica `/meu-cupom` (codigo, copiar link, compartilhar WhatsApp via `whatsapp_share_url`, historico de amigos e pontos ganhos), servida pelos novos endpoints publicos `GET /jornada/meu-cupom` e `POST /jornada/meu-cupom/gerar` (cupom amigo e criado automaticamente no primeiro acesso; regenera so quando expirado/esgotado). JR-07: `/resgate_dos_premios` ganhou secao "Meus resgates" com status do codigo (ativo/utilizado/expirado/cancelado) e botao "Renovar codigo" chamando `POST /jornada/resgates/{id}/renovar` (novo endpoint publico com checagem de posse por CPF); tela Meu Cupom mostra "X/5 usos" e "gere um novo". JR-09: painel `/(dashboard)/pontos-admin` agora exibe/copia o link rastreado e tem modal "Detalhes" com metricas reais (usos, clientes unicos, bruto/desconto/liquido, comissao estimada) e ultimos usos via `GET /admin/coupons/{code}`. JR-02 ja estava completo no codigo desde 2026-07-04 (badge em `/consultar-pontos` + estimativa em `/reservar`); checklist sincronizado. Validado: `70 passed` na suite unitaria (inclui 6 novos em `test_meu_cupom_service.py`) e `next build` OK.
@@ -248,6 +252,8 @@ Faltam: 5 pontos
 ### Backend Necessário
 **Status Backend:** ✅ Completo — existe job/endpoint administrativo, detecção por `ProgramaPontosService`, WhatsApp parametrizado e dedupe diário por cliente/prêmio.
 
+**Infraestrutura 2026-07-13:** codigo ✅ / deploy 🟡 — o runner Celery agora usa o factory Prisma central, pool de 1 conexao e cleanup com timeout mesmo quando `connect()` falha. Frontend: N/A. WhatsApp: ✅ sem mudanca; o patch nao altera payload, dedupe ou servico de envio. Falta rebuild/restart dos containers e observar a proxima execucao do job sem task/conexao residual.
+
 - [x] ✅ Job agendável `notificar_premios_proximos_jornada(limit=100)`
 - [x] ✅ Endpoint protegido `POST /notificacoes/jornada/premios-proximos`
 - [x] ✅ Critério via `ProgramaPontosService` com threshold configurável de prêmio próximo
@@ -302,6 +308,8 @@ Saldo atual: 132 pontos
 ### Backend Necessário
 **Status Backend:** ✅ Completo — mensagem agora dispara quando a transação de pontos pendente é liberada, com dedupe por transação e bônus de nível no payload.
 
+**Infraestrutura 2026-07-13:** codigo ✅ / deploy 🟡 — a task de liberacao de pontos deixa de bloquear indefinidamente ao encerrar o query engine e sempre tenta cleanup, inclusive se a conexao falhar. Frontend: N/A. WhatsApp: ✅ sem mudanca; a regra e o template permanecem os mesmos. Falta rebuild/restart e validacao do agendamento em producao local.
+
 - [x] ✅ Hook fica em `PontosRepository.liberar_pontos_pendentes`, próximo da mudança real de saldo
 - [x] ✅ Dedupe por `logs_jornada` usando `transacao_id`
 - [x] ✅ WhatsApp enviado via `WhatsAppService.enviar_pontos_pos_checkout`
@@ -354,15 +362,16 @@ Horário: 11:00 AM
 - [x] ✅ `POST /checkout-alerts/{reservation_id}/viewed` marca alerta como visto
 
 ### Frontend Necessário
-**Status Frontend:** ✅ Implementado em `(dashboard)/dashboard/page.js` — não usa o endpoint `/checkout-alerts/pending` mas implementa o mesmo comportamento filtrando reservas localmente.
+**Status Frontend:** ✅ Implementado em `(dashboard)/dashboard/page.js` — usa `GET /checkout-alerts/pending` como fonte preferencial, chama `POST /checkout-alerts/{reservation_id}/viewed` e mantém filtro local de reservas apenas como fallback quando o endpoint falha.
 
 - [x] ✅ Polling de 60s via `setInterval(refreshAll, 60000)`
+- [x] ✅ Consulta o contrato canônico `GET /checkout-alerts/pending` e mapeia quarto, hóspede, reserva e horário
 - [x] ✅ Filtra reservas por `checkout_previsto >= 11:00 hoje` com deduplicação por assinatura
 - [x] ✅ Som via Web Audio API (oscillator 880Hz) — sem arquivo mp3, gerado em runtime
 - [x] ✅ Banner "Operação crítica" com cards por reserva (quarto, cliente, código, horário)
 - [x] ✅ Botão "🔔 Ativar som" / "🔔 Som ativo" com persistência em localStorage
 - [x] ✅ Browser Notification API ("Checkout pendente às 11:00")
-- [ ] ❌ Botão "Marcar como Visto" por card individual (usa fluxo de status da reserva)
+- [x] ✅ Botão "Marcar como visto" por card chama o endpoint canônico e remove o alerta da lista
 
 ### Testes
 - [x] ✅ Som toca em horário correto (>=11h, reservas hoje sem checkout)
@@ -408,6 +417,8 @@ Código novo: REAL-XYZ789GHI → ACTIVE
 
 ### Backend Necessário
 **Status Backend:** ✅ Completo — status explícito, validação, job/rotina administrativa e renovação de código de prêmio estão implementados e testados.
+
+**Infraestrutura 2026-07-13:** codigo ✅ / deploy 🟡 — a rotina agendada de invalidacao reutiliza o factory central, pool Celery de 1 conexao e disconnect com timeout finito. Frontend: ✅ sem mudanca. WhatsApp: N/A. Falta rebuild/restart e confirmar que a task deixa o estado `active` e libera a conexao apos executar.
 
 - [x] ✅ Model equivalente `Cupom` tem campo `status` com valores:
   - `active` → pode ser usado

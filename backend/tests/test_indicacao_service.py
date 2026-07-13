@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -66,11 +67,15 @@ class FakeDbForCheckoutDuplicado:
                 id=10,
                 clienteId=2,
                 codigoReserva="RCF-1",
-                checkoutReal=None,
+                statusReserva="CHECKOUT_REALIZADO",
+                checkoutReal="2026-07-10T19:04:04Z",
                 cliente=SimpleNamespace(documento="22233344455"),
                 hospedagem=SimpleNamespace(checkoutRealizadoEm=None),
             )
         )
+
+    async def query_raw(self, *args):
+        return [{"ok": 1}]
 
     def tx(self):
         return NoopTx([
@@ -137,11 +142,15 @@ class FakeDbForCheckoutCredito:
                 id=10,
                 clienteId=2,
                 codigoReserva="RCF-1",
-                checkoutReal=None,
+                statusReserva="CHECKOUT_REALIZADO",
+                checkoutReal="2026-07-10T19:04:04Z",
                 cliente=SimpleNamespace(documento="22233344455"),
                 hospedagem=SimpleNamespace(checkoutRealizadoEm=None),
             )
         )
+
+    async def query_raw(self, *args):
+        return [{"ok": 1}]
 
     def tx(self):
         return self.tx_context
@@ -225,9 +234,10 @@ async def test_checkout_credita_5_pontos_para_indicador():
     assert transacao["pontos"] == 5
     assert transacao["saldoAnterior"] == 12
     assert transacao["saldoPosterior"] == 17
-    assert transacao["metadata"]["reward_type"] == "FRIEND_REFERRAL"
-    assert transacao["metadata"]["pontos_r"] == 5
-    assert transacao["metadata"]["pontos_n"] == 5
+    metadata = json.loads(transacao["metadata"])
+    assert metadata["reward_type"] == "FRIEND_REFERRAL"
+    assert metadata["pontos_r"] == 5
+    assert metadata["pontos_n"] == 5
 
 
 @pytest.mark.asyncio

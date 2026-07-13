@@ -40,6 +40,11 @@ services:
       - ./backend/.env.docker.dev
     environment:
       CORS_ORIGINS: ${HOTEL_CORS_ORIGINS:-http://localhost:3000,http://localhost:18000,http://localhost:18080,http://127.0.0.1:3000,http://127.0.0.1:18000,http://127.0.0.1:18080}
+      PRISMA_CONNECTION_LIMIT: ${PRISMA_CONNECTION_LIMIT:-5}
+      PRISMA_POOL_TIMEOUT_SECONDS: ${PRISMA_POOL_TIMEOUT_SECONDS:-10}
+      PRISMA_CONNECT_TIMEOUT_SECONDS: ${PRISMA_CONNECT_TIMEOUT_SECONDS:-5}
+      PRISMA_DISCONNECT_TIMEOUT_SECONDS: ${PRISMA_DISCONNECT_TIMEOUT_SECONDS:-5}
+      PRISMA_APPLICATION_NAME: hotel_backend_dev
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

@@ -107,12 +107,15 @@ export default function JornadaReal() {
             </button>
           </header>
 
-          <div className="hero-copy">
+          <div className="hero-brand">
             <img
               src="/images/logo-jornada-real.png"
               alt="Hotel Real Cabo Frio - Jornada Real"
               className="hero-title-logo"
             />
+          </div>
+
+          <div className="hero-copy">
             <p>
               A cada estadia,
               <br />
@@ -336,6 +339,13 @@ export default function JornadaReal() {
           text-shadow: 0 3px 12px rgba(0, 0, 0, 0.9);
         }
 
+        .hero-brand {
+          width: 100%;
+          display: flex;
+          justify-content: center;
+          margin: -60px 0 30px;
+        }
+
         .small-crown {
           color: var(--gold);
           margin-bottom: 16px;
@@ -346,9 +356,8 @@ export default function JornadaReal() {
           display: block;
           width: min(500px, 94vw);
           height: auto;
-          margin: 0 auto 30px;
+          margin: 0;
           object-fit: contain;
-          transform: translateY(-60px);
           filter: drop-shadow(0 5px 18px rgba(0, 0, 0, 0.82));
         }
 
@@ -849,6 +858,9 @@ export default function JornadaReal() {
 
           .hero-title-logo {
             width: min(410px, 92vw);
+          }
+
+          .hero-brand {
             margin-bottom: 24px;
           }
 

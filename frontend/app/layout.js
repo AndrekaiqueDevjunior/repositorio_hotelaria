@@ -8,6 +8,10 @@ export const dynamic = 'force-dynamic'
 
 export const metadata = {
   title: 'Hotel Real Cabo Frio',
+  icons: {
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+  },
   description: 'Sistema de Gestão Hoteleira',
 }
 

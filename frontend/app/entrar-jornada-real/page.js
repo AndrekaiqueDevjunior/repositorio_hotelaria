@@ -110,7 +110,7 @@ export default function EntrarJornadaReal() {
 
         <section className="entry-card" aria-labelledby="entry-title">
           <div className="entry-hero">
-            <h1 id="entry-title">Jornada Real</h1>
+            <h1 id="entry-title">Como começo a conquistar nessa jornada</h1>
             <p>
               Entenda como funciona o programa
               <br />

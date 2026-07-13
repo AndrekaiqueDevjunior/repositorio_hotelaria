@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -160,10 +161,30 @@ class IndicacaoService:
         if not reserva or not getattr(reserva, "cliente", None):
             return {"success": False, "creditado": False, "motivo": "reserva_ou_cliente_nao_encontrado"}
 
-        cpf_indicado = normalizar_documento(getattr(reserva.cliente, "documento", None))
-        checkout_datetime = (
+        status_reserva = str(getattr(reserva, "statusReserva", "") or "").upper()
+        checkout_real = (
             getattr(reserva, "checkoutReal", None)
             or getattr(getattr(reserva, "hospedagem", None), "checkoutRealizadoEm", None)
+        )
+        if not checkout_real and status_reserva not in {"CHECKED_OUT", "CHECKOUT_REALIZADO", "FINALIZADA"}:
+            return {"success": True, "creditado": False, "motivo": "checkout_nao_concluido"}
+
+        pagamentos_confirmados = await self.db.query_raw(
+            """
+            SELECT 1
+            FROM pagamentos
+            WHERE reserva_id = $1
+              AND UPPER(status_pagamento) IN ('PAGO', 'CONFIRMADO', 'APROVADO')
+            LIMIT 1
+            """,
+            reserva_id,
+        )
+        if not pagamentos_confirmados:
+            return {"success": True, "creditado": False, "motivo": "pagamento_nao_confirmado"}
+
+        cpf_indicado = normalizar_documento(getattr(reserva.cliente, "documento", None))
+        checkout_datetime = (
+            checkout_real
             or now_utc()
         )
 
@@ -217,7 +238,7 @@ class IndicacaoService:
                         cpf_indicador, cpf_indicado, status, data_envio,
                         data_reserva, pontos_creditados, updated_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, 'reservado', now(), $6, false, now())
+                    VALUES ($1, $2, $3, $4, $5, 'reservado', now(), $6::timestamp, false, now())
                     ON CONFLICT (cpf_indicado) DO NOTHING
                     RETURNING *
                     """,
@@ -260,7 +281,7 @@ class IndicacaoService:
                     SET cliente_indicado_id = $1,
                         reserva_id = $2,
                         status = $3,
-                        data_checkout = $4,
+                        data_checkout = $4::timestamp,
                         pontos_creditados = true,
                         transacao_pontos_id = $5,
                         updated_at = now()
@@ -325,7 +346,7 @@ class IndicacaoService:
                     "saldoAnterior": saldo_anterior,
                     "saldoPosterior": saldo_posterior,
                     "motivo": f"Friend Referral - reserva {codigo_reserva}",
-                    "metadata": {
+                    "metadata": json.dumps({
                         "source": ORIGEM_FRIEND_REFERRAL,
                         "reward_type": ORIGEM_FRIEND_REFERRAL,
                         "operation_key": f"friend_referral:{indicacao_id}:{reserva_id}",
@@ -336,7 +357,7 @@ class IndicacaoService:
                         "pontos_r": PONTOS_CONVITE_REAL,
                         "pontos_n": PONTOS_CONVITE_REAL,
                         "idempotency_scope": "reservation_referral_reward",
-                    },
+                    }),
                 }
             )
 
@@ -346,7 +367,7 @@ class IndicacaoService:
                 SET cliente_indicado_id = $1,
                     reserva_id = $2,
                     status = $3,
-                    data_checkout = $4,
+                    data_checkout = $4::timestamp,
                     pontos_creditados = true,
                     transacao_pontos_id = $5,
                     updated_at = now()
