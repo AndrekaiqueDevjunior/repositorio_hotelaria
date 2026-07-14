@@ -404,10 +404,15 @@ async def verificar_disponibilidade_quartos(
                 continue
             tipos_index.setdefault(tipo, []).append({"numero": q.get("numero")})
 
+        tarifa_repo = TarifaSuiteRepository(db)
         tipos_disponiveis = []
         total_quartos_disponiveis = 0
         for tipo, quartos in tipos_index.items():
-            preco_diaria = await _obter_tarifa_diaria(db, tipo, checkin_date.date())
+            # Tipo sem tarifa ativa apenas nao e ofertado; nao bloqueia os demais
+            tarifa = await tarifa_repo.get_tarifa_ativa(tipo, checkin_date.date())
+            if not tarifa:
+                continue
+            preco_diaria = float(tarifa.get("preco_diaria", 0.0))
             quantidade = len(quartos)
             total_quartos_disponiveis += quantidade
             tipos_disponiveis.append({
