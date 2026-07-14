@@ -23,6 +23,10 @@ class TarifaSuiteUpdateRequest(BaseModel):
     ativo: bool = True
 
 
+class TarifaSuiteStatusUpdateRequest(BaseModel):
+    ativo: bool
+
+
 class TarifaSuiteResponse(BaseModel):
     id: int
     suite_tipo: TipoSuite

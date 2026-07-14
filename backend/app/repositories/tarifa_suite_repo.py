@@ -31,7 +31,8 @@ class TarifaSuiteRepository:
                 payload[camel_field] = payload.pop(snake_field)
 
         if "suiteTipo" in payload and payload["suiteTipo"] is not None:
-            payload["suiteTipo"] = str(payload["suiteTipo"]).upper().strip()
+            raw = getattr(payload["suiteTipo"], "value", payload["suiteTipo"])
+            payload["suiteTipo"] = str(raw).upper().strip()
 
         if "dataInicio" in payload and isinstance(payload["dataInicio"], date) and not isinstance(payload["dataInicio"], datetime):
             payload["dataInicio"] = _date_to_db_datetime(payload["dataInicio"])

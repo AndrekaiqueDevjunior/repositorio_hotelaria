@@ -10,11 +10,16 @@ from app.repositories.tarifa_suite_repo import TarifaSuiteRepository
 from app.schemas.tarifa_suite_schema import (
     TarifaSuiteCreateRequest,
     TarifaSuiteUpdateRequest,
+    TarifaSuiteStatusUpdateRequest,
     TarifaSuiteResponse,
 )
 
 
 router = APIRouter(prefix="/tarifas", tags=["tarifas"])
+
+
+def _suite_tipo_value(suite_tipo) -> str:
+    return suite_tipo.value if hasattr(suite_tipo, "value") else str(suite_tipo)
 
 
 def _parse_date(d: date) -> datetime:
@@ -79,18 +84,25 @@ async def criar_tarifa(
     if request.preco_diaria <= 0:
         raise HTTPException(status_code=400, detail="preco_diaria deve ser maior que zero")
 
-    sobrepoe = await repo.verificar_sobreposicao(
-        suite_tipo=request.suite_tipo,
-        data_inicio=request.data_inicio,
-        data_fim=request.data_fim,
-        ignore_id=None,
-    )
-    if sobrepoe:
-        raise HTTPException(status_code=409, detail="Ja existe tarifa ativa com vigencia sobreposta para esta suite")
+    suite_tipo = _suite_tipo_value(request.suite_tipo)
+
+    # Só tarifas ativas bloqueiam outras tarifas da mesma suíte.
+    if request.ativo:
+        sobrepoe = await repo.verificar_sobreposicao(
+            suite_tipo=suite_tipo,
+            data_inicio=request.data_inicio,
+            data_fim=request.data_fim,
+            ignore_id=None,
+        )
+        if sobrepoe:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ja existe uma tarifa ativa para a suite {suite_tipo} com vigencia sobreposta",
+            )
 
     tarifa = await repo.create(
         {
-            "suite_tipo": request.suite_tipo.value,
+            "suite_tipo": suite_tipo,
             "temporada": request.temporada,
             "data_inicio": _parse_date(request.data_inicio),
             "data_fim": _parse_date(request.data_fim),
@@ -118,19 +130,26 @@ async def atualizar_tarifa(
     if not existente:
         raise HTTPException(status_code=404, detail="Tarifa nao encontrada")
 
-    sobrepoe = await repo.verificar_sobreposicao(
-        suite_tipo=request.suite_tipo,
-        data_inicio=request.data_inicio,
-        data_fim=request.data_fim,
-        ignore_id=tarifa_id,
-    )
-    if sobrepoe:
-        raise HTTPException(status_code=409, detail="Ja existe tarifa ativa com vigencia sobreposta para esta suite")
+    suite_tipo = _suite_tipo_value(request.suite_tipo)
+
+    # Só tarifas ativas bloqueiam outras tarifas da mesma suíte.
+    if request.ativo:
+        sobrepoe = await repo.verificar_sobreposicao(
+            suite_tipo=suite_tipo,
+            data_inicio=request.data_inicio,
+            data_fim=request.data_fim,
+            ignore_id=tarifa_id,
+        )
+        if sobrepoe:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ja existe uma tarifa ativa para a suite {suite_tipo} com vigencia sobreposta",
+            )
 
     tarifa = await repo.update(
         tarifa_id,
         {
-            "suite_tipo": request.suite_tipo.value,
+            "suite_tipo": suite_tipo,
             "temporada": request.temporada,
             "data_inicio": _parse_date(request.data_inicio),
             "data_fim": _parse_date(request.data_fim),
@@ -147,7 +166,7 @@ async def atualizar_tarifa(
 @router.patch("/{tarifa_id}", response_model=TarifaSuiteResponse)
 async def atualizar_status_tarifa(
     tarifa_id: int,
-    request: dict,
+    request: TarifaSuiteStatusUpdateRequest,
     repo: TarifaSuiteRepository = Depends(get_tarifa_repo),
     current_user: User = Depends(require_admin_manager_or_recepcao),
 ):
@@ -156,11 +175,27 @@ async def atualizar_status_tarifa(
     if not existente:
         raise HTTPException(status_code=404, detail="Tarifa nao encontrada")
 
-    # Atualizar apenas o campo ativo
+    # Ao ativar, verifica conflito apenas com tarifas ativas da mesma suíte.
+    if request.ativo:
+        sobrepoe = await repo.verificar_sobreposicao(
+            suite_tipo=_suite_tipo_value(existente["suite_tipo"]),
+            data_inicio=existente["data_inicio"],
+            data_fim=existente["data_fim"],
+            ignore_id=tarifa_id,
+        )
+        if sobrepoe:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Nao foi possivel ativar a tarifa. Ja existe uma tarifa ativa "
+                    f"para a suite {existente['suite_tipo']} com vigencia sobreposta"
+                ),
+            )
+
     tarifa = await repo.update(
         tarifa_id,
         {
-            "ativo": request.get("ativo", existente["ativo"]),
+            "ativo": request.ativo,
         },
     )
 
