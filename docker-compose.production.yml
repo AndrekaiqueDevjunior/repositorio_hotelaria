@@ -250,7 +250,7 @@ services:
         echo '[BACKEND] Aplicando migrations SQL idempotentes (001-020)...' &&
         for f in $$(ls migrations/*.sql | sort -V); do echo \"[BACKEND] -> $$f\" && psql \"$$DATABASE_URL\" -f \"$$f\" || exit 1; done &&
         echo '[BACKEND] Iniciando servidor producao com Gunicorn...' &&
-        gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --access-logfile - --access-logformat '{\"time\":\"%(t)s\",\"remote_addr\":\"%(h)s\",\"method\":\"%(m)s\",\"status\":%(s)s,\"duration_seconds\":\"%(L)s\",\"request_id\":\"%({x-request-id}i)s\"}' --error-logfile -
+        gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 120 --keep-alive 5 --error-logfile -
       "
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

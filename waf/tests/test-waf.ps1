@@ -12,6 +12,14 @@ $image = "owasp/modsecurity-crs:4.28.0-nginx-202607100407@sha256:caa33403214c689
 $httpPort = $null
 $httpsPort = $null
 
+$productionCompose = [System.IO.File]::ReadAllText(
+    (Join-Path $root "docker-compose.production.yml")
+)
+if ($productionCompose -match '--access-logfile|--access-logformat') {
+    throw "Access log Uvicorn/Gunicorn pode vazar path ou query string"
+}
+Write-Host "[OK] access log inseguro do backend esta desativado"
+
 function Remove-TestResources {
     foreach ($name in @($waf, $backend)) {
         $containerId = docker ps --all --quiet --filter "name=^/${name}$"

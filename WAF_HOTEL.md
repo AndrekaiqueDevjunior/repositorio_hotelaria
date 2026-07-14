@@ -66,10 +66,12 @@ pertencentes a `root:101`, certificado `0644` e chave `0640`. Nao use o
 certificado autoassinado do repositorio em producao e nao monte diretamente um
 arquivo versionado `archive/*1.pem`.
 
-O hook de renovacao do Certbot deve copiar atomicamente `fullchain.pem` e
-`privkey.pem` para esse diretorio, preservar as permissoes e executar `nginx -t`
-seguido de `nginx -s reload` dentro do container. Sem esse hook, a renovacao do
-Let's Encrypt nao e propagada automaticamente ao WAF.
+O hook de renovacao do Certbot deve atualizar `fullchain.pem` e `privkey.pem`
+nesse diretorio, preservar as permissoes e recriar `nginx-proxy`. Como o Compose
+monta os dois arquivos individualmente, uma troca atomica por `rename` pode
+deixar o container preso ao inode antigo; apenas `nginx -s reload` nao e
+garantia de renovacao. Use `up -d --force-recreate nginx-proxy` para refazer os
+bind mounts. Sem esse hook, a renovacao do Let's Encrypt nao e propagada ao WAF.
 
 Valide antes de alterar containers:
 
@@ -77,6 +79,10 @@ Valide antes de alterar containers:
 docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
 & .\waf\tests\test-waf.ps1
 ```
+
+Ao testar comprovante grande com `curl`, envie `-H "Expect:"`. O CRS bloqueia
+`Expect: 100-continue` por politica de protocolo; navegadores/Axios nao enviam
+esse header no fluxo atual.
 
 Com backup confirmado e janela operacional aprovada, o comando de implantacao
 e:
@@ -135,11 +141,12 @@ Edite `waf/ip-blocklist.conf` usando o formato do modulo `geo`:
 2001:db8:1234::/48 1;
 ```
 
-Valide e recarregue sem derrubar conexoes:
+Como a denylist tambem e um bind de arquivo individual, valide em um container
+novo e recrie o proxy para garantir que uma gravacao por `rename` seja vista:
 
 ```powershell
-docker compose --env-file .env.production -f docker-compose.production.yml exec nginx-proxy nginx -t
-docker compose --env-file .env.production -f docker-compose.production.yml exec nginx-proxy nginx -s reload
+docker compose --env-file .env.production -f docker-compose.production.yml run --rm --no-deps nginx-proxy nginx -t
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --force-recreate nginx-proxy
 ```
 
 Registre motivo, fonte, responsavel e data de expiracao de cada bloqueio. Para
@@ -150,10 +157,16 @@ uma base global de reputacao de IP.
 ## Logs e tuning
 
 Os eventos saem em JSON por `stdout`, com rotacao Docker de `20 MiB x 5`.
-O access log do WAF registra apenas a classe da rota; o do Gunicorn omite path e
-query. Nenhum deles registra argumentos, body, Referer ou Authorization. O
-audit log do ModSecurity ainda pode conter URI e trechos que dispararam uma
-regra; trate-o como dado sensivel, restrinja acesso e aplique retencao curta.
+O access log operacional do WAF registra apenas a classe da rota e nao registra
+path, query, body, Referer ou Authorization. O access log do Uvicorn/Gunicorn
+fica desativado porque o `UvicornWorker` ignora o formato customizado do
+Gunicorn e voltaria a gravar a request line completa. Logs de erro continuam
+ativos.
+
+O audit log do ModSecurity ainda pode conter URI, query e trechos que dispararam
+uma regra; trate-o como dado sensivel, restrinja acesso e aplique retencao
+curta. A garantia de redacao acima vale para o access log operacional, nao para
+eventos de seguranca do ModSecurity.
 
 Regras locais ficam em `waf/rules/hotel-before.conf`. Para falso positivo,
 prefira exclusao por rota e campo. Nunca remova globalmente as categorias SQLi
@@ -167,7 +180,15 @@ ou XSS apenas para silenciar um alerta.
 - A firewall da VPS deve publicar somente `80/443` e SSH restrito; `3000/8000`,
   PostgreSQL e Redis nao devem estar acessiveis pela Internet.
 - A assinatura `X-Twilio-Signature` ainda deve ser validada no backend; o WAF
-  nao autentica a origem funcional do webhook.
+  nao autentica a origem funcional do webhook. A rota Twilio tambem possui logs
+  aplicativos preexistentes com telefone/SID/body que exigem saneamento em uma
+  tarefa propria antes de declarar conformidade integral de logs.
+- A origem Cielo continua dependendo da allowlist e do modo configurados no
+  backend; rate limit/CRS nao substituem autenticacao do provedor.
+- `FORWARDED_ALLOW_IPS="*"` pressupoe que a rede Docker e os processos locais
+  sejam confiaveis. Essa configuracao so e aceitavel enquanto `8000` permanecer
+  no loopback e o WAF sobrescrever `X-Forwarded-For`; ao adicionar outro proxy
+  ou container nao confiavel, restrinja a lista aos IPs/CIDRs exatos.
 
 ## Referencias oficiais
 
