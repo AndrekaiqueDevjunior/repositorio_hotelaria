@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { toast } from 'react-toastify'
-import { api } from '../lib/api'
+import { api, renovarSessao } from '../lib/api'
 import {
   TEF_PENDENCIAS_CHECK_EVENT,
   hasTefPendenciasStartupCheck,
@@ -873,6 +873,12 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
 
       setTefErro('')
       setTefProcessando(true)
+      // Renova a sessao ANTES de abrir a transacao TEF: garante 60min de
+      // token fresco para o fluxo inteiro do pinpad. Sem isso, o token
+      // expirava no meio da venda (cliente com cartao na mao), a confirmacao
+      // falhava com 401 e o pagamento ficava preso em PENDENTE. Best-effort:
+      // se o refresh falhar, o interceptor de 401 do api.js ainda cobre.
+      await renovarSessao()
       if (!tefIdempotencyKeyRef.current) {
         tefIdempotencyKeyRef.current = gerarTefIdempotencyKey(reserva.id)
       }

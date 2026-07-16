@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-toastify'
-import { api } from '../lib/api'
+import { api, renovarSessao } from '../lib/api'
 import { markTefPendenciasChecked } from '../services/tefPendencias'
 import {
   NFPAG_COLLECTION_LABELS,
@@ -2174,6 +2174,11 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         defer_finish: isGuidedFirstStepStart || undefined,
         session_id: batchSessionIdToReuse && !isGuidedFirstStepStart ? batchSessionIdToReuse : undefined
       }
+
+      // Sessao fresca antes de abrir a funcao TEF (fluxos de pinpad sao
+      // longos; token expirado no meio deixava a operacao presa). Se o
+      // refresh falhar, o retry de 401 do api.js ainda cobre.
+      await renovarSessao()
 
       const res = await api.post('/pagamentos/tef/iniciar-funcao', payload, { timeout: TEF_REQUEST_TIMEOUT_MS })
       await aplicarRespostaInterativa(res.data)

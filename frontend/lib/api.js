@@ -51,9 +51,60 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// Renovacao de sessao (single-flight): o access token do staff dura 60min e
+// o refresh cookie 7 dias, mas nada renovava — sessao caia no meio de fluxos
+// longos (ex.: venda TEF com cliente no pinpad, que ficava PENDENTE).
+let refreshEmAndamento = null
+
+export async function renovarSessao() {
+  if (typeof window === 'undefined') return false
+  if (!refreshEmAndamento) {
+    refreshEmAndamento = axios
+      .post(`${baseURL}/auth/refresh`, null, { withCredentials: true, timeout: 15000 })
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => {
+        setTimeout(() => {
+          refreshEmAndamento = null
+        }, 0)
+      })
+  }
+  return refreshEmAndamento
+}
+
+const ROTAS_SEM_RETRY_401 = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/otp']
+
+function podeTentarRefresh(config) {
+  if (!config || config._retried401) return false
+  const url = String(config.url || '')
+  return !ROTAS_SEM_RETRY_401.some((rota) => url.includes(rota))
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    // 401 em sessao de staff: tenta renovar via refresh cookie e repete a
+    // requisicao UMA vez antes de desistir (evita perder venda TEF etc.).
+    if (
+      typeof window !== 'undefined' &&
+      error?.response?.status === 401 &&
+      !isPaginaPublicaJornadaReal() &&
+      podeTentarRefresh(error?.config)
+    ) {
+      const renovado = await renovarSessao()
+      if (renovado) {
+        // O backend prioriza o header Authorization sobre o cookie renovado;
+        // descarta qualquer Bearer velho (header e localStorage legado) para
+        // a repeticao autenticar pelo cookie fresco.
+        localStorage.removeItem('token')
+        const config = { ...error.config, _retried401: true }
+        if (config.headers?.Authorization) {
+          delete config.headers.Authorization
+        }
+        return api.request(config)
+      }
+    }
+
     if (typeof window !== 'undefined' && error?.response?.status === 401) {
       localStorage.removeItem('token')
     }
