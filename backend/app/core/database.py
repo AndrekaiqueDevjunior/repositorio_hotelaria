@@ -161,14 +161,18 @@ def get_database_url() -> str:
 class ManagedPrismaClient(Prisma):
     """Compatibilidade para encerrar o engine 0.11 com prazo finito."""
 
-    __slots__ = ("_engine_close_timeout",)
+    __slots__ = ("_engine_close_timeout", "_created_engines")
 
     def __init__(self, *, engine_close_timeout: timedelta, **kwargs: Any) -> None:
         self._engine_close_timeout = engine_close_timeout
+        # Rastreia cada engine criado para permitir kill garantido no
+        # disconnect (ver _kill_leftover_engine_processes).
+        self._created_engines = []
         super().__init__(**kwargs)
 
     def _create_engine(self, *args: Any, **kwargs: Any) -> Any:
         engine = super()._create_engine(*args, **kwargs)
+        self._created_engines.append(engine)
         original_close = engine.close
 
         def close_with_default_timeout(*, timeout=None):
@@ -226,16 +230,43 @@ def create_celery_prisma_client() -> Prisma:
     )
 
 
+def _kill_leftover_engine_processes(client: Any) -> None:
+    """Ultima linha de defesa contra engines orfaos.
+
+    Observado em producao (2026-07-16): o worker Celery acumulou ~196
+    subprocessos query-engine vivos mesmo com disconnect() retornando sem
+    erro apos cada task — cada engine segura connection_limit conexoes e o
+    Postgres saturou em max_connections=200 ("too many clients already").
+    SIGKILL nao pode ser ignorado, entao aqui o encerramento e garantido.
+    """
+    engines = getattr(client, "_created_engines", None) or []
+    for engine in engines:
+        process = getattr(engine, "process", None)
+        if process is None:
+            continue
+        try:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        except Exception:
+            print(f"[DATABASE] Falha ao matar query engine remanescente: {process}")
+    if hasattr(engines, "clear"):
+        engines.clear()
+
+
 async def disconnect_prisma_client(client: Prisma) -> None:
     """Encerra o query engine sem bloquear indefinidamente o processo chamador."""
     timeout_seconds = _get_int_env(
         "PRISMA_DISCONNECT_TIMEOUT_SECONDS",
         DEFAULT_PRISMA_DISCONNECT_TIMEOUT_SECONDS,
     )
-    await asyncio.wait_for(
-        client.disconnect(timeout=timedelta(seconds=timeout_seconds)),
-        timeout=timeout_seconds + min(1, timeout_seconds),
-    )
+    try:
+        await asyncio.wait_for(
+            client.disconnect(timeout=timedelta(seconds=timeout_seconds)),
+            timeout=timeout_seconds + min(1, timeout_seconds),
+        )
+    finally:
+        _kill_leftover_engine_processes(client)
 
 # Obter DATABASE_URL com fallback
 database_url = get_database_url()

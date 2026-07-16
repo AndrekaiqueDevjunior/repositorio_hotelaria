@@ -243,16 +243,31 @@ def test_celery_client_uses_own_limit_outside_compose(monkeypatch):
     assert captured[0]["application_name"] == "hotel_celery"
 
 
+class _FakeTaskClient:
+    def __init__(self, connect_error=None):
+        self.connected = False
+        self.connect_calls = 0
+        self.connect_error = connect_error
+
+    def is_connected(self):
+        return self.connected
+
+    async def connect(self):
+        self.connect_calls += 1
+        if self.connect_error is not None:
+            raise self.connect_error
+        self.connected = True
+
+
+@pytest.fixture()
+def reset_task_client(monkeypatch):
+    monkeypatch.setattr(jornada_tasks, "_task_client", None)
+
+
 @pytest.mark.asyncio
-async def test_celery_task_cleans_up_when_connect_fails(monkeypatch):
+async def test_celery_task_cleans_up_when_connect_fails(monkeypatch, reset_task_client):
     events = []
-
-    class FakeClient:
-        async def connect(self):
-            events.append("connect")
-            raise RuntimeError("database unavailable")
-
-    fake_client = FakeClient()
+    fake_client = _FakeTaskClient(connect_error=RuntimeError("database unavailable"))
 
     async def fake_disconnect(client):
         assert client is fake_client
@@ -271,54 +286,145 @@ async def test_celery_task_cleans_up_when_connect_fails(monkeypatch):
     with pytest.raises(RuntimeError, match="database unavailable"):
         await jornada_tasks._run_with_db(should_not_run)
 
-    assert events == ["connect", "disconnect"]
+    assert events == ["disconnect"]
+    # Client quebrado nao pode ficar cacheado para a proxima task.
+    assert jornada_tasks._task_client is None
 
 
 @pytest.mark.asyncio
-async def test_celery_task_preserves_primary_error_when_cleanup_fails(monkeypatch):
-    class FakeClient:
-        async def connect(self):
-            raise RuntimeError("primary failure")
-
+async def test_celery_task_preserves_primary_error_when_cleanup_fails(
+    monkeypatch, reset_task_client
+):
     async def failing_disconnect(_client):
         raise RuntimeError("cleanup failure")
 
     monkeypatch.setattr(
         database,
         "create_celery_prisma_client",
-        lambda: FakeClient(),
+        lambda: _FakeTaskClient(connect_error=RuntimeError("primary failure")),
     )
     monkeypatch.setattr(database, "disconnect_prisma_client", failing_disconnect)
 
     with pytest.raises(RuntimeError, match="primary failure"):
         await jornada_tasks._run_with_db(lambda _client: None)
 
+    assert jornada_tasks._task_client is None
+
 
 @pytest.mark.asyncio
-async def test_celery_task_does_not_retry_successful_work_on_cleanup_error(monkeypatch):
-    events = []
+async def test_celery_task_reusa_client_entre_execucoes(monkeypatch, reset_task_client):
+    """Antes era um client (e um query engine) novo por task; o engine nao
+    morria no disconnect e saturou o max_connections do Postgres."""
+    created = []
 
-    class FakeClient:
-        async def connect(self):
-            events.append("connect")
+    def fake_create():
+        client = _FakeTaskClient()
+        created.append(client)
+        return client
 
-    async def successful_callback(_client):
-        events.append("callback")
+    async def unexpected_disconnect(_client):
+        raise AssertionError("sucesso nao deve desconectar o client persistente")
+
+    monkeypatch.setattr(database, "create_celery_prisma_client", fake_create)
+    monkeypatch.setattr(database, "disconnect_prisma_client", unexpected_disconnect)
+
+    async def callback(client):
         return "done"
 
-    async def failing_disconnect(_client):
-        events.append("disconnect")
-        raise RuntimeError("cleanup failure")
+    assert await jornada_tasks._run_with_db(callback) == "done"
+    assert await jornada_tasks._run_with_db(callback) == "done"
+
+    assert len(created) == 1  # segundo run reusa o mesmo client
+    assert created[0].connect_calls == 1
+    assert jornada_tasks._task_client is created[0]
+
+
+@pytest.mark.asyncio
+async def test_celery_task_descarta_client_quando_callback_falha(
+    monkeypatch, reset_task_client
+):
+    events = []
 
     monkeypatch.setattr(
         database,
         "create_celery_prisma_client",
-        lambda: FakeClient(),
+        lambda: _FakeTaskClient(),
     )
-    monkeypatch.setattr(database, "disconnect_prisma_client", failing_disconnect)
 
-    assert await jornada_tasks._run_with_db(successful_callback) == "done"
-    assert events == ["connect", "callback", "disconnect"]
+    async def fake_disconnect(_client):
+        events.append("disconnect")
+
+    monkeypatch.setattr(database, "disconnect_prisma_client", fake_disconnect)
+
+    async def failing_callback(_client):
+        raise RuntimeError("task quebrou")
+
+    with pytest.raises(RuntimeError, match="task quebrou"):
+        await jornada_tasks._run_with_db(failing_callback)
+
+    assert events == ["disconnect"]
+    assert jornada_tasks._task_client is None
+
+
+@pytest.mark.asyncio
+async def test_disconnect_mata_engine_remanescente(monkeypatch):
+    """prisma 0.11 pode retornar do disconnect sem o subprocesso do query
+    engine morrer (196 engines orfaos observados no celery em producao);
+    o kill posterior e obrigatorio."""
+
+    class FakeProcess:
+        def __init__(self):
+            self.killed = False
+
+        def poll(self):
+            return 0 if self.killed else None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    class FakeEngine:
+        def __init__(self, process):
+            self.process = process
+
+    leftover = FakeProcess()
+    ja_encerrado = FakeProcess()
+    ja_encerrado.killed = True
+
+    class FakeClient:
+        def __init__(self):
+            self._created_engines = [FakeEngine(leftover), FakeEngine(ja_encerrado)]
+
+        async def disconnect(self, timeout=None):
+            pass  # simula o bug: retorna "ok" sem matar o engine
+
+    client = FakeClient()
+    await database.disconnect_prisma_client(client)
+
+    assert leftover.killed is True
+    assert client._created_engines == []  # lista limpa para nao re-matar
+
+
+def test_managed_client_rastreia_engines_criados(monkeypatch):
+    class FakeEngine:
+        def close(self, *, timeout=None):
+            pass
+
+    monkeypatch.setattr(
+        database.Prisma,
+        "_create_engine",
+        lambda self, *args, **kwargs: FakeEngine(),
+    )
+    client = database.ManagedPrismaClient(
+        datasource={"url": "postgresql://user:pass@localhost:5432/hotel"},
+        connect_timeout=timedelta(seconds=2),
+        engine_close_timeout=timedelta(seconds=2),
+    )
+    engine = client._create_engine()
+
+    assert client._created_engines == [engine]
 
 
 @pytest.mark.asyncio
