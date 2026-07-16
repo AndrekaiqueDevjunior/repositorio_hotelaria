@@ -42,6 +42,16 @@ class WhatsAppService:
     TEMPLATE_PONTOS_LIBERADOS = "HX2591833437a282a67ee2b028c7a6131f"
     TEMPLATE_PREMIO_PROXIMO = "HXa31198da96e972a3d6918d942a135007"
     TEMPLATE_RESGATE_CONFIRMADO = "HXe3eaeffda34a120a36b37f10baf54c2f"
+    # Quick-reply (botoes Aprovar/Recusar) para o gerente autorizar check-in
+    # em dinheiro. Meta nao permite variavel/emoji em botao, entao os ids sao
+    # fixos (chk_aprovar / chk_recusar); o webhook identifica o codigo CHK
+    # pelo OriginalRepliedMessageSid (SID salvo no payload da aprovacao).
+    TEMPLATE_CHECKIN_DINHEIRO_GERENTE = "HX9f4c50f4481c7cb982c0c09a2fc56544"
+    # Variante twilio/card com a foto do comprovante embutida no cabecalho.
+    # Meta exige prefixo fixo na URL de media: o template fixa
+    # https://hotelrealcabofrio.com/{{6}}, entao o slot 6 leva apenas o
+    # caminho relativo — fotos fora desse dominio caem no quick-reply com link.
+    TEMPLATE_CHECKIN_DINHEIRO_GERENTE_FOTO = "HX824fedca6d12645254478fb229dac144"
 
     def __init__(self):
         self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -53,6 +63,10 @@ class WhatsAppService:
         self.notification_numbers = [n.strip() for n in _raw_numeros.split(",") if n.strip()]
         # Numero principal (compatibilidade com codigo existente)
         self.notification_number = self.notification_numbers[0] if self.notification_numbers else ""
+        # Gerente da loja: recebe o pedido de aprovacao de check-in em
+        # dinheiro com botoes de multipla escolha (aceita 1+ numeros por virgula)
+        _raw_gerente = os.getenv("WHATSAPP_GERENTE_NUMERO", "+5522999643131")
+        self.gerente_numbers = [n.strip() for n in _raw_gerente.split(",") if n.strip()]
         self.enabled = os.getenv("TWILIO_WHATSAPP_ENABLED", "true").lower() == "true"
         self.frontend_base_url = (os.getenv("FRONTEND_BASE_URL") or "").strip().rstrip("/")
 
@@ -176,6 +190,23 @@ class WhatsAppService:
                 "error": str(exc),
             }
 
+    def _foto_path_relativa(self, foto_link: Optional[str]) -> Optional[str]:
+        """Caminho relativo da foto quando ela esta no dominio do hotel.
+
+        O template card fixa o prefixo https://hotelrealcabofrio.com/ na URL
+        de media (exigencia da Meta), entao so fotos hospedadas no proprio
+        site podem ser embutidas; qualquer outra origem retorna None.
+        """
+        if not foto_link:
+            return None
+        if not foto_link.startswith(("http://", "https://")):
+            return foto_link.lstrip("/") or None
+        if self.frontend_base_url:
+            prefixo = f"{self.frontend_base_url}/"
+            if foto_link.startswith(prefixo):
+                return foto_link[len(prefixo):] or None
+        return None
+
     @staticmethod
     def _sanitize_template_var(value: Any, max_len: int = 160) -> str:
         """Variaveis de content template nao podem ter quebra de linha, tab ou
@@ -293,6 +324,49 @@ class WhatsAppService:
             "4": f"Comprovante: {link_comprovante or link_reserva or '-'}",
             "5": f"{float(valor or 0):.2f}",
         })
+
+    async def enviar_aprovacao_checkin_gerente(
+        self,
+        cliente_nome: str,
+        cliente_cpf: Optional[str],
+        recepcionista_nome: Optional[str],
+        valor: float,
+        horario_checkin: str,
+        approval_code: str,
+        foto_link: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Pede ao gerente a aprovacao do check-in em dinheiro via template
+        quick-reply (botoes Aprovar/Recusar). A resposta do botao volta no
+        webhook /twilio/whatsapp/incoming com ButtonPayload chk_aprovar ou
+        chk_recusar; o codigo CHK e resolvido pelo OriginalRepliedMessageSid."""
+        if not self.gerente_numbers:
+            return {"success": False, "error": "Numero do gerente nao configurado"}
+
+        foto_path = self._foto_path_relativa(foto_link)
+        if foto_path:
+            content_sid = self.TEMPLATE_CHECKIN_DINHEIRO_GERENTE_FOTO
+            slot_foto = foto_path
+        else:
+            content_sid = self.TEMPLATE_CHECKIN_DINHEIRO_GERENTE
+            slot_foto = foto_link or self._build_link("/checkin-approvals", {"code": approval_code})
+
+        variables = {
+            "1": self._sanitize_template_var(cliente_nome or "Cliente"),
+            "2": self._sanitize_template_var(cliente_cpf or "nao informado"),
+            "3": self._sanitize_template_var(recepcionista_nome or "-"),
+            "4": f"{float(valor or 0):.2f}",
+            "5": self._sanitize_template_var(horario_checkin or "-"),
+            "6": self._sanitize_template_var(slot_foto or "-", max_len=300),
+            "7": self._sanitize_template_var(approval_code),
+        }
+        resultados = [
+            await self._send_template(numero, content_sid, variables)
+            for numero in self.gerente_numbers
+        ]
+        principal = dict(resultados[0])
+        principal["resultados"] = resultados
+        principal["success"] = any(r.get("success") for r in resultados)
+        return principal
 
     async def enviar_notificacao_resgate_premio(
         self,

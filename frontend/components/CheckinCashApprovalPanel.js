@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Banknote, CheckCircle, Clock, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Banknote, Camera, CheckCircle, Clock, RefreshCw, XCircle } from 'lucide-react'
 import { toast } from 'react-toastify'
 import { api } from '../lib/api'
 
@@ -21,6 +21,7 @@ const STATUS_LABELS = {
   approved: 'Aprovado',
   expired: 'Expirado',
   cancelled: 'Cancelado',
+  rejected: 'Recusado',
 }
 
 function formatCurrency(value) {
@@ -43,6 +44,7 @@ function formatDateTime(value) {
 function getStatusClass(status) {
   if (status === 'approved') return 'bg-green-100 text-green-700'
   if (status === 'expired') return 'bg-red-100 text-red-700'
+  if (status === 'rejected') return 'bg-red-100 text-red-700'
   if (status === 'cancelled') return 'bg-gray-100 text-gray-700'
   return 'bg-yellow-100 text-yellow-800'
 }
@@ -54,6 +56,9 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [approvingCode, setApprovingCode] = useState('')
+  const [rejectingCode, setRejectingCode] = useState('')
+  const [foto, setFoto] = useState(null) // { base64, nome }
+  const fotoInputRef = useRef(null)
   const [lastUpdatedAt, setLastUpdatedAt] = useState('')
 
   const activeReservations = useMemo(() => {
@@ -99,6 +104,38 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
     }
   }
 
+  const handleFotoChange = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) {
+      setFoto(null)
+      return
+    }
+
+    const maxSize = 10 * 1024 * 1024
+    if (file.size > maxSize) {
+      toast.warning('Foto muito grande (maximo 10MB)')
+      event.target.value = ''
+      setFoto(null)
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const base64 = String(reader.result || '').split(',')[1] || ''
+      setFoto({ base64, nome: file.name })
+    }
+    reader.onerror = () => {
+      toast.error('Erro ao ler a foto')
+      setFoto(null)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const clearFoto = () => {
+    setFoto(null)
+    if (fotoInputRef.current) fotoInputRef.current.value = ''
+  }
+
   const handleCreateApproval = async () => {
     if (!selectedReservationId) {
       toast.warning('Selecione uma reserva')
@@ -117,10 +154,13 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
         reservation_id: Number(selectedReservationId),
         amount: parsedAmount,
         payment_method: 'cash',
+        foto_base64: foto?.base64 || null,
+        foto_nome: foto?.nome || null,
       })
-      toast.success(`Codigo ${response.data.approval_code} enviado ao admin`)
+      toast.success(`Codigo ${response.data.approval_code} enviado ao gerente`)
       setSelectedReservationId('')
       setAmount('')
+      clearFoto()
       await loadApprovals({ silent: true })
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Erro ao solicitar aprovacao CHK')
@@ -148,6 +188,25 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
       toast.error(error.response?.data?.detail || 'Erro ao aprovar codigo CHK')
     } finally {
       setApprovingCode('')
+    }
+  }
+
+  const handleReject = async (approval) => {
+    const code = approval.approval_code || approval.code
+    if (!code) return
+
+    const confirmed = window.confirm(`Recusar check-in em dinheiro do codigo ${code}?`)
+    if (!confirmed) return
+
+    setRejectingCode(code)
+    try {
+      await api.post(`/checkins/${code}/reject`)
+      toast.info(`Codigo ${code} recusado`)
+      await loadApprovals({ silent: true })
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao recusar codigo CHK')
+    } finally {
+      setRejectingCode('')
     }
   }
 
@@ -202,6 +261,32 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
               placeholder="Valor"
             />
+            <div>
+              <label className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+                <Camera className="h-4 w-4" aria-hidden="true" />
+                {foto ? foto.nome : 'Foto do comprovante (opcional)'}
+                <input
+                  ref={fotoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,.jpg,.jpeg,.png,.pdf"
+                  capture="environment"
+                  onChange={handleFotoChange}
+                  className="hidden"
+                />
+              </label>
+              {foto && (
+                <button
+                  type="button"
+                  onClick={clearFoto}
+                  className="mt-1 text-xs text-red-600 hover:underline"
+                >
+                  Remover foto
+                </button>
+              )}
+              <p className="mt-1 text-xs text-gray-400">
+                JPG/PNG vai embutida no WhatsApp do gerente e entra na tela de comprovantes
+              </p>
+            </div>
             <button
               type="button"
               onClick={handleCreateApproval}
@@ -253,15 +338,26 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
                           </span>
                         </td>
                         <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => handleApprove(approval)}
-                            disabled={!approval.can_approve || approvingCode === code}
-                            className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                          >
-                            <CheckCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                            {approvingCode === code ? 'Aprovando...' : 'Aprovar'}
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleApprove(approval)}
+                              disabled={!approval.can_approve || approvingCode === code || rejectingCode === code}
+                              className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                            >
+                              <CheckCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                              {approvingCode === code ? 'Aprovando...' : 'Aprovar'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleReject(approval)}
+                              disabled={!approval.can_approve || rejectingCode === code || approvingCode === code}
+                              className="inline-flex items-center gap-1 rounded border border-red-300 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                            >
+                              <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                              {rejectingCode === code ? 'Recusando...' : 'Recusar'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -284,7 +380,12 @@ export default function CheckinCashApprovalPanel({ reservas = [], onRefreshReser
                   <p className="mt-1 text-xs text-gray-600">{approval.codigo_reserva} | Q{approval.room_number}</p>
                   <p className="text-xs text-gray-600">{formatCurrency(approval.amount || approval.valor)}</p>
                   {approval.approved_at && (
-                    <p className="text-xs text-gray-500">{formatDateTime(approval.approved_at)}</p>
+                    <p className="text-xs text-gray-500">
+                      {formatDateTime(approval.approved_at)}
+                      {approval.status === 'approved'
+                        ? ` | ${approval.approved_by_name || 'Gerente (WhatsApp)'}`
+                        : ''}
+                    </p>
                   )}
                 </div>
               ))}
