@@ -1,14 +1,16 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { CalendarDays } from 'lucide-react'
 import NotificationBell from '../NotificationBell'
+import CalendarioReservasModal from '../CalendarioReservasModal'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTheme } from '../../contexts/ThemeContext'
 import { api } from '../../lib/api'
 
 export default function Header({ user, onMenuToggle, isSidebarOpen }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [isCalendarioOpen, setIsCalendarioOpen] = useState(false)
   const router = useRouter()
   const { logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
@@ -21,14 +23,6 @@ export default function Header({ user, onMenuToggle, isSidebarOpen }) {
 
   const handleLogout = () => {
     logout()
-  }
-
-  const handleSearch = (e) => {
-    e.preventDefault()
-    if (searchQuery.trim()) {
-      // Implement search functionality
-      console.log('Searching for:', searchQuery)
-    }
   }
 
   return (
@@ -61,22 +55,17 @@ export default function Header({ user, onMenuToggle, isSidebarOpen }) {
           </div>
         </div>
 
-        {/* Center Section - Search Bar */}
-        <div className="hidden md:flex flex-1 max-w-lg mx-8">
-          <form onSubmit={handleSearch} className="relative w-full">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg className="h-4 w-4 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar reservas, clientes..."
-              className="input-search w-full"
-            />
-          </form>
+        {/* Center Section - Calendario de Reservas */}
+        <div className="flex flex-1 justify-center mx-4">
+          <button
+            type="button"
+            onClick={() => setIsCalendarioOpen(true)}
+            className="group inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary-600 to-primary-700 px-4 py-2 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:shadow-lg hover:brightness-110 active:scale-95"
+            title="Abrir calendário de reservas"
+          >
+            <CalendarDays className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" aria-hidden="true" />
+            <span className="hidden sm:inline">Calendário</span>
+          </button>
         </div>
 
         {/* Right Section - Actions */}
@@ -159,23 +148,7 @@ export default function Header({ user, onMenuToggle, isSidebarOpen }) {
         </div>
       </div>
 
-      {/* Mobile Search Bar */}
-      <div className="md:hidden mt-3 pb-3">
-        <form onSubmit={handleSearch} className="relative">
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <svg className="h-4 w-4 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar..."
-            className="input-search w-full"
-          />
-        </form>
-      </div>
+      <CalendarioReservasModal isOpen={isCalendarioOpen} onClose={() => setIsCalendarioOpen(false)} />
     </header>
   )
 }
