@@ -59,8 +59,10 @@ let refreshEmAndamento = null
 export async function renovarSessao() {
   if (typeof window === 'undefined') return false
   if (!refreshEmAndamento) {
+    // Rotas de auth do staff sao montadas SEM prefixo /auth: o endpoint
+    // real e /api/v1/refresh (assim como /login, /logout e /me).
     refreshEmAndamento = axios
-      .post(`${baseURL}/auth/refresh`, null, { withCredentials: true, timeout: 15000 })
+      .post(`${baseURL}/refresh`, null, { withCredentials: true, timeout: 15000 })
       .then(() => true)
       .catch(() => false)
       .finally(() => {
@@ -72,7 +74,7 @@ export async function renovarSessao() {
   return refreshEmAndamento
 }
 
-const ROTAS_SEM_RETRY_401 = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/otp']
+const ROTAS_SEM_RETRY_401 = ['/login', '/refresh', '/logout', '/otp']
 
 function podeTentarRefresh(config) {
   if (!config || config._retried401) return false
