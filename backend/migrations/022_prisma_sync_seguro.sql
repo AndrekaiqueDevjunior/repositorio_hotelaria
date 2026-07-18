@@ -95,15 +95,30 @@ ALTER TABLE hospedagens
     ALTER COLUMN updated_at DROP DEFAULT,
     ALTER COLUMN updated_at SET DATA TYPE TIMESTAMP(3);
 
-ALTER TABLE indicacoes
-    ALTER COLUMN status SET DATA TYPE TEXT,
-    ALTER COLUMN data_envio SET DATA TYPE TIMESTAMP(3),
-    ALTER COLUMN data_reserva SET DATA TYPE TIMESTAMP(3),
-    ALTER COLUMN data_checkin SET DATA TYPE TIMESTAMP(3),
-    ALTER COLUMN data_checkout SET DATA TYPE TIMESTAMP(3),
-    ALTER COLUMN created_at SET DATA TYPE TIMESTAMP(3),
-    ALTER COLUMN updated_at DROP DEFAULT,
-    ALTER COLUMN updated_at SET DATA TYPE TIMESTAMP(3);
+-- Em bancos ja sincronizados, repetir SET DATA TYPE TEXT em indicacoes.status
+-- falha porque a view vw_friend_referral_rewards depende dessa coluna. Execute
+-- o bloco apenas na primeira conversao (antes de a view existir).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'indicacoes'
+           AND column_name = 'status'
+           AND data_type <> 'text'
+    ) THEN
+        ALTER TABLE indicacoes
+            ALTER COLUMN status SET DATA TYPE TEXT,
+            ALTER COLUMN data_envio SET DATA TYPE TIMESTAMP(3),
+            ALTER COLUMN data_reserva SET DATA TYPE TIMESTAMP(3),
+            ALTER COLUMN data_checkin SET DATA TYPE TIMESTAMP(3),
+            ALTER COLUMN data_checkout SET DATA TYPE TIMESTAMP(3),
+            ALTER COLUMN created_at SET DATA TYPE TIMESTAMP(3),
+            ALTER COLUMN updated_at DROP DEFAULT,
+            ALTER COLUMN updated_at SET DATA TYPE TIMESTAMP(3);
+    END IF;
+END $$;
 
 ALTER TABLE logs_jornada
     ALTER COLUMN acao SET DATA TYPE TEXT,
