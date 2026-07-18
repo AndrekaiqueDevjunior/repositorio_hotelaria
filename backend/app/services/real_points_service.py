@@ -12,6 +12,8 @@ Regra vigente nas telas:
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+import re
+import unicodedata
 
 
 class RealPointsService:
@@ -58,13 +60,32 @@ class RealPointsService:
     }
 
     @classmethod
+    def normalizar_tipo_suite(cls, suite: str) -> str:
+        """Converte os nomes usados no cadastro de quartos para a categoria RP.
+
+        O cadastro operacional possui variantes como ``LUXO 2º`` e tambem pode
+        receber o rotulo exibido na interface (``Suite Master``). Pontos usam as
+        quatro categorias comerciais, portanto os complementos do quarto nao
+        podem impedir o credito no checkout.
+        """
+        texto = unicodedata.normalize("NFKD", str(suite or ""))
+        texto = "".join(char for char in texto if not unicodedata.combining(char))
+        texto = re.sub(r"[^A-Z0-9]+", " ", texto.upper()).strip()
+        tokens = texto.split()
+
+        for categoria in cls.TABELA_OFICIAL_RP:
+            if categoria in tokens:
+                return categoria
+        return texto
+
+    @classmethod
     def calcular_rp_oficial(cls, suite: str, diarias: int, valor_total: float = 0) -> Tuple[int, str]:
         """
         Calcula RP pela regra vigente:
 
         RP_total = total_diarias x pontos_por_diaria_da_suite
         """
-        suite_normalizada = (suite or "").upper().strip()
+        suite_normalizada = cls.normalizar_tipo_suite(suite)
         if suite_normalizada not in cls.TABELA_OFICIAL_RP:
             return 0, f"Suite '{suite}' invalida"
 
@@ -95,7 +116,7 @@ class RealPointsService:
         if not suite:
             return False, "Tipo de suite nao definido"
 
-        if suite.upper() not in cls.TABELA_OFICIAL_RP:
+        if cls.normalizar_tipo_suite(suite) not in cls.TABELA_OFICIAL_RP:
             return False, f"Suite '{suite}' invalida"
 
         valor_total = float(reserva.get("valor_total", 0) or 0)

@@ -243,6 +243,40 @@ async def test_checkout_credita_pontos_imediatamente():
     assert metadata["pontos_r"] == 4
 
 
+@pytest.mark.parametrize(
+    ("tipo_suite", "pontos_esperados", "categoria_esperada"),
+    [
+        ("LUXO 2º", 2, "LUXO"),
+        ("Suíte Luxo 4º EC", 2, "LUXO"),
+        ("Suíte Master", 4, "MASTER"),
+        ("DUPLA", 6, "DUPLA"),
+        ("REAL", 6, "REAL"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_checkout_normaliza_variantes_operacionais_de_suite(
+    tipo_suite, pontos_esperados, categoria_esperada
+):
+    from datetime import datetime, timezone
+
+    db = FakeDbCheckout()
+    db.reserva.value.tipoSuite = tipo_suite
+    # Sem regra encontrada no banco: valida tambem o fallback da tabela oficial.
+    db.pontosregra.value = None
+
+    resultado = await creditar_rp_no_checkout(
+        db,
+        reserva_id=10,
+        checkout_datetime=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert resultado["success"] is True
+    assert resultado["creditado"] is True
+    assert resultado["pontos"] == pontos_esperados
+    assert resultado["metadata"]["calculo"]["suite_tipo"] == categoria_esperada
+    assert resultado["metadata"]["calculo"]["suite_tipo_original"] == tipo_suite
+
+
 @pytest.mark.asyncio
 async def test_checkout_cai_para_pendente_se_credito_imediato_falhar():
     from datetime import datetime, timezone

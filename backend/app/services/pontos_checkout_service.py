@@ -12,7 +12,7 @@ def _date_to_db_datetime(d: date) -> datetime:
 
 
 async def buscar_regra_ativa(db, suite_tipo: str, checkout_date: date):
-    suite_tipo_norm = (suite_tipo or "").upper().strip()
+    suite_tipo_norm = RealPointsService.normalizar_tipo_suite(suite_tipo)
     data_ref = _date_to_db_datetime(checkout_date)
 
     return await db.pontosregra.find_first(
@@ -50,7 +50,8 @@ async def creditar_rp_no_checkout(
             "status": "bloqueado",
         }
 
-    tipo_suite = (getattr(reserva, "tipoSuite", None) or "").upper().strip()
+    tipo_suite_original = getattr(reserva, "tipoSuite", None) or ""
+    tipo_suite = RealPointsService.normalizar_tipo_suite(tipo_suite_original)
     num_diarias = int(getattr(reserva, "numDiarias", 0) or 0)
     if num_diarias <= 0:
         return {
@@ -152,6 +153,7 @@ async def creditar_rp_no_checkout(
         "progrediu_nivel": progrediu_nivel,
         "calculo": {
             "suite_tipo": tipo_suite,
+            "suite_tipo_original": tipo_suite_original,
             "num_diarias": num_diarias,
             "fonte": motivo_calculo,
         },
