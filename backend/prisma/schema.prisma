@@ -99,6 +99,7 @@ model Reserva {
   voucher          Voucher?
   hospedagem       Hospedagem?
   cupomUso         CupomUso?
+  checkinCashApprovals CheckinCashApproval[]
   cliente          Cliente           @relation(fields: [clienteId], references: [id])
   quarto           Quarto            @relation(fields: [quartoId], references: [id])
   criadoPorFuncionario Funcionario?  @relation("ReservasCriadas", fields: [criadoPorFuncionarioId], references: [id])
@@ -140,6 +141,7 @@ model Funcionario {
   codigosResgate         CodigoResgate[]
   auditorias             Auditoria[]
   reservasCriadas        Reserva[]         @relation("ReservasCriadas")
+  checkinCashAprovacoes  CheckinCashApproval[]
 
   @@map("funcionarios")
 }
@@ -164,6 +166,7 @@ model Pagamento {
   notificacoes        Notificacao[]
   operacoesAntifraude OperacaoAntifraude[]
   comprovantes        ComprovantePagamento[]
+  checkinCashApprovals CheckinCashApproval[]
   cliente             Cliente                @relation(fields: [clienteId], references: [id])
   reserva             Reserva                @relation(fields: [reservaId], references: [id])
 
@@ -174,18 +177,23 @@ model Pagamento {
 }
 
 model CheckinCashApproval {
-  id            Int       @id @default(autoincrement())
-  reservaId     Int       @map("reserva_id")
-  codigo        String    @unique
-  valor         Decimal   @db.Decimal(10, 2)
-  status        String    @default("pending")
-  expiraEm      DateTime  @map("expira_em")
-  aprovadoEm    DateTime? @map("aprovado_em")
-  aprovadoPor   Int?      @map("aprovado_por")
-  pagamentoId   Int?      @map("pagamento_id")
-  payload       Json?
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id                     Int              @id @default(autoincrement())
+  reservaId              Int              @map("reserva_id")
+  codigo                 String           @unique
+  valor                  Decimal          @db.Decimal(10, 2)
+  status                 String           @default("pending")
+  expiraEm               DateTime         @map("expira_em")
+  aprovadoEm             DateTime?        @map("aprovado_em")
+  aprovadoPor            Int?             @map("aprovado_por")
+  pagamentoId            Int?             @map("pagamento_id")
+  transacaoPontosId      Int?             @unique @map("transacao_pontos_id")
+  payload                Json?
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+  reserva                Reserva          @relation(fields: [reservaId], references: [id])
+  aprovadoPorFuncionario Funcionario?     @relation(fields: [aprovadoPor], references: [id])
+  pagamento              Pagamento?       @relation(fields: [pagamentoId], references: [id])
+  transacaoPontos        TransacaoPontos? @relation(fields: [transacaoPontosId], references: [id])
 
   @@index([reservaId])
   @@index([status])
@@ -292,6 +300,7 @@ model TransacaoPontos {
   reservaId       Int?           @map("reserva_id")
   createdAt       DateTime       @default(now()) @map("created_at")
   indicacao        Indicacao?
+  checkinCashApproval CheckinCashApproval?
   cliente         Cliente        @relation(fields: [clienteId], references: [id])
   usuarioPontos   UsuarioPontos  @relation(fields: [usuarioPontosId], references: [id])
   funcionario     Funcionario?   @relation(fields: [funcionarioId], references: [id])
