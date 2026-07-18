@@ -6,6 +6,7 @@ import { formatErrorMessage } from '../../../lib/errorHandler'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import { StatusReserva, StatusPagamento, MetodoPagamento, isPagamentoAprovado, isPagamentoNegado, HttpStatus } from '../../../lib/constants/enums'
+import UploadComprovanteModal from '../../../components/UploadComprovanteModal'
 import StatusBadge from '../../../components/StatusBadge'
 import ModalEscolhaPagamento from '../../../components/ModalEscolhaPagamento'
 import CheckinCashApprovalPanel from '../../../components/CheckinCashApprovalPanel'
@@ -70,6 +71,8 @@ export default function Reservas() {
   const [showQuartoModal, setShowQuartoModal] = useState(false)
   const [showHistoricoModal, setShowHistoricoModal] = useState(false)
   const [showDetalhesModal, setShowDetalhesModal] = useState(false)
+  const [showUploadComprovanteModal, setShowUploadComprovanteModal] = useState(false)
+  const [selectedPagamento, setSelectedPagamento] = useState(null)
   const [historicoQuarto, setHistoricoQuarto] = useState(null)
   const [loadingHistorico, setLoadingHistorico] = useState(false)
   const [editingQuarto, setEditingQuarto] = useState(null)
@@ -878,6 +881,19 @@ export default function Reservas() {
     setShowModalEscolhaPagamento(true)
   }
 
+  const handleUploadComprovante = (reserva, pagamento) => {
+    setSelectedReserva(reserva)
+    setSelectedPagamento(pagamento)
+    setShowUploadComprovanteModal(true)
+  }
+
+  const handleUploadSuccess = async () => {
+    await loadReservas()
+    setShowUploadComprovanteModal(false)
+    setSelectedPagamento(null)
+    setSelectedReserva(null)
+  }
+
   const processarPagamento = async () => {
     if (!selectedReserva) return
     
@@ -1181,13 +1197,24 @@ export default function Reservas() {
                                 </button>
                               )}
                               {podePagar(r) && temPagamentoEmAndamento(r) && (
-                                <button
-                                  disabled
-                                  className="text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded cursor-not-allowed"
-                                  title="Pagamento em andamento"
-                                >
-                                  ⏳ Pagamento em andamento
-                                </button>
+                                <>
+                                  <button
+                                    disabled
+                                    className="text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded cursor-not-allowed"
+                                    title="Pagamento em andamento"
+                                  >
+                                    ⏳ Pagamento em andamento
+                                  </button>
+                                  {r.pagamentos && r.pagamentos.length > 0 && r.pagamentos[0].status === 'PENDENTE' && (
+                                    <button
+                                      onClick={() => handleUploadComprovante(r, r.pagamentos[0])}
+                                      className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                                      title="Enviar comprovante de pagamento"
+                                    >
+                                      📤 Comprovante
+                                    </button>
+                                  )}
+                                </>
                               )}
                               {podeCheckin(r) && !jaFezCheckin(r) && (
                                 <button
@@ -2360,6 +2387,20 @@ export default function Reservas() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal de Upload de Comprovante */}
+      {showUploadComprovanteModal && selectedReserva && selectedPagamento && (
+        <UploadComprovanteModal
+          pagamento={selectedPagamento}
+          reserva={selectedReserva}
+          onClose={() => {
+            setShowUploadComprovanteModal(false)
+            setSelectedPagamento(null)
+            setSelectedReserva(null)
+          }}
+          onSuccess={handleUploadSuccess}
+        />
       )}
 
       {/* Modal de Escolha de Pagamento */}

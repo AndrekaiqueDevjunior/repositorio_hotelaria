@@ -24,6 +24,7 @@ import {
   normalizeTefFlag,
   parseNfpagValor
 } from '../lib/tefHelpers'
+import UploadComprovanteModal from './UploadComprovanteModal'
 
 const formatCurrency = (value) => {
   return new Intl.NumberFormat('pt-BR', {
@@ -274,6 +275,8 @@ const renderTefReimpressaoInfo = (reimpressao) => {
 }
 
 export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [pagamentoCriado, setPagamentoCriado] = useState(null)
   const tefSessionRef = useRef(null)
   const tefStartRequestedRef = useRef(false)
   const tefIdleTimerRef = useRef(null)
@@ -311,11 +314,32 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
 
   const opcoesPagamento = [
     {
+      id: 'pix',
+      nome: 'PIX',
+      descricao: 'Pagamento instantaneo via PIX',
+      disponivel: true,
+      action: 'pix'
+    },
+    {
+      id: 'cartao_online',
+      nome: 'Cartao Online',
+      descricao: 'Pagamento com cartao de credito/debito',
+      disponivel: true,
+      action: 'cielo'
+    },
+    {
       id: 'tef',
       nome: 'TEF (Cartao na Maquininha)',
       descricao: 'Pagamento TEF com fluxo interativo no padrao Agente CliSiTef',
       disponivel: true,
       action: 'tef'
+    },
+    {
+      id: 'balcao',
+      nome: 'Pagamento no Balcao',
+      descricao: 'Pagamento presencial (dinheiro ou cartao na maquininha)',
+      disponivel: true,
+      action: 'comprovante'
     }
   ]
 
@@ -963,6 +987,7 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
         clearTimeout(tefIdleTimerRef.current)
         tefIdleTimerRef.current = null
       }
+      setPagamentoCriado(res.data)
       tefSessionRef.current = null
       tefStartRequestedRef.current = false
       setTefSessionId(null)
@@ -992,10 +1017,67 @@ Destino: ${resolveMensagemLabel(msg?.target)}`}</pre>
   }
 
   const handleEscolha = async (opcao) => {
+    if (opcao.action === 'comprovante') {
+      try {
+        if (!reserva?.id) {
+          toast.error('Reserva invalida. Recarregue a pagina e tente novamente.')
+          return
+        }
+
+        if (!valorReserva || Number.isNaN(valorReserva)) {
+          toast.error('Valor da reserva invalido. Recarregue a pagina e tente novamente.')
+          return
+        }
+
+        const pagamentoPayload = {
+          reserva_id: parseInt(reserva.id, 10),
+          valor: valorReserva,
+          metodo: 'na_chegada'
+        }
+
+        const res = await api.post('/pagamentos', pagamentoPayload)
+        setPagamentoCriado(res.data)
+        setShowUploadModal(true)
+      } catch (err) {
+        console.error('Erro ao criar pagamento (balcao):', err)
+        toast.error(err.response?.data?.detail || 'Erro ao iniciar pagamento no balcao')
+      }
+      return
+    }
+
+    if (opcao.action === 'pix') {
+      toast.info('Integracao PIX em desenvolvimento')
+      return
+    }
+
+    if (opcao.action === 'cielo') {
+      toast.info('Integracao Cielo em desenvolvimento')
+      return
+    }
+
     if (opcao.action === 'tef') {
       setShowTefLaunch(true)
       return
     }
+  }
+
+  if (showUploadModal) {
+    return (
+      <UploadComprovanteModal
+        reserva={reserva}
+        pagamento={pagamentoCriado || { valor: valorReserva }}
+        onClose={() => {
+          setShowUploadModal(false)
+          setPagamentoCriado(null)
+          onClose()
+        }}
+        onSuccess={() => {
+          setShowUploadModal(false)
+          setPagamentoCriado(null)
+          if (onSuccess) onSuccess()
+        }}
+      />
+    )
   }
 
   if (showTefLaunch && !showTefFlow) {
