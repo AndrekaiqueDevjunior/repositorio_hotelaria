@@ -9,6 +9,7 @@ import { StatusReserva, StatusPagamento, MetodoPagamento, isPagamentoAprovado, i
 import StatusBadge from '../../../components/StatusBadge'
 import ModalEscolhaPagamento from '../../../components/ModalEscolhaPagamento'
 import CheckinCashApprovalPanel from '../../../components/CheckinCashApprovalPanel'
+import TarifaTemporadaAlert from '../../../components/TarifaTemporadaAlert'
 
 // Mapeamento de cores para estados (mantido para compatibilidade)
 const STATUS_RESERVA_COLORS = {
@@ -1020,6 +1021,7 @@ export default function Reservas() {
         </div>
       </div>
 
+      <TarifaTemporadaAlert />
       <CheckinCashApprovalPanel reservas={reservas} onRefreshReservas={loadReservas} />
 
       {/* Filtros e Busca */}

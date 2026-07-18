@@ -1,12 +1,16 @@
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import asyncio
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from app.core.database import get_db
 from app.middleware.auth_middleware import get_current_active_user, require_admin_manager_or_recepcao
 from app.core.security import User
 from app.repositories.tarifa_suite_repo import TarifaSuiteRepository
+from app.services.tarifa_alert_service import TARIFA_ALERT_CHANNEL, TarifaAlertService
 from app.schemas.tarifa_suite_schema import (
     TarifaSuiteCreateRequest,
     TarifaSuiteUpdateRequest,
@@ -34,6 +38,49 @@ async def get_tarifa_repo() -> TarifaSuiteRepository:
     from app.core.database import get_db_connected
     db = await get_db_connected()
     return TarifaSuiteRepository(db)
+
+
+@router.post("/alerta-temporada/verificar")
+async def verificar_alerta_temporada(
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.core.database import get_db_connected
+    db = await get_db_connected()
+    return await TarifaAlertService(db).verificar_temporadas_vencidas(disparar=True)
+
+
+@router.websocket("/ws/alertas")
+async def websocket_alertas_tarifa(websocket: WebSocket):
+    """Entrega alertas publicados por qualquer worker via Redis Pub/Sub."""
+    from app.core.cache import cache
+    from app.core.security import get_current_user
+
+    try:
+        await get_current_user(websocket, None)
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    if cache.redis is None:
+        await websocket.send_json({"evento": "INDISPONIVEL", "mensagem": "Tempo real indisponivel"})
+        await websocket.close(code=1013)
+        return
+
+    pubsub = cache.redis.pubsub()
+    await pubsub.subscribe(TARIFA_ALERT_CHANNEL)
+    try:
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=20.0)
+            if message and message.get("data"):
+                await websocket.send_json(json.loads(message["data"]))
+            else:
+                await websocket.send_json({"evento": "PING"})
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await pubsub.unsubscribe(TARIFA_ALERT_CHANNEL)
+        await pubsub.close()
 
 
 @router.get("", response_model=List[TarifaSuiteResponse])
