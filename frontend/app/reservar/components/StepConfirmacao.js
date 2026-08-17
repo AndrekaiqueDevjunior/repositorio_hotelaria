@@ -1,97 +1,135 @@
 'use client'
 
-export default function StepConfirmacao({
-  reservaConfirmada,
-  onNovaReserva
-}) {
+import Link from 'next/link'
+import { Clock3, Crown, Phone, Printer, ShieldCheck } from 'lucide-react'
+import { getSuiteDescription } from '../utils/suites'
+
+const formatBRL = (valor) =>
+  Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+const formatData = (valor) => {
+  if (!valor) return ''
+  const d = new Date(valor)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('pt-BR')
+}
+
+export default function StepConfirmacao({ reservaConfirmada, onNovaReserva }) {
   if (!reservaConfirmada) return null
 
   const { reserva, instrucoes } = reservaConfirmada
+  const temDesconto = Number(reserva.valor_desconto || 0) > 0
+  const total = Number(reserva.valor_total_com_desconto || reserva.valor_total || 0)
 
   return (
-    <div className="bg-white rounded-2xl shadow-2xl overflow-hidden text-gray-900">
-      <div className="bg-gradient-to-r from-green-500 to-green-600 p-8 text-center">
-        <div className="text-6xl mb-4">🎉</div>
-        <h2 className="text-3xl font-bold text-white">Reserva Confirmada!</h2>
-        <p className="text-green-100 mt-2">Sua reserva foi realizada com sucesso</p>
+    <section className="jr-bloco jr-confirmado">
+      <div className="jr-confirmado__selo">
+        {/* brasão limpo, sem a cera vermelha: o carmim brigava com o azul
+            e o dourado da marca nesta tela */}
+        <img
+          src="/images/jornada/marcas/brasao-hr.png"
+          alt=""
+          aria-hidden="true"
+          className="jr-confirmado__brasao"
+        />
       </div>
 
-      <div className="p-6">
-        {/* Código da reserva */}
-        <div className="bg-blue-50 p-6 rounded-xl text-center mb-6">
-          <p className="text-gray-600 mb-1">Código da Reserva</p>
-          <p className="text-3xl font-bold text-blue-600 font-mono">{reserva.codigo}</p>
-          <p className="text-sm text-gray-500 mt-2">Guarde este código para consultar sua reserva</p>
-        </div>
+      <h2 className="jr-confirmado__titulo jr-ouro-metal">Sua suíte está guardada</h2>
+      <p className="jr-lede jr-confirmado__lede">
+        A reserva foi registrada no nome de {reserva.cliente}. Enviamos os detalhes por e-mail —
+        na chegada, basta apresentar o código abaixo na recepção.
+      </p>
 
-        {/* Detalhes */}
-        <div className="space-y-4 mb-6">
-          <h3 className="font-bold text-gray-800 text-lg">📋 Detalhes da Reserva</h3>
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500">Hóspede</p>
-              <p className="font-medium">{reserva.cliente}</p>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500">Acomodação</p>
-              <p className="font-medium">{reserva.tipo_suite} - Quarto {reserva.quarto}</p>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500">Check-in</p>
-              <p className="font-medium">{new Date(reserva.checkin).toLocaleDateString('pt-BR')} às 12:00</p>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500">Check-out</p>
-              <p className="font-medium">{new Date(reserva.checkout).toLocaleDateString('pt-BR')} às 11:00</p>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500">Duração</p>
-              <p className="font-medium">{reserva.num_diarias} {reserva.num_diarias === 1 ? 'diária' : 'diárias'}</p>
-            </div>
-            <div className="bg-green-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-500">Valor Total</p>
-              <p className="font-bold text-green-600 text-xl">
-                R$ {Number(reserva.valor_total_com_desconto || reserva.valor_total).toFixed(2)}
-              </p>
-              {Number(reserva.valor_desconto || 0) > 0 && (
-                <p className="text-xs text-green-700">
-                  Desconto: R$ {Number(reserva.valor_desconto).toFixed(2)}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Instruções */}
-        <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mb-6">
-          <h4 className="font-bold text-yellow-800 mb-2">📌 Instruções Importantes</h4>
-          <ul className="text-sm text-yellow-800 space-y-1">
-            <li>• {instrucoes?.documentos || 'Trazer documentos de identificação'}</li>
-            <li>• Check-in a partir das {instrucoes?.checkin_horario || '12:00'}</li>
-            <li>• Check-out até as {instrucoes?.checkout_horario || '11:00'}</li>
-            <li>• Contato: {instrucoes?.contato || '(22) 2648-5900'}</li>
-          </ul>
-        </div>
-
-        {/* Ações */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <button
-            onClick={() => window.print()}
-            className="flex-1 py-3 border-2 border-blue-600 text-blue-600 rounded-lg font-medium hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
-          >
-            🖨️ Imprimir Comprovante
-            <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
-          </button>
-          <button
-            onClick={onNovaReserva}
-            className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
-          >
-            🏨 Nova Reserva
-            <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
-          </button>
-        </div>
+      {/* o código é o objeto que o hóspede leva consigo */}
+      <div className="jr-codigo-reserva">
+        <span className="jr-codigo-reserva__rotulo">Código da reserva</span>
+        <strong className="jr-codigo-reserva__valor">{reserva.codigo}</strong>
+        <p className="jr-codigo-reserva__nota">
+          Guarde este código para consultar ou alterar sua reserva
+        </p>
       </div>
-    </div>
+
+      <dl className="jr-ficha">
+        <div>
+          <dt>Hóspede</dt>
+          <dd>{reserva.cliente}</dd>
+        </div>
+
+        <div>
+          <dt>Acomodação</dt>
+          <dd>
+            {/* nome de vitrine, não o código do sistema ("LUXO") */}
+            {getSuiteDescription(reserva.tipo_suite).titulo}
+            <small>Quarto {reserva.quarto}</small>
+          </dd>
+        </div>
+
+        <div>
+          <dt>Check-in</dt>
+          <dd>
+            {formatData(reserva.checkin)}
+            <small>a partir das {instrucoes?.checkin_horario || '12:00'}</small>
+          </dd>
+        </div>
+
+        <div>
+          <dt>Check-out</dt>
+          <dd>
+            {formatData(reserva.checkout)}
+            <small>até as {instrucoes?.checkout_horario || '11:00'}</small>
+          </dd>
+        </div>
+
+        <div>
+          <dt>Estadia</dt>
+          <dd>{reserva.num_diarias} {reserva.num_diarias === 1 ? 'diária' : 'diárias'}</dd>
+        </div>
+
+        <div>
+          <dt>A pagar no check-in</dt>
+          <dd>
+            {formatBRL(total)}
+            {temDesconto && <small>desconto de {formatBRL(reserva.valor_desconto)} aplicado</small>}
+          </dd>
+        </div>
+      </dl>
+
+      <ul className="jr-instrucoes">
+        <li>
+          <ShieldCheck size={16} strokeWidth={1.8} aria-hidden="true" />
+          <span>{instrucoes?.documentos || 'Traga documento de identificação com foto'}</span>
+        </li>
+        <li>
+          <Clock3 size={16} strokeWidth={1.8} aria-hidden="true" />
+          <span>
+            Chegando fora do horário? Avise a recepção que organizamos sua entrada.
+          </span>
+        </li>
+        <li>
+          <Phone size={16} strokeWidth={1.8} aria-hidden="true" />
+          <span>Qualquer coisa, fale conosco: {instrucoes?.contato || '(22) 2648-5900'}</span>
+        </li>
+      </ul>
+
+      <div className="jr-acoes-passo">
+        <button type="button" onClick={() => window.print()} className="jr-btn jr-btn--contorno">
+          <Printer size={17} strokeWidth={1.9} aria-hidden="true" />
+          <span>Imprimir</span>
+        </button>
+
+        <Link href="/consultar-pontos" className="jr-btn">
+          <Crown size={18} strokeWidth={1.8} aria-hidden="true" />
+          <span>Ver minha Jornada Real</span>
+        </Link>
+      </div>
+
+      <button
+        type="button"
+        onClick={onNovaReserva}
+        className="jr-link"
+        style={{ marginTop: 22, background: 'none', border: 0, cursor: 'pointer', fontSize: '0.844rem' }}
+      >
+        Fazer outra reserva
+      </button>
+    </section>
   )
 }

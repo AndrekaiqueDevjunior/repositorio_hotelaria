@@ -1,13 +1,28 @@
 'use client'
 
-import { ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowLeft, ArrowRight, Check, Info, MessageCircle, ShieldCheck } from 'lucide-react'
+import { demoAtivo } from '@/lib/demo-mock'
 import { formatCPF, formatTelefone, onlyDigits } from '../utils/formatters'
-import { isValidCPF, isValidEmail, isValidTelefone } from '../utils/validators'
 import { getSuiteDescription } from '../utils/suites'
+
+const formatBRL = (valor) =>
+  Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+// Estado da autenticação → selo. Usa o mesmo .jr-chip do resto da Jornada,
+// em vez de pílulas coloridas de sistema (azul/âmbar/roxo/verde).
+const SELO_AUTH = {
+  idle: { texto: 'Aguardando CPF', estado: 'pendente' },
+  not_found: { texto: 'Novo cadastro', estado: 'used' },
+  found: { texto: 'Cadastro localizado', estado: 'used' },
+  otp_sent: { texto: 'Código enviado', estado: 'used' },
+  verified: { texto: 'Autenticado', estado: 'active' },
+}
 
 export default function StepDados({
   hospedeData,
   onUpdateField,
+  onUpdateOtpCode,
   quartoSelecionado,
   numDiarias,
   customerAuth,
@@ -20,255 +35,269 @@ export default function StepDados({
   onVoltar,
   onContinuar
 }) {
-  const canEditCustomerFields = customerAuth.status === 'idle' || customerAuth.status === 'not_found'
-  const cpfLimpo = onlyDigits(hospedeData.documento)
-  const telefoneLimpo = onlyDigits(hospedeData.telefone)
+  // lido só depois da montagem: demoAtivo() olha a URL do navegador e
+  // avaliá-lo no servidor faria o HTML divergir do cliente
+  const [emDemo, setEmDemo] = useState(false)
+  useEffect(() => setEmDemo(demoAtivo()), [])
 
-  const authBadge = {
-    idle: { label: 'Pendente', className: 'border-blue-200 bg-blue-100 text-blue-800' },
-    not_found: { label: 'Novo cadastro', className: 'border-amber-200 bg-amber-100 text-amber-800' },
-    found: { label: 'Cadastro localizado', className: 'border-blue-200 bg-blue-100 text-blue-800' },
-    otp_sent: { label: 'Código enviado', className: 'border-purple-200 bg-purple-100 text-purple-800' },
-    verified: { label: 'Autenticado', className: 'border-green-200 bg-green-100 text-green-800' },
-  }[customerAuth.status] || { label: 'Pendente', className: 'border-blue-200 bg-blue-100 text-blue-800' }
-
-  const suiteInfo = getSuiteDescription(quartoSelecionado?.tipo)
+  const podeEditarDados = customerAuth.status === 'idle' || customerAuth.status === 'not_found'
+  const selo = SELO_AUTH[customerAuth.status] || SELO_AUTH.idle
+  const suite = getSuiteDescription(quartoSelecionado?.tipo)
 
   return (
-    <div className="bg-white rounded-2xl shadow-2xl overflow-hidden text-gray-900">
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-6">
-        <h2 className="text-xl font-bold text-white sm:text-2xl">📝 Seus Dados</h2>
-        <p className="text-blue-100">Autentique seu cadastro para liberar a reserva</p>
-      </div>
-
-      {/* Resumo do Quarto */}
-      <div className="bg-blue-50 p-4 border-b flex items-center justify-between">
+    <div>
+      {/* resumo da escolha */}
+      <div className="jr-resumo">
         <div>
-          <p className="text-sm text-gray-600">Quarto selecionado</p>
-          <p className="font-bold text-blue-800">
-            {suiteInfo.titulo} - Quarto {quartoSelecionado.numero}
-          </p>
+          <span className="jr-periodo__rotulo">Sua escolha</span>
+          {/* sem número de quarto: o hóspede escolheu a categoria, a
+              recepção designa a suíte na chegada */}
+          <span className="jr-resumo__valor">{suite.titulo}</span>
         </div>
-        <div className="text-right">
-          <p className="text-sm text-gray-600">{numDiarias} {numDiarias === 1 ? 'diária' : 'diárias'}</p>
-          <p className="font-bold text-green-600">R$ {quartoSelecionado.preco_total.toFixed(2)}</p>
+
+        <div style={{ textAlign: 'right' }}>
+          <span className="jr-periodo__rotulo">
+            {numDiarias} {numDiarias === 1 ? 'diária' : 'diárias'}
+          </span>
+          <span className="jr-resumo__total">{formatBRL(quartoSelecionado.preco_total)}</span>
         </div>
       </div>
 
-      <div className="p-6 space-y-4">
-        {/* Autenticação */}
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-gray-800">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-blue-600 text-white">
-                <ShieldCheck size={24} strokeWidth={1.8} />
-              </span>
-              <div>
-                <h3 className="font-bold text-blue-900">Autenticação do cadastro</h3>
-                <p className="text-sm text-blue-800">
-                  O código é enviado para o WhatsApp do cadastro e vincula esta reserva ao CPF.
-                </p>
-              </div>
-            </div>
-            <span className={`w-fit rounded-full border px-3 py-1 text-xs font-bold uppercase ${authBadge.className}`}>
-              {authBadge.label}
-            </span>
+      {/* ---------------------------------------------------- autenticação */}
+      <section className="jr-bloco">
+        <div className="jr-bloco__cabeca">
+          <div>
+            <h2 className="jr-bloco__titulo jr-ouro-metal">Quem se hospeda</h2>
+            <p className="jr-bloco__sub">
+              Confirmamos sua identidade por um código no WhatsApp. É o que garante que a
+              reserva e os pontos fiquem no seu nome.
+            </p>
           </div>
+          <span className="jr-chip" data-estado={selo.estado}>{selo.texto}</span>
+        </div>
 
-          {/* CPF Input */}
-          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-gray-700">CPF *</span>
-              <input
-                type="text"
-                placeholder="000.000.000-00"
-                value={hospedeData.documento}
-                onChange={(e) => onUpdateField('documento', formatCPF(e.target.value))}
-                disabled={customerAuth.status !== 'idle' && customerAuth.status !== 'not_found'}
-                className="w-full rounded-lg border-2 border-gray-200 p-3 focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
-                maxLength={14}
-              />
-            </label>
-            <div className="flex items-end gap-2">
-              <button
-                type="button"
-                onClick={onBuscarCpf}
-                disabled={authLoading || customerAuth.status !== 'idle'}
-                className="min-h-[48px] rounded-lg bg-blue-600 px-5 font-bold text-white transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {authLoading && customerAuth.status === 'idle' ? 'Consultando...' : 'Consultar'}
-              </button>
-            </div>
-          </div>
+        <div className="jr-campo-acao">
+          <label className="jr-campo">
+            <span className="jr-campo__rotulo">CPF</span>
+            <input
+              type="text"
+              placeholder="000.000.000-00"
+              value={hospedeData.documento}
+              onChange={(e) => onUpdateField('documento', formatCPF(e.target.value))}
+              disabled={!podeEditarDados}
+              maxLength={14}
+            />
+          </label>
 
-          {/* CPF não encontrado */}
-          {customerAuth.status === 'not_found' && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-white p-4 text-gray-900">
-              <p className="text-sm text-amber-800">
-                CPF não cadastrado. Preencha nome, email e telefone abaixo para criar o cadastro antes do OTP.
+          <button
+            type="button"
+            onClick={onBuscarCpf}
+            disabled={authLoading || customerAuth.status !== 'idle'}
+            className="jr-btn jr-btn--contorno"
+          >
+            {authLoading && customerAuth.status === 'idle' ? 'Consultando...' : 'Consultar'}
+          </button>
+        </div>
+
+        {/* CPF sem cadastro */}
+        {customerAuth.status === 'not_found' && (
+          <div style={{ marginTop: 22 }}>
+            <div className="jr-aviso jr-aviso--atencao">
+              <Info size={17} strokeWidth={1.9} aria-hidden="true" />
+              <p>
+                Primeira vez conosco. Preencha nome, e-mail e telefone abaixo — criamos seu
+                cadastro e enviamos o código em seguida.
               </p>
-              <button
-                type="button"
-                onClick={onCriarCadastro}
-                disabled={authLoading}
-                className="mt-3 rounded-lg bg-amber-500 px-5 py-3 font-bold text-white transition-all hover:bg-amber-600 disabled:opacity-50"
-              >
-                {authLoading ? 'Criando cadastro...' : 'Criar cadastro'}
-              </button>
             </div>
-          )}
 
-          {/* Cliente encontrado */}
-          {customerAuth.customer && customerAuth.status !== 'verified' && (
-            <div className="mt-4 rounded-lg border border-blue-200 bg-white p-4 text-gray-900">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-bold text-gray-900">{customerAuth.customer.nome_completo}</p>
-                  <p className="text-sm text-gray-600">
-                    WhatsApp cadastrado: {formatTelefone(customerAuth.customer.telefone || '') || 'telefone indisponível'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onEnviarOtp}
-                  disabled={authLoading}
-                  className="rounded-lg bg-blue-600 px-5 py-3 font-bold text-white transition-all hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {customerAuth.status === 'otp_sent' ? 'Reenviar código' : 'Enviar código'}
-                </button>
-              </div>
+            <button
+              type="button"
+              onClick={onCriarCadastro}
+              disabled={authLoading}
+              className="jr-btn"
+              style={{ marginTop: 14 }}
+            >
+              {authLoading ? 'Criando cadastro...' : 'Criar meu cadastro'}
+            </button>
+          </div>
+        )}
 
-              {/* OTP Input */}
-              {customerAuth.status === 'otp_sent' && (
-                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,220px)_auto]">
+        {/* cadastro localizado → envio e validação do código */}
+        {customerAuth.customer && customerAuth.status !== 'verified' && (
+          <div style={{ marginTop: 22 }}>
+            <div className="jr-aviso">
+              <MessageCircle size={17} strokeWidth={1.9} aria-hidden="true" />
+              <p>
+                <strong>{customerAuth.customer.nome_completo}</strong>
+                <br />
+                WhatsApp {formatTelefone(customerAuth.customer.telefone || '') || 'não cadastrado'}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onEnviarOtp}
+              disabled={authLoading}
+              className="jr-btn jr-btn--contorno"
+              style={{ marginTop: 14 }}
+            >
+              {customerAuth.status === 'otp_sent' ? 'Reenviar código' : 'Enviar código no WhatsApp'}
+            </button>
+
+            {customerAuth.status === 'otp_sent' && (
+              <div style={{ marginTop: 22 }}>
+                <span className="jr-campo__rotulo" style={{ display: 'block', marginBottom: 10 }}>
+                  Código de 6 dígitos
+                </span>
+
+                {emDemo && (
+                  <div className="jr-aviso jr-aviso--atencao" style={{ marginBottom: 14 }}>
+                    <Info size={17} strokeWidth={1.9} aria-hidden="true" />
+                    <p>
+                      <strong>Modo demonstração:</strong> nenhum WhatsApp é enviado. Digite{' '}
+                      <strong>qualquer 6 dígitos</strong> — por exemplo <strong>123456</strong>.
+                    </p>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
                   <input
                     type="text"
                     inputMode="numeric"
                     placeholder="000000"
+                    className="jr-codigo-otp"
                     value={customerAuth.otpCode}
-                    onChange={(e) => {
-                      const digits = onlyDigits(e.target.value).slice(0, 6)
-                      onUpdateField('otpCode', digits)
-                    }}
-                    className="rounded-lg border-2 border-gray-200 p-3 text-center text-xl font-bold tracking-[0.2em] focus:border-blue-400 focus:outline-none"
+                    /*
+                     * O código do OTP mora em customerAuth, não em
+                     * hospedeData: precisa do setter próprio. Usar
+                     * onUpdateField aqui gravava num campo inexistente e o
+                     * código digitado nunca chegava na validação.
+                     */
+                    onChange={(e) => onUpdateOtpCode(onlyDigits(e.target.value).slice(0, 6))}
                     maxLength={6}
                   />
+
                   <button
                     type="button"
                     onClick={onValidarOtp}
                     disabled={authLoading}
-                    className="rounded-lg bg-green-600 px-5 py-3 font-bold text-white transition-all hover:bg-green-700 disabled:opacity-50"
+                    className="jr-btn"
                   >
-                    {authLoading ? 'Validando...' : 'Validar código'}
+                    {authLoading ? 'Validando...' : 'Validar'}
                   </button>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+        )}
 
-          {isAuthenticated && (
-            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm font-medium text-green-800">
-              Cadastro autenticado. Você já pode revisar os dados da reserva e continuar.
-            </div>
-          )}
+        {isAuthenticated && (
+          <div className="jr-aviso jr-aviso--ok" style={{ marginTop: 22 }}>
+            <Check size={17} strokeWidth={2.2} aria-hidden="true" />
+            <p>Identidade confirmada. A reserva já está vinculada ao seu CPF.</p>
+          </div>
+        )}
+      </section>
+
+      {/* ------------------------------------------------------- dados */}
+      <section className="jr-bloco">
+        <div className="jr-bloco__cabeca">
+          <h2 className="jr-bloco__titulo jr-ouro-metal">Dados da estadia</h2>
         </div>
 
-        {/* Dados do Hóspede */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-gray-700 font-medium mb-1">Nome Completo *</label>
+        <div className="jr-campos jr-campos--duplo">
+          <label className="jr-campo">
+            <span className="jr-campo__rotulo">Nome completo</span>
             <input
               type="text"
               placeholder="Como está no documento"
               value={hospedeData.nome_completo}
               onChange={(e) => onUpdateField('nome_completo', e.target.value)}
-              disabled={!canEditCustomerFields}
-              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
+              disabled={!podeEditarDados}
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="block text-gray-700 font-medium mb-1">Email *</label>
+          <label className="jr-campo">
+            <span className="jr-campo__rotulo">E-mail</span>
             <input
               type="email"
               placeholder="seu@email.com"
               value={hospedeData.email}
               onChange={(e) => onUpdateField('email', e.target.value)}
-              disabled={!canEditCustomerFields}
-              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
+              disabled={!podeEditarDados}
             />
-            <p className="text-xs text-gray-500 mt-1">Enviaremos a confirmação para este email</p>
-          </div>
+            <span className="jr-campo__dica">A confirmação da reserva chega aqui</span>
+          </label>
 
-          <div>
-            <label className="block text-gray-700 font-medium mb-1">Telefone *</label>
+          <label className="jr-campo">
+            <span className="jr-campo__rotulo">Telefone</span>
             <input
               type="text"
               placeholder="(00) 00000-0000"
               value={hospedeData.telefone}
               onChange={(e) => onUpdateField('telefone', formatTelefone(e.target.value))}
-              disabled={!canEditCustomerFields}
-              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
+              disabled={!podeEditarDados}
               maxLength={15}
             />
+          </label>
+
+          <div className="jr-campos jr-campos--duplo" style={{ gap: 16 }}>
+            <label className="jr-campo">
+              <span className="jr-campo__rotulo">Adultos</span>
+              <select
+                value={hospedeData.num_hospedes}
+                onChange={(e) => onUpdateField('num_hospedes', parseInt(e.target.value))}
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="jr-campo">
+              <span className="jr-campo__rotulo">Crianças</span>
+              <select
+                value={hospedeData.num_criancas}
+                onChange={(e) => onUpdateField('num_criancas', parseInt(e.target.value))}
+              >
+                {[0, 1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span className="jr-campo__dica">Até 12 anos</span>
+            </label>
           </div>
 
-          <div>
-            <label className="block text-gray-700 font-medium mb-1">Adultos</label>
-            <select
-              value={hospedeData.num_hospedes}
-              onChange={(e) => onUpdateField('num_hospedes', parseInt(e.target.value))}
-              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none"
-            >
-              {[1, 2, 3, 4].map(n => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-gray-700 font-medium mb-1">Crianças (0-12 anos)</label>
-            <select
-              value={hospedeData.num_criancas}
-              onChange={(e) => onUpdateField('num_criancas', parseInt(e.target.value))}
-              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none"
-            >
-              {[0, 1, 2, 3].map(n => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </div>
+          <label className="jr-campo jr-campo--largo">
+            <span className="jr-campo__rotulo">Recados para a recepção</span>
+            <textarea
+              placeholder="Chegada tarde da noite, andar alto, restrição alimentar, comemoração..."
+              value={hospedeData.observacoes}
+              onChange={(e) => onUpdateField('observacoes', e.target.value)}
+              rows={3}
+            />
+            <span className="jr-campo__dica">Opcional — fazemos o possível para atender</span>
+          </label>
         </div>
 
-        <div>
-          <label className="block text-gray-700 font-medium mb-1">Observações (opcional)</label>
-          <textarea
-            placeholder="Solicitações especiais, preferências, restrições alimentares..."
-            value={hospedeData.observacoes}
-            onChange={(e) => onUpdateField('observacoes', e.target.value)}
-            className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-blue-400 focus:outline-none resize-none"
-            rows={3}
-          />
-        </div>
-
-        {/* Botões */}
-        <div className="flex gap-4 pt-4">
-          <button
-            onClick={onVoltar}
-            className="flex-1 py-3 border-2 border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-all"
-          >
-            ← Voltar
+        <div className="jr-acoes-passo">
+          <button type="button" onClick={onVoltar} className="jr-btn jr-btn--contorno">
+            <ArrowLeft size={17} strokeWidth={1.9} aria-hidden="true" />
+            <span>Voltar</span>
           </button>
+
           <button
+            type="button"
             onClick={onContinuar}
             disabled={!isAuthenticated}
-            className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2"
+            className="jr-btn"
           >
-            {isAuthenticated ? 'Continuar →' : 'Autentique para continuar'}
-            <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
+            <ShieldCheck size={17} strokeWidth={1.9} aria-hidden="true" />
+            <span>{isAuthenticated ? 'Ir para o pagamento' : 'Confirme sua identidade'}</span>
+            {isAuthenticated && <ArrowRight size={17} strokeWidth={1.9} aria-hidden="true" />}
           </button>
         </div>
-      </div>
+      </section>
     </div>
   )
 }
