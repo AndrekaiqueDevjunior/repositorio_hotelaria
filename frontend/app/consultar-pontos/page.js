@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowRight, Crown, Gift, Leaf, Star, Ticket } from 'lucide-react'
+import { ArrowRight, Crown, Gift, Star, Ticket } from 'lucide-react'
 import '../jornada-real.css'
 import Reveal from '@/components/jornada/Reveal'
 import LuzPonteiro from '@/components/jornada/LuzPonteiro'
@@ -173,20 +173,17 @@ const normalizeReward = (premio) => {
   }
 }
 
-// Nome e faixa de pontos vêm de lib/jornada-config.js; ícone e foto são só
-// apresentação desta tela, não fazem parte da configuração de pontuação.
-const ICONES_NIVEL = { essencia: Leaf, experiencia: Star, real: Crown }
-const IMAGENS_NIVEL = {
-  essencia: '/images/jornada/suites/nivel-essencia.jpg',
-  experiencia: '/images/jornada/suites/nivel-experiencia.jpg',
-  real: '/images/jornada/suites/nivel-real.jpg',
-}
+/*
+ * Nome, faixa e objeto vêm todos de lib/jornada-config.js: a chave, o cetro
+ * e a coroa são os mesmos recortes que a home usa em "A escada da corte",
+ * a pedido do hotel, para as duas telas contarem a mesma história. Antes
+ * daqui saíam fotos de suíte com um ícone Lucide por cima.
+ */
 const niveisMapa = NIVEIS_JORNADA_REAL.map((nivel) => ({
   chave: nivel.chave,
   nome: nivel.nome,
   faixa: nivel.faixa,
-  Icone: ICONES_NIVEL[nivel.chave],
-  imagem: IMAGENS_NIVEL[nivel.chave],
+  objeto: nivel.objeto,
 }))
 
 export default function ConsultarPontos() {
@@ -424,11 +421,18 @@ export default function ConsultarPontos() {
                 <ol className="jr-pontos__niveis">
                   {niveisMapa.map((nivel) => (
                     <li key={nivel.chave} className="jr-pontos__nivel" data-atual={nivel.chave === nivelAtualChave ? 'sim' : 'nao'}>
-                      <div className="jr-pontos__nivel-foto">
-                        <img src={nivel.imagem} alt="" loading="lazy" />
-                        <span className="jr-pontos__nivel-medalha">
-                          <nivel.Icone size={18} strokeWidth={1.7} fill={nivel.chave !== 'essencia' ? 'currentColor' : 'none'} aria-hidden="true" />
-                        </span>
+                      {/* palco do objeto, no mesmo desenho da home: halo atrás, sombra de contato embaixo */}
+                      <div className="jr-pontos__nivel-palco">
+                        <span className="jr-pontos__nivel-foco" aria-hidden="true" />
+                        <span className="jr-pontos__nivel-chao" aria-hidden="true" />
+                        <img
+                          src={nivel.objeto}
+                          alt=""
+                          aria-hidden="true"
+                          data-objeto={nivel.chave}
+                          className="jr-pontos__nivel-objeto"
+                          loading="lazy"
+                        />
                       </div>
                       <span className="jr-pontos__nivel-nome">{nivel.nome}</span>
                       <span className="jr-pontos__nivel-faixa">{nivel.faixa}</span>

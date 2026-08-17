@@ -2417,52 +2417,77 @@ body:has(.jr) {
 
 .jr-pontos__nivel[data-atual='sim'] { opacity: 1; }
 
-.jr-pontos__nivel-foto {
+/*
+ * Palco do objeto — mesmo desenho de "A escada da corte" na home, em escala
+ * menor: halo macio atrás, sombra de contato embaixo e o recorte por cima.
+ * Substituiu a foto da suíte com medalha; o hotel pediu os mesmos três
+ * símbolos das duas telas (chave, cetro, coroa). Sem moldura aqui: o card
+ * da home também não tem, e a borda brigava com o halo.
+ */
+.jr-pontos__nivel-palco {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: clamp(84px, 8vw, 116px);
-  border: 1px solid var(--jr-regua);
-  overflow: hidden;
-  transition: border-color 260ms ease, box-shadow 260ms ease;
 }
 
-.jr-pontos__nivel-foto img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: brightness(0.55) saturate(0.85);
-  transition: filter 260ms ease;
-}
-
-.jr-pontos__nivel[data-atual='sim'] .jr-pontos__nivel-foto {
-  border-color: var(--jr-ouro);
-  box-shadow: 0 0 0 1px rgba(205, 155, 64, 0.2), 0 0 22px -6px rgba(205, 155, 64, 0.7);
-}
-
-.jr-pontos__nivel[data-atual='sim'] .jr-pontos__nivel-foto img {
-  filter: brightness(0.8) saturate(1);
-}
-
-.jr-pontos__nivel-medalha {
+.jr-pontos__nivel-foco {
   position: absolute;
-  bottom: 8px;
-  left: 8px;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid rgba(205, 155, 64, 0.5);
-  border-radius: 50%;
-  color: var(--jr-bege);
-  background: rgba(0, 0, 0, 0.62);
-  backdrop-filter: blur(2px);
+  top: 46%;
+  left: 50%;
+  width: 116%;
+  aspect-ratio: 1.35;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 40% 40% at 50% 46%, rgba(255, 240, 205, 0.28) 0%, transparent 62%),
+    radial-gradient(ellipse 56% 54% at 50% 50%, rgba(205, 155, 64, 0.18) 0%, transparent 70%);
+  filter: blur(14px);
+  opacity: 0.4;
+  transition: opacity 260ms ease;
 }
 
-.jr-pontos__nivel[data-atual='sim'] .jr-pontos__nivel-medalha {
-  border-color: var(--jr-ouro);
-  color: var(--jr-ouro-claro);
+/* o nível em que o hóspede está agora acende mais que os outros dois */
+.jr-pontos__nivel[data-atual='sim'] .jr-pontos__nivel-foco { opacity: 1; }
+
+.jr-pontos__nivel-chao {
+  position: absolute;
+  bottom: 8%;
+  left: 50%;
+  width: 58%;
+  height: 12px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0, 0, 0, 0.85) 0%, transparent 72%);
+  filter: blur(5px);
 }
+
+.jr-pontos__nivel-objeto {
+  position: relative;
+  z-index: 2;
+  max-height: 100%;
+  width: auto;
+  object-fit: contain;
+  /*
+   * Não usa .jr-objeto de propósito. Aquela classe traz um reflexo
+   * (-webkit-box-reflect) calibrado para o palco grande da home; aqui sobram
+   * só 16px até o rótulo do nível e o reflexo pintava por cima de "ESSÊNCIA".
+   * Como a propriedade não aceita `none` para ser desligada, o jeito é não
+   * herdá-la. Sombra e flutuação ficam replicadas abaixo, em escala menor —
+   * a da home desloca 22px e vazava para fora do card.
+   */
+  filter:
+    drop-shadow(0 8px 10px rgba(0, 0, 0, 0.85))
+    drop-shadow(0 0 16px rgba(205, 155, 64, 0.3));
+  animation: jr-flutuar 7.5s ease-in-out infinite;
+}
+
+/* mesmas proporções da home: cada recorte pede um enquadramento próprio */
+.jr-pontos__nivel-objeto[data-objeto='essencia'] { width: 86%; height: auto; }
+.jr-pontos__nivel-objeto[data-objeto='experiencia'] { height: 100%; }
+.jr-pontos__nivel-objeto[data-objeto='real'] { width: 58%; height: auto; }
 
 .jr-pontos__nivel-nome {
   font-size: 0.688rem;
@@ -2694,6 +2719,33 @@ body:has(.jr) {
   .jr-pontos__niveis { gap: 10px; }
   .jr-painel__premio-linha { flex-direction: column; align-items: stretch; }
   .jr-painel__premio-resumo { flex-direction: row; justify-content: center; gap: 8px; }
+
+  /*
+   * Barra de prêmios no mobile: empilhada e ocupando a largura toda, os 6px
+   * do desktop sumiam ao lado da coroa de 24px. Engrossa para 14px e vira
+   * pílula nas duas pontas — o preenchimento acompanha o mesmo raio para não
+   * deixar canto reto aparecendo na ponta direita.
+   */
+  /*
+   * flex:0 0 auto anula o `flex: 1 1 220px` da regra base: com a linha em
+   * column, aquele basis vira altura e a barra esticava para 220px de alto.
+   */
+  .jr-painel__premio-linha .jr-barra-progresso {
+    flex: 0 0 auto;
+    height: 14px;
+    border-radius: 999px;
+  }
+  .jr-painel__premio-linha .jr-barra-progresso__preenchido { border-radius: 999px; }
+
+  /*
+   * O anel opaco (0 0 0 3px #050406) existia para destacar a coroa sobre uma
+   * barra fina; sobre 14px ele abre um talho escuro no dourado. Fica só a
+   * sombra projetada, que dá relevo sem cortar o preenchimento. O centro
+   * vertical continua vindo do top:50% + translate(-50%,-50%) da regra base.
+   */
+  .jr-painel__premio-linha .jr-barra-progresso__marcador {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  }
 }
 
 /* ================================================================ selos */
