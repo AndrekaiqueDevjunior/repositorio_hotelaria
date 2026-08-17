@@ -1,6 +1,16 @@
 'use client'
 
+import { ArrowLeft, KeyRound } from 'lucide-react'
 import { getSuiteDescription, getSuiteImage } from '../utils/suites'
+
+const formatBRL = (valor) =>
+  Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+const formatData = (valor) => {
+  if (!valor) return ''
+  const data = new Date(valor)
+  return Number.isNaN(data.getTime()) ? '' : data.toLocaleDateString('pt-BR')
+}
 
 export default function StepQuarto({
   searchData,
@@ -10,119 +20,111 @@ export default function StepQuarto({
   onVoltar
 }) {
   return (
-    <div className="space-y-6">
-      {/* Resumo do período */}
-      <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 text-white flex items-center justify-between">
+    <div>
+      {/* período escolhido */}
+      <div className="jr-periodo">
         <div>
-          <p className="text-sm opacity-80">Período selecionado</p>
-          <p className="font-bold">
-            {new Date(searchData.data_checkin).toLocaleDateString('pt-BR')} → {new Date(searchData.data_checkout).toLocaleDateString('pt-BR')}
-          </p>
+          <span className="jr-periodo__rotulo">Período</span>
+          <span className="jr-periodo__valor">
+            {formatData(searchData.data_checkin)} — {formatData(searchData.data_checkout)}
+          </span>
         </div>
-        <div className="text-right">
-          <p className="text-sm opacity-80">Duração</p>
-          <p className="font-bold text-yellow-400">{numDiarias} {numDiarias === 1 ? 'diária' : 'diárias'}</p>
+
+        <div>
+          <span className="jr-periodo__rotulo">Estadia</span>
+          <span className="jr-periodo__valor jr-periodo__valor--ouro">
+            {numDiarias} {numDiarias === 1 ? 'diária' : 'diárias'}
+          </span>
         </div>
-        <button
-          onClick={onVoltar}
-          className="px-4 py-2 bg-white/20 rounded-lg hover:bg-white/30 transition-all"
-        >
-          ✏️ Alterar
+
+        <button type="button" onClick={onVoltar} className="jr-btn jr-btn--contorno jr-btn--pequeno">
+          <ArrowLeft size={15} strokeWidth={2} aria-hidden="true" />
+          <span style={{ marginLeft: 8 }}>Trocar datas</span>
         </button>
       </div>
 
-      <h2 className="text-2xl font-bold text-white text-center">🛏️ Escolha sua Suíte</h2>
-
       {tiposDisponiveis.length === 0 ? (
-        <div className="bg-white rounded-xl p-8 text-center text-gray-900">
-          <p className="text-gray-600">Não há quartos disponíveis para as datas selecionadas.</p>
-          <button
-            onClick={onVoltar}
-            className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg"
-          >
-            Tentar outras datas
+        <div className="jr-sem-quarto" style={{ marginTop: 28 }}>
+          <p className="jr-lede">
+            Nenhuma suíte livre nesse período. Ajuste as datas e a corte volta a receber.
+          </p>
+          <button type="button" onClick={onVoltar} className="jr-btn">
+            Escolher outras datas
           </button>
         </div>
       ) : (
-        <div className="grid gap-6">
+        <ol className="jr-suites">
           {tiposDisponiveis.map((tipo) => {
             const info = getSuiteDescription(tipo.tipo)
-            const image = getSuiteImage(tipo.tipo)
+            const imagem = getSuiteImage(tipo.tipo)
+            const quartos = Array.isArray(tipo.quartos) ? tipo.quartos : []
 
             return (
-              <div key={tipo.tipo} className="bg-white rounded-2xl shadow-xl overflow-hidden text-gray-900">
-                <div className="md:flex">
-                  {/* Imagem */}
-                  <div className="md:w-1/3 relative h-48 md:h-auto">
-                    <img
-                      src={image}
-                      alt={info.titulo}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
-                    <div className="absolute bottom-4 left-4 text-white">
-                      <span className="text-2xl font-bold">{info.titulo}</span>
+              <li className="jr-suite" key={tipo.tipo}>
+                <figure className="jr-suite__foto">
+                  <img src={imagem} alt={info.titulo} loading="lazy" />
+                  <span className="jr-suite__veu" aria-hidden="true" />
+                  <figcaption className="jr-suite__nome-foto">{info.titulo}</figcaption>
+                </figure>
+
+                <div className="jr-suite__corpo">
+                  <div className="jr-suite__topo">
+                    <div>
+                      <h3 className="jr-suite__titulo jr-ouro-metal">{info.titulo}</h3>
+                      <p className="jr-suite__descricao">{info.descricao}</p>
                     </div>
+
+                    <p className="jr-suite__preco">
+                      <span className="jr-suite__preco-rotulo">A partir de</span>
+                      <strong className="jr-suite__preco-valor jr-ouro-metal">
+                        {formatBRL(tipo.preco_diaria)}
+                      </strong>
+                      <span className="jr-suite__preco-nota">por noite</span>
+                    </p>
                   </div>
 
-                  {/* Detalhes */}
-                  <div className="md:w-2/3 p-6">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-xl font-bold text-gray-800">{info.titulo}</h3>
-                        <p className="text-gray-600">{info.descricao}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm text-gray-500">a partir de</p>
-                        <p className="text-2xl font-bold text-green-600">
-                          R$ {tipo.preco_diaria.toFixed(2)}
-                        </p>
-                        <p className="text-sm text-gray-500">por noite</p>
-                      </div>
-                    </div>
+                  <ul className="jr-suite__amenidades">
+                    {info.amenidades.map((amenidade) => (
+                      <li key={amenidade}>{amenidade}</li>
+                    ))}
+                  </ul>
 
-                    {/* Amenidades */}
-                    <div className="flex flex-wrap gap-2 mb-4">
-                      {info.amenidades.map((amenidade, i) => (
-                        <span key={i} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm">
-                          {amenidade}
-                        </span>
-                      ))}
-                    </div>
+                  <div className="jr-suite__rodape">
+                    <p className="jr-suite__total">
+                      {numDiarias} {numDiarias === 1 ? 'diária' : 'diárias'}
+                      <strong>{formatBRL(tipo.preco_total)}</strong>
+                    </p>
 
-                    {/* Quartos disponíveis */}
-                    <div className="border-t pt-4">
-                      <p className="text-sm text-gray-600 mb-2">
-                        {tipo.quantidade_disponivel} {tipo.quantidade_disponivel === 1 ? 'quarto disponível' : 'quartos disponíveis'}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {tipo.quartos.slice(0, 5).map((quarto) => (
-                          <button
-                            key={quarto.numero}
-                            onClick={() => onSelecionarQuarto(tipo, quarto)}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all flex items-center gap-2"
-                          >
-                            Quarto {quarto.numero}
-                            <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
-                          </button>
-                        ))}
-                        {tipo.quartos.length > 5 && (
-                          <span className="px-4 py-2 text-gray-500">+{tipo.quartos.length - 5} mais</span>
-                        )}
-                      </div>
-                    </div>
+                    <div className="jr-suite__escolha">
+                      {/*
+                       * O hóspede escolhe a categoria, não o número do quarto:
+                       * são 52 suítes no hotel, listar cada uma seria uma
+                       * parede de botões. A recepção designa o quarto na
+                       * chegada — aqui só reservamos a primeira livre da
+                       * categoria para manter o contrato do backend.
+                       */}
+                      <span className="jr-suite__disponibilidade">
+                        {tipo.quantidade_disponivel === 1
+                          ? 'Última disponível'
+                          : `${tipo.quantidade_disponivel} disponíveis`}
+                      </span>
 
-                    {/* Total */}
-                    <div className="mt-4 p-3 bg-yellow-50 rounded-lg flex justify-between items-center">
-                      <span className="text-gray-700">Total para {numDiarias} {numDiarias === 1 ? 'diária' : 'diárias'}:</span>
-                      <span className="text-xl font-bold text-green-600">R$ {tipo.preco_total.toFixed(2)}</span>
+                      <button
+                        type="button"
+                        className="jr-btn"
+                        disabled={quartos.length === 0}
+                        onClick={() => onSelecionarQuarto(tipo, quartos[0])}
+                      >
+                        <KeyRound size={16} strokeWidth={1.9} aria-hidden="true" />
+                        <span>Escolher esta suíte</span>
+                      </button>
                     </div>
                   </div>
                 </div>
-              </div>
+              </li>
             )
           })}
-        </div>
+        </ol>
       )}
     </div>
   )
