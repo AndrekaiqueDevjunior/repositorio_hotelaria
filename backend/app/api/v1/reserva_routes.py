@@ -19,13 +19,13 @@ from app.services.notification_service import NotificationService
 from app.services.reserva_publica_confirmation_service import ReservaPublicaConfirmationService
 from typing import Optional
 from starlette.responses import JSONResponse
+from app.utils.json_utils import to_json_safe
 from datetime import datetime
 import base64
 import binascii
 import os
 
 router = APIRouter(prefix="/reservas", tags=["reservas"])
-
 # Dependency injection
 async def get_reserva_service() -> ReservaService:
     db = get_db()
@@ -186,7 +186,7 @@ async def criar_reserva(
         cached = await check_idempotency(idempotency_key)
         if cached:
             return JSONResponse(
-                content=cached["body"],
+                content=to_json_safe(cached["body"]),
                 status_code=cached["status_code"]
             )
     
@@ -240,12 +240,11 @@ async def criar_reserva(
                 },
                 "message": "Reserva criada com sucesso"
             }
-            
+            result_json = to_json_safe(result)
             # Cachear resultado
             if idempotency_key:
-                await store_idempotency_result(idempotency_key, result, status_code=201)
-            
-            return JSONResponse(content=result, status_code=201)
+                await store_idempotency_result(idempotency_key, result_json, status_code=201)
+            return JSONResponse(content=result_json, status_code=201)
             
     except TimeoutError:
         raise HTTPException(

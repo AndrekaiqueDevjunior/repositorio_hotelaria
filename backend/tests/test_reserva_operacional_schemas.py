@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
+import json
 
+from app.utils.json_utils import to_json_safe
 from app.schemas.pagamento_schema import PagamentoCreate
 from app.schemas.reserva_schema import ReservaCreate
 
@@ -38,3 +40,13 @@ def test_pagamento_create_normaliza_metodos_operacionais():
     assert PagamentoCreate(reserva_id=1, valor=10, metodo="CREDITO").metodo == "credit_card"
     assert PagamentoCreate(reserva_id=1, valor=10, metodo="DEBITO").metodo == "debit_card"
     assert PagamentoCreate(reserva_id=1, valor=10, metodo="PIX").metodo == "pix"
+
+
+def test_resposta_da_reserva_converte_datetime_antes_do_json():
+    payload = to_json_safe({
+        "success": True,
+        "data": {"created_at": datetime(2026, 9, 18, 12, 0, 0)},
+    })
+
+    assert json.dumps(payload)
+    assert payload["data"]["created_at"] == "2026-09-18T12:00:00"

@@ -1,5 +1,5 @@
 ﻿'use client'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { api } from '../../../lib/api'
 import { useAuth } from '../../../contexts/AuthContext'
 import { formatErrorMessage } from '../../../lib/errorHandler'
@@ -37,6 +37,7 @@ export default function Reservas() {
   const [quartos, setQuartos] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
+  const reservaRequestKeyRef = useRef(null)
   const [totalReservas, setTotalReservas] = useState(0)
 
   const STATUS_FINALIZADAS = ['CHECKED_OUT', 'CHECKOUT_REALIZADO', 'CANCELADO', 'CANCELADA']
@@ -407,12 +408,21 @@ export default function Reservas() {
       observacoes: form.observacoes.trim() || null
     }
 
+    if (!reservaRequestKeyRef.current) {
+      reservaRequestKeyRef.current = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `reserva-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    }
+
     try {
-      await api.post('/reservas', payload)
+      await api.post('/reservas', payload, {
+        headers: { 'Idempotency-Key': reservaRequestKeyRef.current }
+      })
       toast.success('Reserva criada com sucesso!')
       await loadReservas()
       setShowForm(false)
       setForm({ cliente_id: '', quarto_numero: '', tipo_suite: 'LUXO', data_entrada: '', data_saida: '', valor_diaria: '', num_diarias: 1, valor_total: '', observacoes: '' })
+      reservaRequestKeyRef.current = null
     } catch (error) {
       const msg = formatErrorMessage(error)
       toast.error(`Erro: ${msg}`)
