@@ -16,6 +16,7 @@ from app.core.cache import redis_lock
 from app.core.validators import ReservaValidator, QuartoValidator
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
+from app.services.reserva_publica_confirmation_service import ReservaPublicaConfirmationService
 from typing import Optional
 from starlette.responses import JSONResponse
 from datetime import datetime
@@ -207,11 +208,35 @@ async def criar_reserva(
             nova_reserva = await service.create(
                 reserva,
                 criado_por_funcionario_id=current_user.id,
+                notificar=False,
             )
+
+            valor_total = float(
+                nova_reserva.get("valor_total_com_desconto", nova_reserva.get("valor_total", 0.0)) or 0.0
+            )
+            fluxo = await ReservaPublicaConfirmationService(db).confirmar_com_pagamento_pendente(
+                reserva_id=nova_reserva["id"],
+                valor_total=valor_total,
+            )
+            nova_reserva = await service.get_by_id(nova_reserva["id"])
+
+            reserva_model = await db.reserva.find_unique(where={"id": nova_reserva["id"]})
+            if reserva_model:
+                await NotificationService.notificar_nova_reserva(db, reserva_model)
             
             result = {
                 "success": True,
                 "data": nova_reserva,
+                "pagamento": {
+                    "status": fluxo["pagamento"]["status"],
+                    "situacao": "NAO_PAGO",
+                    "valor": valor_total,
+                },
+                "voucher": {
+                    "codigo": fluxo["voucher"]["codigo"],
+                    "status": fluxo["voucher"]["status"],
+                    "url": f"/voucher/{fluxo['voucher']['codigo']}",
+                },
                 "message": "Reserva criada com sucesso"
             }
             
