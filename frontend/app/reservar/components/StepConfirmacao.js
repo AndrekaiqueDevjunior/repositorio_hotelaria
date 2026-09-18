@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Clock3, Crown, Phone, Printer, ShieldCheck } from 'lucide-react'
+import { Clock3, Crown, Phone, Printer, ShieldCheck, Ticket } from 'lucide-react'
 import { getSuiteDescription } from '../utils/suites'
 
 const formatBRL = (valor) =>
@@ -17,6 +17,7 @@ export default function StepConfirmacao({ reservaConfirmada, onNovaReserva }) {
   if (!reservaConfirmada) return null
 
   const { reserva, instrucoes } = reservaConfirmada
+  const voucher = reservaConfirmada.voucher
   const temDesconto = Number(reserva.valor_desconto || 0) > 0
   const total = Number(reserva.valor_total_com_desconto || reserva.valor_total || 0)
 
@@ -47,6 +48,16 @@ export default function StepConfirmacao({ reservaConfirmada, onNovaReserva }) {
           Guarde este código para consultar ou alterar sua reserva
         </p>
       </div>
+
+      {voucher?.codigo && (
+        <div className="jr-codigo-reserva" style={{ marginTop: 16 }}>
+          <span className="jr-codigo-reserva__rotulo">Voucher da reserva</span>
+          <strong className="jr-codigo-reserva__valor">{voucher.codigo}</strong>
+          <p className="jr-codigo-reserva__nota">
+            Sua reserva está confirmada. O pagamento permanece pendente e será realizado no check-in.
+          </p>
+        </div>
+      )}
 
       <dl className="jr-ficha">
         <div>
@@ -111,6 +122,13 @@ export default function StepConfirmacao({ reservaConfirmada, onNovaReserva }) {
       </ul>
 
       <div className="jr-acoes-passo">
+        {voucher?.codigo && (
+          <Link href={voucher.url || `/voucher/${voucher.codigo}`} className="jr-btn">
+            <Ticket size={18} strokeWidth={1.9} aria-hidden="true" />
+            <span>Ver voucher</span>
+          </Link>
+        )}
+
         <button type="button" onClick={() => window.print()} className="jr-btn jr-btn--contorno">
           <Printer size={17} strokeWidth={1.9} aria-hidden="true" />
           <span>Imprimir</span>

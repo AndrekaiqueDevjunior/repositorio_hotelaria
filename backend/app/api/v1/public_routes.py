@@ -20,6 +20,7 @@ from app.services.consulta_publica_service import ConsultaPublicaService
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
 from app.services.otp_service import OtpService
+from app.services.reserva_publica_confirmation_service import ReservaPublicaConfirmationService
 from app.middleware.rate_limit import rate_limit_strict
 from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from app.core.cache import redis_lock
@@ -699,7 +700,9 @@ async def criar_reserva_publica(
                     telefone_contato=telefone_limpo,
                     email_contato=reserva_data.email
                 ),
-                notificar=not bool(cupom_codigo)
+                # A notificacao deve sair apenas depois que a reserva estiver
+                # confirmada, com o pagamento pendente e o voucher emitido.
+                notificar=False,
             )
 
         if cupom_codigo:
@@ -713,11 +716,21 @@ async def criar_reserva_publica(
                 raise
 
             reserva_criada = await reserva_repo.get_by_id(reserva_criada["id"])
-            reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
-            if reserva_model:
-                # O alerta WhatsApp para o admin ja acontece dentro de
-                # notificar_nova_reserva (garantido para todo caller).
-                await NotificationService.notificar_nova_reserva(db, reserva_model)
+
+        valor_total_devido = float(
+            reserva_criada.get("valor_total_com_desconto", reserva_criada.get("valor_total", 0.0)) or 0.0
+        )
+        fluxo = await ReservaPublicaConfirmationService(db).confirmar_com_pagamento_pendente(
+            reserva_id=reserva_criada["id"],
+            valor_total=valor_total_devido,
+        )
+        reserva_criada = await reserva_repo.get_by_id(reserva_criada["id"])
+
+        reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
+        if reserva_model:
+            # O alerta WhatsApp para o admin ja acontece dentro de
+            # notificar_nova_reserva (garantido para todo caller).
+            await NotificationService.notificar_nova_reserva(db, reserva_model)
 
         resultado = {
             "success": True,
@@ -737,6 +750,16 @@ async def criar_reserva_publica(
                     reserva_criada.get("valor_total_com_desconto", reserva_criada.get("valor_total", 0.0)) or 0.0
                 ),
                 "cupom_uso": reserva_criada.get("cupom_uso"),
+            },
+            "pagamento": {
+                "status": fluxo["pagamento"]["status"],
+                "situacao": "NAO_PAGO",
+                "valor": valor_total_devido,
+            },
+            "voucher": {
+                "codigo": fluxo["voucher"]["codigo"],
+                "status": fluxo["voucher"]["status"],
+                "url": f"/voucher/{fluxo['voucher']['codigo']}",
             },
             "instrucoes": {
                 "checkin_horario": "12:00",

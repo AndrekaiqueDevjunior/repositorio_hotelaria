@@ -1,5 +1,7 @@
 # Jornada Real - Checklist de Funcionalidades
 
+**Atualizacao executiva 2026-09-18 - reserva confirmada com pagamento pendente/JR-11:** a reserva publica agora confirma a acomodacao depois de validar disponibilidade e cria um pagamento TEF com status `PENDENTE` (`NAO_PAGO` na resposta), sem conceder quitacao. Reserva, hospedagem inicial, pagamento pendente e voucher sao gravados na mesma transacao; a resposta retorna o codigo/link do voucher e `/reservar` o apresenta imediatamente ao cliente. Backend: ✅. Frontend: ✅. WhatsApp: ✅ sem novo template; a notificacao existente so e disparada apos o fluxo final ser concluido. Validado: `5 passed` em `test_reserva_publica_confirmation_service.py` + `test_reserva_logic_guards.py` e `npx next build` (com `NODE_ENV=production` no PowerShell).
+
 **Atualizacao executiva 2026-07-18 - pagamento operacional/JR-10:** o modal de pagamento da recepcao agora oferece exclusivamente `Pagamento (TEF)` e remove os caminhos legados de PIX, Cielo e balcao/upload de comprovante. O fluxo separado de check-in em dinheiro permanece ativo no `CheckinCashApprovalPanel`, usando `POST /checkins/request-cash-approval` e a aprovacao via Twilio ja implementada. Backend e WhatsApp: sem alteracao de contrato. Frontend: ✅ build de producao validado com `npx next build`.
 
 **Atualizacao executiva 2026-07-18 - JR-02 credito no checkout:** corrigida a normalizacao da categoria da suite antes de consultar/calcular a regra de Pontos R. Cadastros operacionais como `LUXO 2º`, `LUXO 3º`, `LUXO 4º EC` e rotulos como `Suite Master` agora convergem para `LUXO`/`MASTER`, sem alterar as regras de `DUPLA` e `REAL`; o valor com desconto/TEF nao e usado como autoridade para conceder pontos. Backend: ✅ codigo e regressao focada. Frontend e WhatsApp: sem alteracao. Validado: `21 passed` em `test_programa_pontos_service.py` + `test_reserva_logic_guards.py`, incluindo as quatro categorias e variantes operacionais. `test_tef_idempotency.py` nao coletou no ambiente Windows por `ImportError` pre-existente de `redis_lock` em `app.core.cache`.
@@ -741,16 +743,17 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
 9. Se correto: libera reserva (customer_id já vinculado)
 
 ### Backend Necessário
-**Status Backend:** ✅ Completo — consulta/criação pública de cliente, CPF com dígito verificador, OTP WhatsApp, expiração, tentativas, rate limit, auditoria, token de sessão e trava de reserva pública por token estão implementados.
+**Status Backend:** ✅ Completo — consulta/criação pública de cliente, CPF com dígito verificador, OTP WhatsApp, expiração, tentativas, rate limit, auditoria, token de sessão e trava de reserva pública por token estão implementados. Após validar a disponibilidade, a reserva pública é confirmada com pagamento `PENDENTE`/não pago e voucher emitido de forma atômica.
 
 - [x] ✅ Endpoint `GET /customers/{cpf}` com validação de CPF e existência
 - [x] ✅ Endpoint `POST /customers/create` para novo cadastro público com validação antifraude existente
 - [x] ✅ Endpoint `POST /auth/otp/generate` → gera OTP, persiste hash e envia via WhatsApp/Twilio
 - [x] ✅ Endpoint `POST /auth/otp/validate` → valida OTP e retorna token com escopo `jornada_reserva`
 - [x] ✅ Endpoint `POST /public/reservas` exige `customer_auth_token` válido e CPF correspondente
+- [x] ✅ `POST /public/reservas` cria pagamento TEF `PENDENTE`, confirma a reserva, cria hospedagem `NAO_INICIADA` e emite voucher na mesma transação
 
 ### Frontend Necessário
-**Status Frontend:** ✅ Completo — `/reservar` consulta CPF, cria cadastro quando necessário, envia/valida OTP e bloqueia avanço sem token válido.
+**Status Frontend:** ✅ Completo — `/reservar` consulta CPF, cria cadastro quando necessário, envia/valida OTP e bloqueia avanço sem token válido. Ao concluir, exibe o código e o link do voucher ao cliente, informando que o pagamento está pendente.
 
 - [x] `/reservar` adiciona seção de autenticação no início do passo de dados:
   ```
@@ -770,6 +773,7 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
   - CPF: formato correto (###.###.###-##)
   - CPF válido (algoritmo de validação)
   - OTP: 6 dígitos
+- [x] Confirmação da reserva mostra voucher e acesso direto a `/voucher/{codigo}`
 
 ### WhatsApp Necessário
 - [x] ✅ Template:
@@ -778,6 +782,7 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
   Válido por 5 minutos.
   Não compartilhe com ninguém!
   ```
+- [x] ✅ Notificação existente de nova reserva é enviada somente após confirmação, pagamento pendente e emissão do voucher
 
 ### Segurança
 - [x] ✅ OTP válido por 5 minutos
@@ -817,6 +822,13 @@ PYTHONPATH=$PWD pytest tests -q
 → 55 passed
 
 cd frontend && npm run build
+→ Compiled successfully
+
+# Fluxo reserva confirmada / pagamento pendente / voucher
+PYTHONPATH=$PWD pytest tests/test_reserva_publica_confirmation_service.py tests/test_reserva_logic_guards.py -q
+→ 5 passed
+
+cd frontend && NODE_ENV=production npx next build
 → Compiled successfully
 ```
 
