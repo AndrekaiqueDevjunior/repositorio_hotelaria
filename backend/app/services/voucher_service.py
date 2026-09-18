@@ -11,7 +11,7 @@ from app.core.database import get_db
 
 async def gerar_voucher(reserva_id: int, emitido_por: int = None, db=None) -> Dict[str, Any]:
     """
-    Gerar voucher para reserva confirmada
+    Gerar voucher de identificacao da reserva, inclusive enquanto pendente.
     
     Args:
         reserva_id: ID da reserva

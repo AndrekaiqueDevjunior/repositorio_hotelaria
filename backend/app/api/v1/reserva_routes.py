@@ -214,7 +214,7 @@ async def criar_reserva(
             valor_total = float(
                 nova_reserva.get("valor_total_com_desconto", nova_reserva.get("valor_total", 0.0)) or 0.0
             )
-            fluxo = await ReservaPublicaConfirmationService(db).confirmar_com_pagamento_pendente(
+            fluxo = await ReservaPublicaConfirmationService(db).registrar_pagamento_pendente_e_voucher(
                 reserva_id=nova_reserva["id"],
                 valor_total=valor_total,
             )

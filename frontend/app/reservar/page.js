@@ -417,7 +417,7 @@ export default function Reservar() {
 
       if (data.success) {
         setReservaConfirmada(data)
-        toast.success('🎉 Reserva confirmada com sucesso!')
+        toast.success('🎉 Reserva criada. Confirmação pendente de pagamento.')
         setStep(5)
       } else {
         const errorMessage = data.detail || 'Erro ao criar reserva'

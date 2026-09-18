@@ -705,7 +705,7 @@ async def criar_reserva_publica(
                     email_contato=reserva_data.email
                 ),
                 # A notificacao deve sair apenas depois que a reserva estiver
-                # confirmada, com o pagamento pendente e o voucher emitido.
+                # pendente, com a cobranca pendente e o voucher emitido.
                 notificar=False,
             )
 
@@ -724,7 +724,7 @@ async def criar_reserva_publica(
         valor_total_devido = float(
             reserva_criada.get("valor_total_com_desconto", reserva_criada.get("valor_total", 0.0)) or 0.0
         )
-        fluxo = await ReservaPublicaConfirmationService(db).confirmar_com_pagamento_pendente(
+        fluxo = await ReservaPublicaConfirmationService(db).registrar_pagamento_pendente_e_voucher(
             reserva_id=reserva_criada["id"],
             valor_total=valor_total_devido,
         )

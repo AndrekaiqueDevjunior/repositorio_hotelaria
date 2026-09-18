@@ -54,7 +54,7 @@ export default function StepConfirmacao({ reservaConfirmada, onNovaReserva }) {
           <span className="jr-codigo-reserva__rotulo">Voucher da reserva</span>
           <strong className="jr-codigo-reserva__valor">{voucher.codigo}</strong>
           <p className="jr-codigo-reserva__nota">
-            Sua reserva está confirmada. O pagamento permanece pendente e será realizado no check-in.
+            Sua reserva está pendente e será confirmada assim que o pagamento for aprovado.
           </p>
         </div>
       )}

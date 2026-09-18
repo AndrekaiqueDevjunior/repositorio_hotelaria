@@ -1,7 +1,7 @@
-"""Finaliza o fluxo de uma reserva criada pelo site.
+"""Registra os efeitos iniciais de uma reserva ainda nao paga.
 
-Uma reserva do cliente pode ser confirmada antes da quitação. O pagamento
-continua pendente e o voucher comprova a reserva, não a liquidação.
+A reserva e o pagamento permanecem pendentes. O voucher identifica a reserva,
+mas nunca promove seu status; somente a aprovacao financeira pode confirma-la.
 """
 
 from typing import Any, Dict
@@ -12,37 +12,32 @@ from app.services.voucher_service import gerar_voucher
 
 
 class ReservaPublicaConfirmationService:
-    """Mantém atômicos os efeitos obrigatórios da reserva pública."""
+    """Mantem atomicos os efeitos obrigatorios da criacao da reserva."""
 
-    STATUS_CONFIRMAVEIS = {"PENDENTE", "PENDENTE_PAGAMENTO", "AGUARDANDO_PAGAMENTO"}
+    STATUS_PENDENTES = {"PENDENTE", "PENDENTE_PAGAMENTO", "AGUARDANDO_PAGAMENTO"}
 
     def __init__(self, db):
         self.db = db
 
-    async def confirmar_com_pagamento_pendente(
+    async def registrar_pagamento_pendente_e_voucher(
         self,
         reserva_id: int,
         valor_total: float,
     ) -> Dict[str, Any]:
-        """Confirma, registra pagamento pendente e emite voucher em uma transação.
+        """Registra cobranca pendente e voucher sem confirmar a reserva.
 
-        O valor é sempre calculado pelo backend (incluindo cupom aplicado) e
-        nunca é recebido do cliente como fonte de verdade.
+        O valor e sempre calculado pelo backend (incluindo cupom aplicado) e
+        nunca e recebido do cliente como fonte de verdade.
         """
         async with self.db.tx() as tx:
             reserva = await tx.reserva.find_unique(where={"id": reserva_id})
             if not reserva:
-                raise ValueError("Reserva não encontrada")
-            if reserva.statusReserva not in self.STATUS_CONFIRMAVEIS:
+                raise ValueError("Reserva nao encontrada")
+            if reserva.statusReserva not in self.STATUS_PENDENTES:
                 raise ValueError(
-                    "Reserva não pode ser confirmada no estado atual: "
+                    "Reserva nao pode iniciar o pagamento no estado atual: "
                     f"{reserva.statusReserva}"
                 )
-
-            reserva_confirmada = await tx.reserva.update(
-                where={"id": reserva_id},
-                data={"statusReserva": "CONFIRMADA"},
-            )
 
             hospedagem = await tx.hospedagem.find_unique(where={"reservaId": reserva_id})
             if not hospedagem:
@@ -62,7 +57,7 @@ class ReservaPublicaConfirmationService:
             voucher = await gerar_voucher(reserva_id, db=tx)
 
         return {
-            "reserva": reserva_confirmada,
+            "reserva": reserva,
             "pagamento": pagamento,
             "voucher": voucher,
         }

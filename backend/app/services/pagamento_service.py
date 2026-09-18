@@ -669,6 +669,13 @@ class PagamentoService:
                 pagamento["id"],
                 novo_status
             )
+
+            if novo_status == "APROVADO" and self.reserva_repo:
+                try:
+                    await self.reserva_repo.confirmar(pagamento["reserva_id"])
+                except ValueError as exc:
+                    if "Apenas reservas pendentes" not in str(exc):
+                        raise
             
             # Enviar notificaÃ§Ã£o baseada no status
             try:
@@ -737,6 +744,12 @@ class PagamentoService:
                     status_code = cielo_status["data"].get("Status")
                     if status_code == 2:  # Capturado/Pago
                         await self.pagamento_repo.update_status(pagamento_id, "APROVADO")
+                        if self.reserva_repo:
+                            try:
+                                await self.reserva_repo.confirmar(pagamento["reserva_id"])
+                            except ValueError as exc:
+                                if "Apenas reservas pendentes" not in str(exc):
+                                    raise
                         return {
                             "pagamento_id": pagamento_id,
                             "status": "APROVADO",

@@ -65,14 +65,18 @@ sys.modules.setdefault("app.utils.cache", fake_utils_cache_module)
 
 from app.services.pagamento_service import PagamentoService
 from app.services.tef_service import TEF_FINALIZED_SESSIONS, TEF_INTERACTIVE_SESSIONS, TefService
-from app.schemas.pagamento_schema import PagamentoCreate
+from app.schemas.pagamento_schema import CieloWebhook, PagamentoCreate
 
 
 class FakeTxReserva:
+    def __init__(self):
+        self.updated_data = None
+
     async def find_unique(self, where):
         return types.SimpleNamespace(statusReserva="PENDENTE")
 
     async def update(self, where, data):
+        self.updated_data = data
         return types.SimpleNamespace(id=where["id"], **data)
 
 
@@ -103,8 +107,12 @@ class NoopTx:
 
 
 class FakeRepoDb:
+    def __init__(self):
+        self.current_tx = None
+
     def tx(self):
-        return NoopTx()
+        self.current_tx = NoopTx()
+        return self.current_tx
 
 
 class FakePagamentoRepo:
@@ -199,6 +207,28 @@ class FakePagamentosExistentesRepo(FakePagamentoRepo):
 
     async def list_by_reserva(self, reserva_id):
         return self.pagamentos
+
+
+class FakeWebhookPagamentoRepo(FakePagamentoRepo):
+    async def get_by_payment_id(self, payment_id):
+        return {
+            "id": 51,
+            "reserva_id": 10,
+            "status": "PROCESSANDO",
+            "valor": 100.0,
+        }
+
+
+class FakeReservaRepo:
+    def __init__(self):
+        self.confirmadas = []
+
+    async def confirmar(self, reserva_id):
+        self.confirmadas.append(reserva_id)
+        return {"id": reserva_id, "status": "CONFIRMADA"}
+
+    async def get_by_id(self, reserva_id):
+        return {"id": reserva_id, "status": "CONFIRMADA"}
 
 
 class FakeStartTefService:
@@ -323,6 +353,20 @@ async def test_pagamento_processando_bloqueia_nova_tentativa_com_id_serializado(
 
 
 @pytest.mark.asyncio
+async def test_webhook_aprovado_confirma_reserva_pendente():
+    pagamento_repo = FakeWebhookPagamentoRepo()
+    reserva_repo = FakeReservaRepo()
+    service = PagamentoService(pagamento_repo, reserva_repo)
+
+    resultado = await service.process_webhook(
+        CieloWebhook(payment_id="cielo-51", status="APPROVED")
+    )
+
+    assert resultado["status"] == "APROVADO"
+    assert reserva_repo.confirmadas == [10]
+
+
+@pytest.mark.asyncio
 async def test_pagamento_tef_finalizado_reusa_idempotency_key():
     repo = FakePagamentoRepo(valor_oficial=90.0)
     service = PagamentoService(repo)
@@ -368,6 +412,22 @@ async def test_pagamento_tef_finalizado_reusa_registro_pendente_da_reserva():
     assert resultado["id"] == 77
     assert repo.created == 0
     assert repo.updated == 1
+    assert repo.db.current_tx.reserva.updated_data == {"statusReserva": "CONFIRMADA"}
+
+
+@pytest.mark.asyncio
+async def test_pagamento_recusado_nao_confirma_reserva():
+    repo = FakeOpenPagamentoRepo(valor_oficial=90.0)
+    service = PagamentoService(repo)
+
+    await service._registrar_pagamento_tef_finalizado(
+        reserva_id=10,
+        valor=90.0,
+        tef_response={"status": "RECUSADO"},
+        idempotency_key="tef-chave-recusada",
+    )
+
+    assert repo.db.current_tx.reserva.updated_data is None
 
 
 @pytest.mark.asyncio

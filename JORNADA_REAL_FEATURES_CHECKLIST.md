@@ -1,8 +1,8 @@
 # Jornada Real - Checklist de Funcionalidades
 
-**Atualizacao executiva 2026-09-18 - estados Reserva/Pagamento/Voucher (JR-11):** corrigida a mistura visual e contratual entre reserva confirmada e pagamento iniciado. A API agora devolve `reservation_status` e `payment_status` separadamente (`pending`, `processing`, `paid`, `failed`, `cancelled`, `refunded`); `PROCESSANDO` so e persistido depois que uma sessao TEF real e aberta. A tabela de reservas mostra "Pagamento pendente" para o registro inicial e reserva "Pagamento em andamento" para transacao aberta. O voucher segue disponivel com pagamento pendente e passou a exibir a situacao financeira na tela e no PDF. Banco: ✅ default real confirmado como `PENDENTE`, sem trigger em `reservas`/`pagamentos`; migration nao necessaria. Backend: ✅. Frontend: ✅. WhatsApp: sem alteracao. Validado: `19 passed` na regressao focada e `npx next build` compilado com sucesso.
+**Atualizacao executiva 2026-09-18 - estados Reserva/Pagamento/Voucher (JR-11):** corrigida a mistura visual e contratual entre reserva e pagamento. Uma nova reserva permanece `PENDENTE` enquanto o pagamento esta `PENDENTE`; somente um pagamento aprovado promove a reserva para `CONFIRMADA`. A API devolve `reservation_status` e `payment_status` separadamente (`pending`, `processing`, `paid`, `failed`, `cancelled`, `refunded`), e `PROCESSANDO` so e persistido depois que uma transacao real e aberta. O voucher segue disponivel como identificacao da reserva pendente. A migration `035` repara reservas confirmadas sem qualquer pagamento aprovado. Backend: ✅. Frontend: ✅. WhatsApp: sem alteracao. Validado: `21 passed` na regressao focada e build de producao do frontend.
 
-**Atualizacao executiva 2026-09-18 - reserva confirmada com pagamento pendente/JR-11:** a reserva publica agora confirma a acomodacao depois de validar disponibilidade e cria um pagamento TEF com status `PENDENTE` (`NAO_PAGO` na resposta), sem conceder quitacao. Reserva, hospedagem inicial, pagamento pendente e voucher sao gravados na mesma transacao; a resposta retorna o codigo/link do voucher e `/reservar` o apresenta imediatamente ao cliente. Backend: ✅. Frontend: ✅. WhatsApp: ✅ sem novo template; a notificacao existente so e disparada apos o fluxo final ser concluido. Validado: `5 passed` em `test_reserva_publica_confirmation_service.py` + `test_reserva_logic_guards.py` e `npx next build` (com `NODE_ENV=production` no PowerShell).
+**Atualizacao executiva 2026-09-18 - reserva pendente com voucher/JR-11:** depois de validar disponibilidade, o sistema cria a reserva e o pagamento com status `PENDENTE` (`NAO_PAGO` na resposta), cria a hospedagem inicial e emite o voucher na mesma transacao. O voucher nao confirma a reserva; a confirmacao ocorre somente apos aprovacao do pagamento. A resposta retorna o codigo/link do voucher e `/reservar` o apresenta imediatamente ao cliente.
 
 **Atualizacao executiva 2026-07-18 - pagamento operacional/JR-10:** o modal de pagamento da recepcao agora oferece exclusivamente `Pagamento (TEF)` e remove os caminhos legados de PIX, Cielo e balcao/upload de comprovante. O fluxo separado de check-in em dinheiro permanece ativo no `CheckinCashApprovalPanel`, usando `POST /checkins/request-cash-approval` e a aprovacao via Twilio ja implementada. Backend e WhatsApp: sem alteracao de contrato. Frontend: ✅ build de producao validado com `npx next build`.
 
@@ -745,14 +745,14 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
 9. Se correto: libera reserva (customer_id já vinculado)
 
 ### Backend Necessário
-**Status Backend:** ✅ Completo — consulta/criação pública de cliente, CPF com dígito verificador, OTP WhatsApp, expiração, tentativas, rate limit, auditoria, token de sessão e trava de reserva pública por token estão implementados. Após validar a disponibilidade, a reserva pública é confirmada com pagamento `PENDENTE`/não pago e voucher emitido de forma atômica.
+**Status Backend:** ✅ Completo — consulta/criação pública de cliente, CPF com dígito verificador, OTP WhatsApp, expiração, tentativas, rate limit, auditoria, token de sessão e trava de reserva pública por token estão implementados. Após validar a disponibilidade, a reserva e o pagamento permanecem `PENDENTE`; o voucher é emitido de forma atômica e a reserva somente vira `CONFIRMADA` após pagamento aprovado.
 
 - [x] ✅ Endpoint `GET /customers/{cpf}` com validação de CPF e existência
 - [x] ✅ Endpoint `POST /customers/create` para novo cadastro público com validação antifraude existente
 - [x] ✅ Endpoint `POST /auth/otp/generate` → gera OTP, persiste hash e envia via WhatsApp/Twilio
 - [x] ✅ Endpoint `POST /auth/otp/validate` → valida OTP e retorna token com escopo `jornada_reserva`
 - [x] ✅ Endpoint `POST /public/reservas` exige `customer_auth_token` válido e CPF correspondente
-- [x] ✅ `POST /public/reservas` cria pagamento TEF `PENDENTE`, confirma a reserva, cria hospedagem `NAO_INICIADA` e emite voucher na mesma transação
+- [x] ✅ `POST /public/reservas` mantém a reserva `PENDENTE`, cria pagamento TEF `PENDENTE`, hospedagem `NAO_INICIADA` e voucher na mesma transação
 - [x] ✅ API separa `reservation_status` de `payment_status`; abertura de sessão TEF altera `pending` para `processing`, e finalização reutiliza o mesmo registro financeiro
 
 ### Frontend Necessário
@@ -787,7 +787,7 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
   Válido por 5 minutos.
   Não compartilhe com ninguém!
   ```
-- [x] ✅ Notificação existente de nova reserva é enviada somente após confirmação, pagamento pendente e emissão do voucher
+- [x] ✅ Notificação existente de nova reserva é enviada após criação da reserva pendente, do pagamento pendente e do voucher
 
 ### Segurança
 - [x] ✅ OTP válido por 5 minutos
@@ -829,7 +829,7 @@ PYTHONPATH=$PWD pytest tests -q
 cd frontend && npm run build
 → Compiled successfully
 
-# Fluxo reserva confirmada / pagamento pendente / voucher
+# Fluxo reserva pendente / pagamento pendente / voucher
 PYTHONPATH=$PWD pytest tests/test_reserva_publica_confirmation_service.py tests/test_reserva_logic_guards.py -q
 → 5 passed
 
@@ -838,7 +838,7 @@ cd frontend && NODE_ENV=production npx next build
 
 # Contrato separado e regressao TEF/status/voucher
 PYTHONPATH=$PWD pytest tests/test_tef_idempotency.py tests/test_payment_status_contract.py tests/test_reserva_publica_confirmation_service.py tests/test_reserva_logic_guards.py -q
-→ 19 passed
+→ 21 passed
 ```
 
 **Prioridade:** 🔴 ALTA | **Complexidade:** Média | **Est:** 2 dias

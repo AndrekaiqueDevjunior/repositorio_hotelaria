@@ -46,7 +46,7 @@ class _FakeDb:
 
 
 @pytest.mark.asyncio
-async def test_confirma_reserva_com_pagamento_pendente_e_voucher(monkeypatch):
+async def test_mantem_reserva_pendente_com_pagamento_pendente_e_voucher(monkeypatch):
     db = _FakeDb()
     pagamento_args = {}
 
@@ -70,12 +70,13 @@ async def test_confirma_reserva_com_pagamento_pendente_e_voucher(monkeypatch):
         emitir_voucher,
     )
 
-    resultado = await ReservaPublicaConfirmationService(db).confirmar_com_pagamento_pendente(
+    resultado = await ReservaPublicaConfirmationService(db).registrar_pagamento_pendente_e_voucher(
         reserva_id=31,
         valor_total=640.0,
     )
 
-    assert db.reserva.updated_data == {"statusReserva": "CONFIRMADA"}
+    assert db.reserva.updated_data is None
+    assert resultado["reserva"].statusReserva == "PENDENTE"
     assert db.hospedagem.created_data == {"reservaId": 31, "statusHospedagem": "NAO_INICIADA"}
     assert pagamento_args == {
         "reserva_id": 31,
@@ -89,12 +90,12 @@ async def test_confirma_reserva_com_pagamento_pendente_e_voucher(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_nao_confirma_reserva_fora_do_estado_pendente():
+async def test_nao_inicia_fluxo_fora_do_estado_pendente():
     db = _FakeDb()
     db.reserva.current.statusReserva = "CANCELADO"
 
-    with pytest.raises(ValueError, match="não pode ser confirmada"):
-        await ReservaPublicaConfirmationService(db).confirmar_com_pagamento_pendente(
+    with pytest.raises(ValueError, match="nao pode iniciar o pagamento"):
+        await ReservaPublicaConfirmationService(db).registrar_pagamento_pendente_e_voucher(
             reserva_id=31,
             valor_total=640.0,
         )
