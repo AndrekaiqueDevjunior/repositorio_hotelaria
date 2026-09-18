@@ -102,17 +102,29 @@ class PagamentoService:
         # entrar juntos — nunca pode sobrar pagamento PAGO com reserva PENDENTE
         # nem pagamento fantasma PENDENTE bloqueando novas tentativas.
         # Antifraude nao se aplica a pagamento fisico TEF (transacao presencial).
+        pagamento_aberto = await self.pagamento_repo.get_open_by_reserva(reserva_id)
+
         async with self.pagamento_repo.db.tx() as tx:
-            pagamento = await self.pagamento_repo.create(
-                PagamentoCreate(
-                    reserva_id=reserva_id,
-                    valor=valor,
-                    metodo="tef",
-                ),
-                idempotency_key=idempotency_key,
-                db=tx,
-                status_inicial=status_persistido,
-            )
+            if pagamento_aberto:
+                pagamento_model = await tx.pagamento.update(
+                    where={"id": pagamento_aberto["id"]},
+                    data={
+                        "statusPagamento": status_persistido,
+                        "idempotencyKey": idempotency_key,
+                    },
+                )
+                pagamento = self.pagamento_repo._serialize_pagamento(pagamento_model)
+            else:
+                pagamento = await self.pagamento_repo.create(
+                    PagamentoCreate(
+                        reserva_id=reserva_id,
+                        valor=valor,
+                        metodo="tef",
+                    ),
+                    idempotency_key=idempotency_key,
+                    db=tx,
+                    status_inicial=status_persistido,
+                )
 
             if pagamento.get("idempotent_replay"):
                 return pagamento
@@ -160,22 +172,34 @@ class PagamentoService:
             # Verificar se jÃ¡ existe pagamento para esta reserva
             pagamentos_existentes = await self.pagamento_repo.list_by_reserva(dados.reserva_id)
             
-            # Se jÃ¡ existe pagamento PENDENTE ou PROCESSANDO, retornar erro
+            pagamento_pendente = None
+            # PENDENTE e a obrigacao ainda nao paga e pode ser reutilizada.
+            # Apenas PROCESSANDO representa uma tentativa realmente aberta.
             for pg in pagamentos_existentes:
-                status = getattr(pg, 'status', None) or getattr(pg, 'status_pagamento', None)
-                if status in ["PENDENTE", "PROCESSANDO"]:
+                status = (
+                    pg.get("status") or pg.get("status_pagamento")
+                    if isinstance(pg, dict)
+                    else getattr(pg, 'status', None) or getattr(pg, 'status_pagamento', None)
+                )
+                if status == "PROCESSANDO":
                     return {
                         "error": "JÃ¡ existe um pagamento em andamento para esta reserva",
                         "success": False,
-                        "pagamento_id": pg.id,
+                        "pagamento_id": pg.get("id") if isinstance(pg, dict) else pg.id,
                         "status": status
                     }
+                if status == "PENDENTE":
+                    pagamento_pendente = pg
             
-            # Criar pagamento no banco
-            pagamento = await self.pagamento_repo.create(dados, idempotency_key=idempotency_key)
+            # Reutilizar a obrigacao pendente criada junto com a reserva.
+            pagamento = pagamento_pendente or await self.pagamento_repo.create(
+                dados,
+                idempotency_key=idempotency_key,
+            )
             
             # Processar pagamento com Cielo
             if dados.metodo in ["credit_card", "debit_card"]:
+                await self.pagamento_repo.update_status(pagamento["id"], "PROCESSANDO")
                 cielo_response = await self.cielo_api.criar_pagamento_cartao(
                     valor=dados.valor,
                     cartao_numero=dados.cartao_numero,
@@ -262,6 +286,7 @@ class PagamentoService:
             
             elif dados.metodo == "tef":
                 # TEF - TransferÃªncia EletrÃ´nica de Fundos
+                await self.pagamento_repo.update_status(pagamento["id"], "PROCESSANDO")
                 tef_response = await self.tef_service.iniciar_pagamento(
                     valor=dados.valor,
                     reserva_id=dados.reserva_id
@@ -345,7 +370,7 @@ class PagamentoService:
     ) -> Dict[str, Any]:
         try:
             valor_oficial = await self._valor_oficial_reserva(reserva_id, valor)
-            return await self.tef_service.iniciar_fluxo_interativo(
+            resultado = await self.tef_service.iniciar_fluxo_interativo(
                 valor=valor_oficial,
                 reserva_id=reserva_id,
                 function_id=function_id,
@@ -358,6 +383,21 @@ class PagamentoService:
                 defer_finish=defer_finish,
                 session_id=session_id,
             )
+            if resultado.get("success") and resultado.get("session_id"):
+                pagamento_processando = await self.pagamento_repo.marcar_processando(reserva_id)
+                if not pagamento_processando:
+                    pagamento_aberto = await self.pagamento_repo.get_open_by_reserva(reserva_id)
+                    if not pagamento_aberto:
+                        await self.pagamento_repo.create(
+                            PagamentoCreate(
+                                reserva_id=reserva_id,
+                                valor=valor_oficial,
+                                metodo="tef",
+                            ),
+                            idempotency_key=f"tef-processing:{resultado['session_id']}",
+                            status_inicial="PROCESSANDO",
+                        )
+            return resultado
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -555,9 +595,12 @@ class PagamentoService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao finalizar fluxo TEF: {str(e)}")
 
-    async def cancelar_fluxo_tef(self, session_id: str) -> Dict[str, Any]:
+    async def cancelar_fluxo_tef(self, session_id: str, reserva_id: int | None = None) -> Dict[str, Any]:
         try:
-            return await self.tef_service.cancelar_fluxo_interativo(session_id=session_id)
+            resultado = await self.tef_service.cancelar_fluxo_interativo(session_id=session_id)
+            if reserva_id:
+                await self.pagamento_repo.marcar_cancelado(reserva_id)
+            return resultado
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao cancelar fluxo TEF: {str(e)}")
 

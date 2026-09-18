@@ -253,6 +253,8 @@ async def consultar_reserva_publica(codigo: str):
             "reserva": {
                 "codigo": reserva["codigo_reserva"],
                 "status": reserva["status"],
+                "reservation_status": reserva.get("reservation_status", reserva["status"]),
+                "payment_status": reserva.get("payment_status", "pending"),
                 "cliente_nome": reserva.get("cliente_nome"),
                 "quarto_numero": reserva.get("quarto_numero"),
                 "tipo_suite": reserva.get("tipo_suite"),
@@ -268,6 +270,8 @@ async def consultar_reserva_publica(codigo: str):
                     reserva.get("valor_total_com_desconto", reserva.get("valor_total", 0.0)) or 0.0
                 ),
                 "cupom_uso": reserva.get("cupom_uso"),
+                "voucher": reserva.get("voucher"),
+                "voucher_available": reserva.get("voucher_available", False),
                 "data_criacao": reserva.get("created_at")
             },
             "instrucoes": {
@@ -737,6 +741,8 @@ async def criar_reserva_publica(
             "reserva": {
                 "codigo": reserva_criada["codigo_reserva"],
                 "status": reserva_criada["status"],
+                "reservation_status": reserva_criada.get("reservation_status", reserva_criada["status"]),
+                "payment_status": reserva_criada.get("payment_status", "pending"),
                 "cliente": cliente.get("nome_completo"),
                 "quarto": reserva_criada.get("quarto_numero"),
                 "tipo_suite": reserva_criada.get("tipo_suite"),
@@ -753,6 +759,7 @@ async def criar_reserva_publica(
             },
             "pagamento": {
                 "status": fluxo["pagamento"]["status"],
+                "payment_status": "pending",
                 "situacao": "NAO_PAGO",
                 "valor": valor_total_devido,
             },

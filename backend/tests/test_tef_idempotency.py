@@ -2,6 +2,7 @@ import pytest
 import sys
 import types
 import asyncio
+from contextlib import asynccontextmanager
 
 sys.modules.setdefault(
     "requests",
@@ -35,6 +36,14 @@ class FakeCache:
 
 
 fake_cache_module.cache = FakeCache()
+
+
+@asynccontextmanager
+async def fake_redis_lock(*args, **kwargs):
+    yield
+
+
+fake_cache_module.redis_lock = fake_redis_lock
 sys.modules.setdefault("app.core.cache", fake_cache_module)
 
 fake_utils_cache_module = types.ModuleType("app.utils.cache")
@@ -56,6 +65,7 @@ sys.modules.setdefault("app.utils.cache", fake_utils_cache_module)
 
 from app.services.pagamento_service import PagamentoService
 from app.services.tef_service import TEF_FINALIZED_SESSIONS, TEF_INTERACTIVE_SESSIONS, TefService
+from app.schemas.pagamento_schema import PagamentoCreate
 
 
 class FakeTxReserva:
@@ -66,9 +76,24 @@ class FakeTxReserva:
         return types.SimpleNamespace(id=where["id"], **data)
 
 
+class FakeTxPagamento:
+    async def update(self, where, data):
+        return types.SimpleNamespace(
+            id=where["id"],
+            reservaId=10,
+            clienteId=1,
+            valor=90.0,
+            metodo="tef",
+            statusPagamento=data["statusPagamento"],
+            idempotencyKey=data.get("idempotencyKey"),
+            createdAt=None,
+        )
+
+
 class NoopTx:
     def __init__(self):
         self.reserva = FakeTxReserva()
+        self.pagamento = FakeTxPagamento()
 
     async def __aenter__(self):
         return self
@@ -89,6 +114,9 @@ class FakePagamentoRepo:
         self.updated = 0
         self.valor_oficial = valor_oficial
         self.valor_consultas = []
+        self.processando = []
+        self.cancelados = []
+        self.created_records = []
         self.db = FakeRepoDb()
 
     async def get_by_idempotency_key(self, idempotency_key):
@@ -97,6 +125,17 @@ class FakePagamentoRepo:
     async def obter_valor_esperado_reserva(self, reserva_id, reserva=None):
         self.valor_consultas.append(reserva_id)
         return self.valor_oficial
+
+    async def get_open_by_reserva(self, reserva_id):
+        return None
+
+    async def marcar_processando(self, reserva_id):
+        self.processando.append(reserva_id)
+        return {"id": 99, "status": "PROCESSANDO"}
+
+    async def marcar_cancelado(self, reserva_id):
+        self.cancelados.append(reserva_id)
+        return {"id": 99, "status": "CANCELADO"}
 
     async def create(self, pagamento, idempotency_key=None, db=None, status_inicial=None):
         self.created += 1
@@ -107,6 +146,7 @@ class FakePagamentoRepo:
             "metodo": pagamento.metodo,
             "status": status_inicial or "PENDENTE",
         }
+        self.created_records.append(registro)
         if idempotency_key:
             self.by_key[idempotency_key] = registro
         return registro
@@ -124,6 +164,41 @@ class FakePagamentoRepo:
                 )
                 return dict(registro)
         return {"id": pagamento_id, "status": status}
+
+    def _serialize_pagamento(self, pagamento):
+        return {
+            "id": pagamento.id,
+            "reserva_id": pagamento.reservaId,
+            "valor": float(pagamento.valor),
+            "metodo": pagamento.metodo,
+            "status": pagamento.statusPagamento,
+        }
+
+
+class FakeOpenPagamentoRepo(FakePagamentoRepo):
+    async def get_open_by_reserva(self, reserva_id):
+        return {
+            "id": 77,
+            "reserva_id": reserva_id,
+            "valor": self.valor_oficial,
+            "metodo": "tef",
+            "status": "PROCESSANDO",
+        }
+
+
+class FakeSemPagamentoPendenteRepo(FakePagamentoRepo):
+    async def marcar_processando(self, reserva_id):
+        self.processando.append(reserva_id)
+        return None
+
+
+class FakePagamentosExistentesRepo(FakePagamentoRepo):
+    def __init__(self, pagamentos):
+        super().__init__()
+        self.pagamentos = pagamentos
+
+    async def list_by_reserva(self, reserva_id):
+        return self.pagamentos
 
 
 class FakeStartTefService:
@@ -192,6 +267,59 @@ async def test_iniciar_fluxo_tef_usa_valor_oficial_com_desconto():
     assert result["success"] is True
     assert service.tef_service.calls[0]["valor"] == 90.0
     assert repo.valor_consultas == [10]
+    assert repo.processando == [10]
+
+
+@pytest.mark.asyncio
+async def test_iniciar_fluxo_tef_cria_processing_quando_nao_ha_pending():
+    repo = FakeSemPagamentoPendenteRepo(valor_oficial=90.0)
+    service = PagamentoService(repo)
+    service.tef_service = FakeStartTefService()
+
+    await service.iniciar_fluxo_tef(
+        reserva_id=10,
+        valor=100.0,
+        session_id="sess-sem-pendente",
+    )
+
+    assert repo.created == 1
+    assert repo.created_records[0]["status"] == "PROCESSANDO"
+
+
+@pytest.mark.asyncio
+async def test_pagamento_pendente_e_reutilizado_sem_ser_tratado_como_em_andamento():
+    pendente = {
+        "id": 41,
+        "reserva_id": 10,
+        "valor": 100.0,
+        "metodo": "tef",
+        "status": "PENDENTE",
+    }
+    repo = FakePagamentosExistentesRepo([pendente])
+    service = PagamentoService(repo)
+
+    resultado = await service.create(
+        PagamentoCreate(reserva_id=10, valor=100.0, metodo="na_chegada")
+    )
+
+    assert resultado == pendente
+    assert repo.created == 0
+
+
+@pytest.mark.asyncio
+async def test_pagamento_processando_bloqueia_nova_tentativa_com_id_serializado():
+    repo = FakePagamentosExistentesRepo(
+        [{"id": 42, "reserva_id": 10, "status": "PROCESSANDO"}]
+    )
+    service = PagamentoService(repo)
+
+    resultado = await service.create(
+        PagamentoCreate(reserva_id=10, valor=100.0, metodo="na_chegada")
+    )
+
+    assert resultado["success"] is False
+    assert resultado["pagamento_id"] == 42
+    assert repo.created == 0
 
 
 @pytest.mark.asyncio
@@ -219,6 +347,26 @@ async def test_pagamento_tef_finalizado_reusa_idempotency_key():
     assert segundo["idempotent_replay"] is True
     assert primeiro["valor"] == 90.0
     assert repo.created == 1
+    assert repo.updated == 1
+
+
+@pytest.mark.asyncio
+async def test_pagamento_tef_finalizado_reusa_registro_pendente_da_reserva():
+    repo = FakeOpenPagamentoRepo(valor_oficial=90.0)
+    service = PagamentoService(repo)
+    service.tef_service = FakeTefService()
+
+    resultado = await service.finalizar_fluxo_tef(
+        reserva_id=10,
+        valor=100.0,
+        session_id="sess-pendente",
+        confirm=True,
+        idempotency_key="tef-chave-pendente",
+    )
+
+    assert resultado["success"] is True
+    assert resultado["id"] == 77
+    assert repo.created == 0
     assert repo.updated == 1
 
 

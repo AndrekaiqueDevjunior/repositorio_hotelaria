@@ -229,6 +229,7 @@ async def criar_reserva(
                 "data": nova_reserva,
                 "pagamento": {
                     "status": fluxo["pagamento"]["status"],
+                    "payment_status": "pending",
                     "situacao": "NAO_PAGO",
                     "valor": valor_total,
                 },

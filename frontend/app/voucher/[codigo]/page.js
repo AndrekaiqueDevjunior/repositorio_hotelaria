@@ -254,6 +254,19 @@ export default function VoucherPage() {
                   R$ {Number(voucher.reserva.valorTotal || 0).toFixed(2)}
                 </p>
               </div>
+              <div className="bg-amber-50 p-4 rounded md:col-span-2">
+                <p className="text-sm text-gray-600 mb-1">Pagamento</p>
+                <p className="font-semibold text-amber-700">
+                  {{
+                    pending: 'Pendente',
+                    processing: 'Em andamento',
+                    paid: 'Confirmado',
+                    failed: 'Não aprovado',
+                    cancelled: 'Cancelado',
+                    refunded: 'Estornado'
+                  }[voucher.reserva.paymentStatus] || 'Pendente'}
+                </p>
+              </div>
             </div>
           </div>
 

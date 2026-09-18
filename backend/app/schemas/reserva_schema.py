@@ -47,6 +47,9 @@ class ReservaResponse(BaseModel):
     quarto_numero: str
     tipo_suite: TipoSuite
     status: str
+    reservation_status: Optional[str] = None
+    payment_status: Optional[str] = "pending"
+    payment_status_raw: Optional[str] = "PENDENTE"
     checkin_previsto: Optional[datetime]
     checkout_previsto: Optional[datetime]
     checkin_realizado: Optional[datetime]
@@ -65,6 +68,8 @@ class ReservaResponse(BaseModel):
     valor_desconto: Optional[float] = 0.0
     valor_total_com_desconto: Optional[float] = None
     pagamentos: Optional[list]
+    voucher: Optional[dict] = None
+    voucher_available: Optional[bool] = False
     hospedagem: Optional[dict] = None
     cupom_uso: Optional[dict] = None
     created_at: Optional[datetime]

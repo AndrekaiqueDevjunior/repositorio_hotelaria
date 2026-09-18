@@ -758,15 +758,22 @@ export default function Reservas() {
     return !temPagamentoAprovado
   }
 
-  const temPagamentoEmAndamento = (reserva) => {
-    // Verificar se a reserva tem pagamentos e se algum está em andamento
-    if (!reserva.pagamentos || reserva.pagamentos.length === 0) {
-      return false
-    }
-    
-    return reserva.pagamentos.some(pg => 
-      ['PENDENTE', 'PROCESSANDO', 'AGUARDANDO_PAGAMENTO'].includes(pg.status)
-    )
+  const getPaymentStatus = (reserva) => {
+    if (reserva?.payment_status) return String(reserva.payment_status).toLowerCase()
+
+    const pagamentos = reserva?.pagamentos || []
+    const pagamentoAtual = pagamentos.reduce((atual, pagamento) => {
+      if (!atual) return pagamento
+      return Number(pagamento.id || 0) > Number(atual.id || 0) ? pagamento : atual
+    }, null)
+    const raw = String(pagamentoAtual?.status || 'PENDENTE').toUpperCase()
+
+    if (['PROCESSANDO', 'AGUARDANDO_PAGAMENTO'].includes(raw)) return 'processing'
+    if (['PAGO', 'APROVADO', 'CONFIRMADO', 'CAPTURED', 'AUTHORIZED'].includes(raw)) return 'paid'
+    if (['FALHOU', 'RECUSADO', 'NEGADO', 'FAILED'].includes(raw)) return 'failed'
+    if (['CANCELADO', 'CANCELLED'].includes(raw)) return 'cancelled'
+    if (['ESTORNADO', 'REFUNDED'].includes(raw)) return 'refunded'
+    return 'pending'
   }
 
   const podeCancelar = (reserva) => {
@@ -1174,15 +1181,16 @@ export default function Reservas() {
                               >
                                 👁️ Detalhes
                               </button>
-                              {podePagar(r) && !temPagamentoEmAndamento(r) && (
+                              {podePagar(r) && getPaymentStatus(r) === 'pending' && (
                                 <button
                                   onClick={() => handlePagar(r)}
                                   className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                  title="Pagamento ainda não realizado"
                                 >
-                                  💳 Pagar
+                                  💳 Pagamento pendente
                                 </button>
                               )}
-                              {podePagar(r) && temPagamentoEmAndamento(r) && (
+                              {getPaymentStatus(r) === 'processing' && (
                                 <button
                                   disabled
                                   className="text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded cursor-not-allowed"
@@ -1190,6 +1198,24 @@ export default function Reservas() {
                                 >
                                   ⏳ Pagamento em andamento
                                 </button>
+                              )}
+                              {getPaymentStatus(r) === 'paid' && (
+                                <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
+                                  ✅ Pagamento confirmado
+                                </span>
+                              )}
+                              {podePagar(r) && ['failed', 'cancelled'].includes(getPaymentStatus(r)) && (
+                                <button
+                                  onClick={() => handlePagar(r)}
+                                  className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                >
+                                  ❌ Pagamento não aprovado
+                                </button>
+                              )}
+                              {getPaymentStatus(r) === 'refunded' && (
+                                <span className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded">
+                                  ↩️ Pagamento estornado
+                                </span>
                               )}
                               {podeCheckin(r) && !jaFezCheckin(r) && (
                                 <button
@@ -1208,7 +1234,7 @@ export default function Reservas() {
                                   ✅ Check-in feito
                                 </button>
                               )}
-                              {['CONFIRMADA', 'HOSPEDADO', 'CHECKIN_REALIZADO', 'CHECKOUT_REALIZADO', 'CHECKED_OUT'].includes(r.status) && (
+                              {(r.voucher_available || r.voucher?.codigo || ['CONFIRMADA', 'HOSPEDADO', 'CHECKIN_REALIZADO', 'CHECKOUT_REALIZADO', 'CHECKED_OUT'].includes(r.status)) && (
                                 <button
                                   onClick={() => handleVoucher(r)}
                                   className="text-xs px-2 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200"

@@ -5,6 +5,10 @@ from app.schemas.pagamento_schema import PagamentoCreate, PagamentoResponse, Cie
 from app.services.notification_service import NotificationService
 from app.services.whatsapp_service import get_whatsapp_service
 from app.utils.datetime_utils import to_utc, now_utc
+from app.utils.payment_status import (
+    normalizar_status_pagamento_persistido,
+    normalizar_status_pagamento_publico,
+)
 import uuid
 from pathlib import Path
 from prisma.errors import UniqueViolationError
@@ -359,22 +363,8 @@ class PagamentoRepository:
             raise ValueError("Pagamento não encontrado")
         
         # Mapear status para formato padronizado
-        status_map = {
-            "APROVADO": "PAGO",
-            "CONFIRMADO": "PAGO",
-            "APPROVED": "PAGO",
-            "PENDENTE": "PENDENTE",
-            "PROCESSANDO": "PENDENTE",
-            "AGUARDANDO_PAGAMENTO": "PENDENTE",
-            "RECUSADO": "FALHOU",
-            "NEGADO": "FALHOU",
-            "FAILED": "FALHOU",
-            "CANCELADO": "ESTORNADO",
-            "ESTORNADO": "ESTORNADO"
-        }
-        
         # Usar o status mapeado ou o status original se não estiver no mapa
-        status_atualizado = status_map.get(status, status)
+        status_atualizado = normalizar_status_pagamento_persistido(status)
         
         update_data = {
             "statusPagamento": status_atualizado
@@ -415,17 +405,56 @@ class PagamentoRepository:
         )
         
         # Criar notificações baseadas no status
-        if status == "APROVADO":
+        if status_atualizado == "PAGO":
             await NotificationService.notificar_pagamento_aprovado(self.db, updated_pagamento, updated_pagamento.reserva)
             await self._notificar_whatsapp_pagamento(updated_pagamento, "aprovado")
-        elif status == "RECUSADO":
+        elif status_atualizado == "FALHOU":
             await NotificationService.notificar_pagamento_recusado(self.db, updated_pagamento, updated_pagamento.reserva)
             await self._notificar_whatsapp_pagamento(updated_pagamento, "recusado")
-        elif status == "PENDENTE":
+        elif status_atualizado == "PENDENTE":
             await NotificationService.notificar_pagamento_pendente(self.db, updated_pagamento, updated_pagamento.reserva)
             await self._notificar_whatsapp_pagamento(updated_pagamento, "pendente")
         
         return self._serialize_pagamento(updated_pagamento)
+
+    async def get_open_by_reserva(self, reserva_id: int) -> Optional[Dict[str, Any]]:
+        """Retorna a obrigacao financeira ainda pendente/em processamento."""
+        pagamento = await self.db.pagamento.find_first(
+            where={
+                "reservaId": reserva_id,
+                "statusPagamento": {"in": ["PENDENTE", "PROCESSANDO"]},
+            },
+            order={"id": "desc"},
+        )
+        return self._serialize_pagamento(pagamento) if pagamento else None
+
+    async def marcar_processando(self, reserva_id: int) -> Optional[Dict[str, Any]]:
+        """Marca processamento somente depois que uma transacao foi aberta."""
+        pagamento = await self.db.pagamento.find_first(
+            where={"reservaId": reserva_id, "statusPagamento": "PENDENTE"},
+            order={"id": "desc"},
+        )
+        if not pagamento:
+            return None
+        atualizado = await self.db.pagamento.update(
+            where={"id": pagamento.id},
+            data={"statusPagamento": "PROCESSANDO"},
+        )
+        return self._serialize_pagamento(atualizado)
+
+    async def marcar_cancelado(self, reserva_id: int) -> Optional[Dict[str, Any]]:
+        """Cancela apenas uma tentativa que estava efetivamente processando."""
+        pagamento = await self.db.pagamento.find_first(
+            where={"reservaId": reserva_id, "statusPagamento": "PROCESSANDO"},
+            order={"id": "desc"},
+        )
+        if not pagamento:
+            return None
+        atualizado = await self.db.pagamento.update(
+            where={"id": pagamento.id},
+            data={"statusPagamento": "CANCELADO"},
+        )
+        return self._serialize_pagamento(atualizado)
     
     async def list_by_reserva(self, reserva_id: int) -> List[Dict[str, Any]]:
         """Listar pagamentos de uma reserva"""
@@ -540,6 +569,7 @@ class PagamentoRepository:
             "cielo_payment_id": getattr(pagamento, "cieloPaymentId", None),
             "status": status,
             "status_pagamento": status,  # Para compatibilidade
+            "payment_status": normalizar_status_pagamento_publico(status),
             "valor": float(pagamento.valor) if hasattr(pagamento, 'valor') and pagamento.valor is not None else 0.0,
             "metodo": getattr(pagamento, "metodo", None),
             "parcelas": getattr(pagamento, "parcelas", None),

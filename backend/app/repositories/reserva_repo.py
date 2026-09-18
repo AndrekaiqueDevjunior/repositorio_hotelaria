@@ -9,6 +9,10 @@ from prisma import Client
 from prisma.errors import UniqueViolationError
 from app.services.notification_service import NotificationService
 from app.services.whatsapp_service import get_whatsapp_service
+from app.utils.payment_status import (
+    normalizar_status_pagamento_publico,
+    pagamento_mais_recente,
+)
 import secrets
 import re
 
@@ -85,6 +89,7 @@ class ReservaRepository:
         return {
             "cliente": True,
             "pagamentos": True,
+            "voucher": True,
             "hospedagem": True,
             "cupomUso": {"include": {"cupom": True}},
         }
@@ -1071,17 +1076,32 @@ class ReservaRepository:
         valor_total_com_desconto = valor_total
 
         # Serializar pagamentos para validaÃ§Ã£o no frontend
+        pagamentos_model = getattr(reserva, 'pagamentos', None) or []
         pagamentos = []
-        if hasattr(reserva, 'pagamentos') and reserva.pagamentos:
+        if pagamentos_model:
             pagamentos = [
                 {
                     "id": p.id,
                     "status": p.statusPagamento,
+                    "payment_status": normalizar_status_pagamento_publico(p.statusPagamento),
                     "valor": float(p.valor) if p.valor else 0.0,
                     "metodo": p.metodo,
                     "created_at": p.createdAt.isoformat() if p.createdAt else None
-                } for p in reserva.pagamentos
+                } for p in pagamentos_model
             ]
+
+        pagamento_atual = pagamento_mais_recente(pagamentos_model)
+        status_pagamento_raw = getattr(pagamento_atual, 'statusPagamento', None) or "PENDENTE"
+        status_pagamento = normalizar_status_pagamento_publico(status_pagamento_raw)
+
+        voucher_model = getattr(reserva, 'voucher', None)
+        voucher = None
+        if voucher_model:
+            voucher = {
+                "id": getattr(voucher_model, 'id', None),
+                "codigo": getattr(voucher_model, 'codigo', None),
+                "status": getattr(voucher_model, 'status', None),
+            }
         
         # Serializar hospedagem para validaÃ§Ã£o de checkout
         hospedagem = None
@@ -1156,7 +1176,12 @@ class ReservaRepository:
             "valor_desconto": valor_desconto,
             "valor_total_com_desconto": valor_total_com_desconto,
             "status": status_reserva,
+            "reservation_status": status_reserva,
+            "payment_status": status_pagamento,
+            "payment_status_raw": status_pagamento_raw,
             "pagamentos": pagamentos,
+            "voucher": voucher,
+            "voucher_available": voucher is not None,
             "hospedagem": hospedagem,
             "cupom_uso": cupom_uso,
             "created_at": reserva.createdAt.isoformat() if reserva.createdAt else None,
