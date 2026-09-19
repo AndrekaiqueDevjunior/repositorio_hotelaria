@@ -8,7 +8,7 @@ from app.schemas.status_enums import StatusReserva
 
 class ReservaCreate(BaseModel):
     cliente_id: int
-    quarto_numero: str
+    quarto_numero: Optional[str] = None
     tipo_suite: TipoSuite
     checkin_previsto: datetime
     checkout_previsto: datetime
@@ -44,7 +44,7 @@ class ReservaResponse(BaseModel):
     codigo_reserva: str
     cliente_id: int
     cliente_nome: Optional[str]
-    quarto_numero: str
+    quarto_numero: Optional[str] = None
     tipo_suite: TipoSuite
     status: str
     reservation_status: Optional[str] = None

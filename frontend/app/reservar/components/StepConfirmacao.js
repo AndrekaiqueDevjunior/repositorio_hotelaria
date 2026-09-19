@@ -70,7 +70,7 @@ export default function StepConfirmacao({ reservaConfirmada, onNovaReserva }) {
           <dd>
             {/* nome de vitrine, não o código do sistema ("LUXO") */}
             {getSuiteDescription(reserva.tipo_suite).titulo}
-            <small>Quarto {reserva.quarto}</small>
+            <small>Quarto definido pela recepção</small>
           </dd>
         </div>
 

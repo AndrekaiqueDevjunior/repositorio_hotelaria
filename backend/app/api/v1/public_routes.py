@@ -37,7 +37,7 @@ class ReservaPublicaCreate(BaseModel):
     documento: str
     email: EmailStr
     telefone: str
-    quarto_numero: str
+    quarto_numero: Optional[str] = None
     tipo_suite: str
     data_checkin: str
     data_checkout: str
@@ -651,17 +651,6 @@ async def criar_reserva_publica(
         checkin_dt = to_utc(checkin_local)
         checkout_dt = to_utc(checkout_local)
 
-        from app.services.disponibilidade_service import DisponibilidadeService
-        disponibilidade_service = DisponibilidadeService(db)
-        disponibilidade = await disponibilidade_service.verificar_disponibilidade(
-            reserva_data.quarto_numero,
-            checkin_dt,
-            checkout_dt,
-            None
-        )
-        if not disponibilidade.get("disponivel"):
-            raise HTTPException(status_code=400, detail="Quarto não disponível para o período solicitado")
-
         valor_diaria = await _obter_tarifa_diaria(db, reserva_data.tipo_suite, checkin_date.date())
 
         num_diarias = (checkout_date.date() - checkin_date.date()).days
@@ -687,7 +676,9 @@ async def criar_reserva_publica(
             if not validacao_cupom.get("valido"):
                 raise HTTPException(status_code=400, detail=validacao_cupom.get("mensagem") or "Cupom inválido")
 
-        async with redis_lock(f"quarto:{reserva_data.quarto_numero}", timeout=10):
+        # O lock por categoria protege a ultima vaga mesmo quando nenhum
+        # quarto fisico foi designado durante a reserva.
+        async with redis_lock(f"suite:{tipo_suite.value}", timeout=10):
             reserva_criada = await reserva_repo.create(
                 ReservaCreate(
                     cliente_id=cliente["id"],

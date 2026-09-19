@@ -389,7 +389,6 @@ export default function Reservar() {
         documento: cpfLimpo,
         email: guest.hospedeData.email,
         telefone: telefoneLimpo,
-        quarto_numero: reservation.quartoSelecionado.numero,
         tipo_suite: reservation.quartoSelecionado.tipo,
         data_checkin: reservation.searchData.data_checkin,
         data_checkout: reservation.searchData.data_checkout,
@@ -488,9 +487,9 @@ export default function Reservar() {
             searchData={reservation.searchData}
             tiposDisponiveis={reservation.tiposDisponiveis}
             numDiarias={reservation.numDiarias}
-            onSelecionarQuarto={(tipo, quarto) => {
+            onSelecionarQuarto={(tipo) => {
               coupon.reset()
-              reservation.selecionarQuarto(tipo, quarto)
+              reservation.selecionarQuarto(tipo)
               setStep(3)
             }}
             onVoltar={() => setStep(1)}

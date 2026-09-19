@@ -39,6 +39,7 @@ class DisponibilidadeService:
         checkout: datetime,
         quarto_numero: str = None,
         quartos_numeros: List[str] = None,
+        tipo_suite: str = None,
         reserva_id_excluir: int = None,
     ) -> Dict[str, Any]:
         where_clause: Dict[str, Any] = {
@@ -51,6 +52,9 @@ class DisponibilidadeService:
             where_clause["quartoNumero"] = quarto_numero
         elif quartos_numeros is not None:
             where_clause["quartoNumero"] = {"in": quartos_numeros}
+
+        if tipo_suite is not None:
+            where_clause["tipoSuite"] = tipo_suite
 
         if reserva_id_excluir:
             where_clause["id"] = {"not": reserva_id_excluir}
@@ -125,11 +129,61 @@ class DisponibilidadeService:
             "conflitos": [],
         }
 
+    async def verificar_disponibilidade_tipo(
+        self,
+        tipo_suite: str,
+        checkin: datetime,
+        checkout: datetime,
+        reserva_id_excluir: int = None,
+    ) -> Dict[str, Any]:
+        """Valida a capacidade da categoria sem designar um quarto fisico."""
+        if checkout <= checkin:
+            return {
+                "disponivel": False,
+                "motivo": "Data de check-out deve ser posterior ao check-in",
+                "quantidade_disponivel": 0,
+            }
+
+        quartos = await self.db.quarto.find_many(
+            where={
+                "tipoSuite": tipo_suite,
+                "status": {"notIn": STATUS_QUARTO_BLOQUEIA_DISPONIBILIDADE},
+            }
+        )
+        capacidade = len(quartos)
+        if capacidade == 0:
+            return {
+                "disponivel": False,
+                "motivo": f"Nenhum quarto {tipo_suite} ativo",
+                "quantidade_disponivel": 0,
+            }
+
+        reservas_conflitantes = await self.db.reserva.find_many(
+            where=self._where_conflito(
+                checkin=checkin,
+                checkout=checkout,
+                tipo_suite=tipo_suite,
+                reserva_id_excluir=reserva_id_excluir,
+            )
+        )
+        quantidade_disponivel = max(capacidade - len(reservas_conflitantes), 0)
+
+        return {
+            "disponivel": quantidade_disponivel > 0,
+            "motivo": (
+                "Categoria disponivel"
+                if quantidade_disponivel > 0
+                else f"Nenhum quarto {tipo_suite} disponivel no periodo"
+            ),
+            "quantidade_disponivel": quantidade_disponivel,
+        }
+
     async def listar_quartos_disponiveis(
         self,
         checkin: datetime,
         checkout: datetime,
         tipo_suite: str = None,
+        reserva_id_excluir: int = None,
     ) -> List[Dict[str, Any]]:
         if checkout <= checkin:
             return []
@@ -145,17 +199,25 @@ class DisponibilidadeService:
         if not quartos:
             return []
 
-        numeros_quartos = [q.numero for q in quartos]
         reservas_conflitantes = await self.db.reserva.find_many(
             where=self._where_conflito(
                 checkin=checkin,
                 checkout=checkout,
-                quartos_numeros=numeros_quartos,
+                tipo_suite=tipo_suite,
+                reserva_id_excluir=reserva_id_excluir,
             )
         )
-        quartos_ocupados = {r.quartoNumero for r in reservas_conflitantes}
+        quartos_ocupados = {
+            r.quartoNumero for r in reservas_conflitantes if getattr(r, "quartoNumero", None)
+        }
+        sem_quarto_por_tipo: Dict[str, int] = {}
+        for reserva in reservas_conflitantes:
+            if getattr(reserva, "quartoNumero", None):
+                continue
+            reserva_tipo = getattr(reserva, "tipoSuite", None)
+            sem_quarto_por_tipo[reserva_tipo] = sem_quarto_por_tipo.get(reserva_tipo, 0) + 1
 
-        return [
+        disponiveis = [
             {
                 "numero": quarto.numero,
                 "tipo_suite": quarto.tipoSuite,
@@ -165,6 +227,20 @@ class DisponibilidadeService:
             for quarto in quartos
             if quarto.numero not in quartos_ocupados
         ]
+
+        # Cada reserva ainda sem quarto consome uma vaga da categoria. Ocultamos
+        # uma unidade fisica livre apenas para que a quantidade exposta continue
+        # refletindo a capacidade real, sem fazer uma designacao automatica.
+        resultado = []
+        reservas_a_compensar = dict(sem_quarto_por_tipo)
+        for quarto in sorted(disponiveis, key=lambda item: str(item["numero"])):
+            tipo = quarto["tipo_suite"]
+            if reservas_a_compensar.get(tipo, 0) > 0:
+                reservas_a_compensar[tipo] -= 1
+                continue
+            resultado.append(quarto)
+
+        return resultado
 
     async def verificar_multiplos_quartos(
         self,

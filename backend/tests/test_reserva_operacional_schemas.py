@@ -35,6 +35,19 @@ def test_reserva_create_aceita_campos_operacionais_do_voucher():
     assert reserva.email_contato == "hospede@example.com"
 
 
+def test_reserva_create_aceita_quarto_a_definir():
+    checkin = datetime.now()
+    reserva = ReservaCreate(
+        cliente_id=1,
+        tipo_suite="LUXO",
+        checkin_previsto=checkin,
+        checkout_previsto=checkin + timedelta(days=2),
+        num_diarias=2,
+    )
+
+    assert reserva.quarto_numero is None
+
+
 def test_pagamento_create_normaliza_metodos_operacionais():
     assert PagamentoCreate(reserva_id=1, valor=10, metodo="DINHEIRO").metodo == "na_chegada"
     assert PagamentoCreate(reserva_id=1, valor=10, metodo="CREDITO").metodo == "credit_card"

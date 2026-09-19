@@ -35,6 +35,7 @@ class _FakeReservaTable:
                 codigoReserva="RCF-1",
                 clienteNome="Cliente",
                 quartoNumero="101",
+                tipoSuite="LUXO",
                 statusReserva="CONFIRMADA",
                 checkinPrevisto=datetime(2026, 6, 10, 12),
                 checkoutPrevisto=datetime(2026, 6, 12, 11),
@@ -56,12 +57,20 @@ class _FakeReservaTable:
             allowed_status = set(status_filter)
             rows = [r for r in rows if r.statusReserva in allowed_status]
 
+        tipo_suite = (where or {}).get("tipoSuite")
+        if tipo_suite:
+            rows = [r for r in rows if r.tipoSuite == tipo_suite]
+
         checkin_lt = ((where or {}).get("checkinPrevisto") or {}).get("lt")
         checkout_gt = ((where or {}).get("checkoutPrevisto") or {}).get("gt")
         if checkin_lt is not None:
             rows = [r for r in rows if r.checkinPrevisto < checkin_lt]
         if checkout_gt is not None:
             rows = [r for r in rows if r.checkoutPrevisto > checkout_gt]
+
+        id_not = ((where or {}).get("id") or {}).get("not")
+        if id_not is not None:
+            rows = [r for r in rows if r.id != id_not]
 
         return rows
 
@@ -110,3 +119,52 @@ async def test_listar_quartos_disponiveis_remove_apenas_quartos_com_conflito():
     )
 
     assert [q["numero"] for q in result] == ["102"]
+
+
+@pytest.mark.asyncio
+async def test_reserva_sem_quarto_consumir_vaga_da_categoria():
+    db = _FakeDb()
+    db.reserva.rows.append(
+        SimpleNamespace(
+            id=2,
+            codigoReserva="RCF-2",
+            clienteNome="Outro cliente",
+            quartoNumero=None,
+            tipoSuite="LUXO",
+            statusReserva="PENDENTE",
+            checkinPrevisto=datetime(2026, 6, 10, 12),
+            checkoutPrevisto=datetime(2026, 6, 12, 11),
+        )
+    )
+
+    service = DisponibilidadeService(db)
+    result = await service.listar_quartos_disponiveis(
+        datetime(2026, 6, 11, 12),
+        datetime(2026, 6, 13, 11),
+        "LUXO",
+    )
+
+    assert result == []
+
+    result_para_designacao = await service.listar_quartos_disponiveis(
+        datetime(2026, 6, 11, 12),
+        datetime(2026, 6, 13, 11),
+        "LUXO",
+        reserva_id_excluir=2,
+    )
+
+    assert [q["numero"] for q in result_para_designacao] == ["102"]
+
+
+@pytest.mark.asyncio
+async def test_disponibilidade_tipo_sem_designar_quarto():
+    service = DisponibilidadeService(_FakeDb())
+
+    result = await service.verificar_disponibilidade_tipo(
+        "LUXO",
+        datetime(2026, 6, 11, 12),
+        datetime(2026, 6, 13, 11),
+    )
+
+    assert result["disponivel"] is True
+    assert result["quantidade_disponivel"] == 1

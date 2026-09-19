@@ -13,7 +13,7 @@ from app.middleware.auth_middleware import get_current_active_user, require_admi
 from app.core.security import User
 from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from app.core.cache import redis_lock
-from app.core.validators import ReservaValidator, QuartoValidator
+from app.core.validators import ReservaValidator
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
 from app.services.reserva_publica_confirmation_service import ReservaPublicaConfirmationService
@@ -191,20 +191,15 @@ async def criar_reserva(
             )
     
     # CAMADA 3: Lock para evitar race condition
-    lock_key = f"quarto:{reserva.quarto_numero}"
+    # Reservas com ou sem quarto designado concorrem pela capacidade da suite.
+    tipo_suite_lock = getattr(reserva.tipo_suite, "value", reserva.tipo_suite)
+    lock_key = f"suite:{tipo_suite_lock}"
     
     try:
         async with redis_lock(lock_key, timeout=10):
-            # CAMADA 4: Validar disponibilidade do quarto
+            # O repositorio valida a capacidade da categoria e, quando
+            # informado, a disponibilidade do quarto especifico.
             db = get_db()
-            await QuartoValidator.validar_disponibilidade(
-                reserva.quarto_numero,
-                checkin_date,
-                checkout_date,
-                db
-            )
-            
-            # CAMADA 5: Criar reserva
             nova_reserva = await service.create(
                 reserva,
                 criado_por_funcionario_id=current_user.id,
@@ -251,6 +246,32 @@ async def criar_reserva(
             status_code=409,
             detail="Outro processo está criando reserva para este quarto. Tente novamente."
         )
+
+@router.get("/{reserva_id}/quartos-disponiveis")
+async def listar_quartos_para_designacao(
+    reserva_id: int,
+    service: ReservaService = Depends(get_reserva_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Lista quartos livres para designar a uma reserva ainda sem quarto."""
+    reserva = await service.get_by_id(reserva_id)
+    from app.services.disponibilidade_service import DisponibilidadeService
+
+    checkin = reserva["checkin_previsto"]
+    checkout = reserva["checkout_previsto"]
+    if isinstance(checkin, str):
+        checkin = datetime.fromisoformat(checkin)
+    if isinstance(checkout, str):
+        checkout = datetime.fromisoformat(checkout)
+
+    quartos = await DisponibilidadeService(get_db()).listar_quartos_disponiveis(
+        checkin,
+        checkout,
+        reserva["tipo_suite"],
+        reserva_id_excluir=reserva_id,
+    )
+    return {"success": True, "quartos": quartos}
+
 
 @router.get("/{reserva_id}", response_model=ReservaResponse)
 async def obter_reserva(

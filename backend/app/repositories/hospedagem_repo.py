@@ -105,7 +105,10 @@ class HospedagemRepository:
         
         if not pode:
             raise ValueError(motivo)
-        
+
+        if not (getattr(reserva, "quartoNumero", None) or "").strip():
+            raise ValueError("Designe um quarto para a reserva antes de realizar o check-in")
+
         # Atualizar hospedagem
         hospedagem_atualizada = await self.db.hospedagem.update(
             where={"reservaId": reserva_id},

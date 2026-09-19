@@ -265,22 +265,38 @@ class ReservaRepository:
             reserva.checkin_previsto,
         )
 
-        quarto = await self.db.quarto.find_unique(where={"numero": reserva.quarto_numero})
-        if not quarto:
-            raise ValueError("Quarto nÃ£o encontrado")
-        
-        if quarto.status in ("BLOQUEADO", "MANUTENCAO"):
-            raise ValueError(f"âŒ Quarto {reserva.quarto_numero} estÃ¡ {quarto.status.lower()} e nÃ£o pode ser reservado")
-        
-        # VALIDAÃ‡ÃƒO CRÃTICA: Verificar disponibilidade usando DisponibilidadeService
+        quarto_numero = self._normalizar_valor_texto(reserva.quarto_numero)
+        quarto = None
+
+        # VALIDACAO CRITICA: a reserva pode nascer apenas com a categoria. O
+        # quarto fisico e opcional e pode ser designado pela recepcao depois.
         from app.services.disponibilidade_service import DisponibilidadeService
         disponibilidade_service = DisponibilidadeService(self.db)
-        
-        resultado = await disponibilidade_service.verificar_disponibilidade(
-            reserva.quarto_numero,
+
+        resultado = await disponibilidade_service.verificar_disponibilidade_tipo(
+            reserva.tipo_suite,
             reserva.checkin_previsto,
-            reserva.checkout_previsto
+            reserva.checkout_previsto,
         )
+
+        if resultado["disponivel"] and quarto_numero:
+            quarto = await self.db.quarto.find_unique(where={"numero": quarto_numero})
+            if not quarto:
+                raise ValueError("Quarto nÃ£o encontrado")
+
+            if quarto.tipoSuite != reserva.tipo_suite:
+                raise ValueError("O quarto selecionado nÃ£o pertence Ã  categoria informada")
+
+            if quarto.status in ("BLOQUEADO", "MANUTENCAO", "INATIVO"):
+                raise ValueError(
+                    f"âŒ Quarto {quarto_numero} estÃ¡ {quarto.status.lower()} e nÃ£o pode ser reservado"
+                )
+
+            resultado = await disponibilidade_service.verificar_disponibilidade(
+                quarto_numero,
+                reserva.checkin_previsto,
+                reserva.checkout_previsto,
+            )
         
         if not resultado["disponivel"]:
             # Sugerir quartos alternativos
@@ -291,19 +307,19 @@ class ReservaRepository:
                 limite=3
             )
             
-            msg_erro = f"âŒ QUARTO INDISPONÃVEL! {resultado['motivo']}"
+            msg_erro = f"âŒ ACOMODAÃ‡ÃƒO INDISPONÃVEL! {resultado['motivo']}"
             
-            if resultado["conflitos"]:
+            if resultado.get("conflitos"):
                 msg_erro += f"\n\nðŸ“‹ Conflitos encontrados:"
                 for conflito in resultado["conflitos"]:
                     msg_erro += f"\n  â€¢ Reserva {conflito['codigo']} - {conflito['cliente']}"
                     msg_erro += f"\n    Check-in: {conflito['checkin'][:10]} | Check-out: {conflito['checkout'][:10]}"
             
-            if alternativas:
+            if quarto_numero and alternativas:
                 msg_erro += f"\n\nðŸ’¡ Quartos {reserva.tipo_suite} disponÃ­veis no perÃ­odo:"
                 for alt in alternativas:
                     msg_erro += f"\n  â€¢ Quarto {alt['numero']}"
-            else:
+            elif quarto_numero:
                 msg_erro += f"\n\nâš ï¸ Nenhum quarto {reserva.tipo_suite} disponÃ­vel neste perÃ­odo"
             
             raise ValueError(msg_erro)
@@ -322,8 +338,8 @@ class ReservaRepository:
                     data={
                         "codigoReserva": codigo_reserva,
                         "clienteId": reserva.cliente_id,
-                        "quartoId": quarto.id,
-                        "quartoNumero": reserva.quarto_numero,
+                        "quartoId": quarto.id if quarto else None,
+                        "quartoNumero": quarto_numero,
                         "tipoSuite": reserva.tipo_suite,
                         "clienteNome": cliente.nomeCompleto,
                         "checkinPrevisto": reserva.checkin_previsto,
@@ -351,7 +367,7 @@ class ReservaRepository:
                 # deixa um vencer. Sem este tratamento o perdedor recebia 500.
                 if "reservas_quarto_periodo_no_overlap" in str(exc):
                     raise ValueError(
-                        f"Quarto {reserva.quarto_numero} acabou de ser reservado por outra "
+                        f"Quarto {quarto_numero} acabou de ser reservado por outra "
                         f"pessoa para este periodo. Atualize a disponibilidade e escolha "
                         f"outro quarto ou periodo."
                     )
@@ -416,6 +432,9 @@ class ReservaRepository:
         )
         if not reserva:
             raise ValueError("Reserva nÃ£o encontrada")
+
+        if not (getattr(reserva, "quartoNumero", None) or "").strip():
+            raise ValueError("Designe um quarto para a reserva antes de realizar o check-in")
         
         # P1-001: VALIDAÃ‡ÃƒO 1 - Status deve ser CONFIRMADA (nÃ£o mais PENDENTE)
         if reserva.statusReserva != "CONFIRMADA":
@@ -977,15 +996,26 @@ class ReservaRepository:
         update_data = {}
         
         if "quarto_numero" in data:
-            # Verificar se o novo quarto existe
-            quarto = await self.db.quarto.find_unique(where={"numero": data["quarto_numero"]})
-            if not quarto:
-                raise ValueError("Quarto nÃ£o encontrado")
-            update_data["quartoNumero"] = data["quarto_numero"]
-            update_data["quartoId"] = quarto.id
+            novo_numero = self._normalizar_valor_texto(data["quarto_numero"])
+            if novo_numero:
+                quarto = await self.db.quarto.find_unique(where={"numero": novo_numero})
+                if not quarto:
+                    raise ValueError("Quarto nÃ£o encontrado")
+                tipo_efetivo = data.get("tipo_suite", reserva.tipoSuite)
+                if quarto.tipoSuite != tipo_efetivo:
+                    raise ValueError("O quarto selecionado nÃ£o pertence Ã  categoria informada")
+                update_data["quartoNumero"] = novo_numero
+                update_data["quartoId"] = quarto.id
+            else:
+                update_data["quartoNumero"] = None
+                update_data["quartoId"] = None
         
         if "tipo_suite" in data:
             update_data["tipoSuite"] = data["tipo_suite"]
+            if "quarto_numero" not in data and reserva.quartoNumero:
+                quarto_atual = await self.db.quarto.find_unique(where={"numero": reserva.quartoNumero})
+                if quarto_atual and quarto_atual.tipoSuite != data["tipo_suite"]:
+                    raise ValueError("Designe um quarto da nova categoria ou deixe o quarto a definir")
         
         if "checkin_previsto" in data:
             update_data["checkinPrevisto"] = data["checkin_previsto"]
@@ -1029,14 +1059,23 @@ class ReservaRepository:
         if novo_checkin and novo_checkout and novo_checkout <= novo_checkin:
             raise ValueError("Data de check-out deve ser posterior ao check-in")
 
-        if any(campo in update_data for campo in ("quartoNumero", "checkinPrevisto", "checkoutPrevisto")):
+        if any(campo in update_data for campo in ("quartoNumero", "tipoSuite", "checkinPrevisto", "checkoutPrevisto")):
             from app.services.disponibilidade_service import DisponibilidadeService
-            disponibilidade = await DisponibilidadeService(self.db).verificar_disponibilidade(
-                novo_quarto_numero,
-                novo_checkin,
-                novo_checkout,
-                reserva_id_excluir=reserva_id,
-            )
+            disponibilidade_service = DisponibilidadeService(self.db)
+            if novo_quarto_numero:
+                disponibilidade = await disponibilidade_service.verificar_disponibilidade(
+                    novo_quarto_numero,
+                    novo_checkin,
+                    novo_checkout,
+                    reserva_id_excluir=reserva_id,
+                )
+            else:
+                disponibilidade = await disponibilidade_service.verificar_disponibilidade_tipo(
+                    update_data.get("tipoSuite", reserva.tipoSuite),
+                    novo_checkin,
+                    novo_checkout,
+                    reserva_id_excluir=reserva_id,
+                )
             if not disponibilidade.get("disponivel"):
                 raise ValueError(disponibilidade.get("motivo") or "Quarto nÃ£o disponÃ­vel para o perÃ­odo")
         

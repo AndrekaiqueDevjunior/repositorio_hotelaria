@@ -13,7 +13,7 @@ from app.schemas.status_enums import StatusReserva
 class ReservaCreate(BaseModel):
     """Schema para criação de reserva com validações completas"""
     cliente_id: int = Field(..., gt=0, description="ID do cliente")
-    quarto_numero: str = Field(..., min_length=1, max_length=10, description="Número do quarto")
+    quarto_numero: Optional[str] = Field(None, min_length=1, max_length=10, description="Número do quarto, designado opcionalmente pela recepção")
     tipo_suite: TipoSuite = Field(..., description="Tipo de suíte")
     checkin_previsto: datetime = Field(..., description="Data/hora prevista para check-in")
     checkout_previsto: datetime = Field(..., description="Data/hora prevista para check-out")
@@ -97,7 +97,7 @@ class ReservaResponse(BaseModel):
     cliente_nome: Optional[str]
     cliente_email: Optional[str]
     cliente_telefone: Optional[str]
-    quarto_numero: str
+    quarto_numero: Optional[str]
     tipo_suite: TipoSuite
     andar: Optional[str]
     status: StatusReserva
@@ -141,7 +141,7 @@ class ReservaListResponse(BaseModel):
     id: int
     codigo_reserva: str
     cliente_nome: Optional[str]
-    quarto_numero: str
+    quarto_numero: Optional[str]
     tipo_suite: TipoSuite
     status: StatusReserva
     checkin_previsto: Optional[datetime]

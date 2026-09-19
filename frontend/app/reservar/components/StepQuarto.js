@@ -57,8 +57,6 @@ export default function StepQuarto({
           {tiposDisponiveis.map((tipo) => {
             const info = getSuiteDescription(tipo.tipo)
             const imagem = getSuiteImage(tipo.tipo)
-            const quartos = Array.isArray(tipo.quartos) ? tipo.quartos : []
-
             return (
               <li className="jr-suite" key={tipo.tipo}>
                 <figure className="jr-suite__foto">
@@ -96,13 +94,8 @@ export default function StepQuarto({
                     </p>
 
                     <div className="jr-suite__escolha">
-                      {/*
-                       * O hóspede escolhe a categoria, não o número do quarto:
-                       * são 52 suítes no hotel, listar cada uma seria uma
-                       * parede de botões. A recepção designa o quarto na
-                       * chegada — aqui só reservamos a primeira livre da
-                       * categoria para manter o contrato do backend.
-                       */}
+                      {/* O hóspede reserva a categoria. A recepção designa o
+                          quarto físico posteriormente. */}
                       <span className="jr-suite__disponibilidade">
                         {tipo.quantidade_disponivel === 1
                           ? 'Última disponível'
@@ -112,8 +105,8 @@ export default function StepQuarto({
                       <button
                         type="button"
                         className="jr-btn"
-                        disabled={quartos.length === 0}
-                        onClick={() => onSelecionarQuarto(tipo, quartos[0])}
+                        disabled={tipo.quantidade_disponivel === 0}
+                        onClick={() => onSelecionarQuarto(tipo)}
                       >
                         <KeyRound size={16} strokeWidth={1.9} aria-hidden="true" />
                         <span>Escolher esta suíte</span>
