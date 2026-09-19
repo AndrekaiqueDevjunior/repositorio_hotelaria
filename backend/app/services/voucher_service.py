@@ -9,9 +9,9 @@ from fastapi import HTTPException
 from app.core.database import get_db
 
 
-async def gerar_voucher(reserva_id: int, emitido_por: int = None) -> Dict[str, Any]:
+async def gerar_voucher(reserva_id: int, emitido_por: int = None, db=None) -> Dict[str, Any]:
     """
-    Gerar voucher para reserva confirmada
+    Gerar voucher de identificacao da reserva, inclusive enquanto pendente.
     
     Args:
         reserva_id: ID da reserva
@@ -20,7 +20,7 @@ async def gerar_voucher(reserva_id: int, emitido_por: int = None) -> Dict[str, A
     Returns:
         Voucher criado
     """
-    db = get_db()
+    db = db or get_db()
     
     # Verificar se reserva existe
     reserva = await db.reserva.find_unique(

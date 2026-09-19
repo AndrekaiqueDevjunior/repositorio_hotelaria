@@ -1,5 +1,5 @@
 ﻿'use client'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { api } from '../../../lib/api'
 import { useAuth } from '../../../contexts/AuthContext'
 import { formatErrorMessage } from '../../../lib/errorHandler'
@@ -37,6 +37,7 @@ export default function Reservas() {
   const [quartos, setQuartos] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
+  const reservaRequestKeyRef = useRef(null)
   const [totalReservas, setTotalReservas] = useState(0)
 
   const STATUS_FINALIZADAS = ['CHECKED_OUT', 'CHECKOUT_REALIZADO', 'CANCELADO', 'CANCELADA']
@@ -67,6 +68,7 @@ export default function Reservas() {
   const [showPagamentoModal, setShowPagamentoModal] = useState(false)
   const [showModalEscolhaPagamento, setShowModalEscolhaPagamento] = useState(false)
   const [showCheckinModal, setShowCheckinModal] = useState(false)
+  const [showDesignarQuartoModal, setShowDesignarQuartoModal] = useState(false)
   const [showCheckoutModal, setShowCheckoutModal] = useState(false)
   const [showQuartoModal, setShowQuartoModal] = useState(false)
   const [showHistoricoModal, setShowHistoricoModal] = useState(false)
@@ -75,6 +77,10 @@ export default function Reservas() {
   const [loadingHistorico, setLoadingHistorico] = useState(false)
   const [editingQuarto, setEditingQuarto] = useState(null)
   const [selectedReserva, setSelectedReserva] = useState(null)
+  const [reservaParaDesignar, setReservaParaDesignar] = useState(null)
+  const [quartoParaDesignar, setQuartoParaDesignar] = useState('')
+  const [quartosParaDesignar, setQuartosParaDesignar] = useState([])
+  const [designacaoLoading, setDesignacaoLoading] = useState(false)
   const [validacaoCodigo, setValidacaoCodigo] = useState(null)
   const [codigoValidar, setCodigoValidar] = useState('')
   
@@ -387,8 +393,8 @@ export default function Reservas() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.cliente_id || !form.quarto_numero || !form.data_entrada || !form.data_saida) {
-      toast.warning('Preencha todos os campos')
+    if (!form.cliente_id || !form.data_entrada || !form.data_saida) {
+      toast.warning('Preencha cliente e período da reserva')
       return
     }
 
@@ -398,7 +404,7 @@ export default function Reservas() {
     
     const payload = {
       cliente_id: Number(form.cliente_id),
-      quarto_numero: form.quarto_numero,
+      quarto_numero: form.quarto_numero || null,
       tipo_suite: form.tipo_suite,
       checkin_previsto: checkinPrevisto.toISOString(),
       checkout_previsto: checkoutPrevisto.toISOString(),
@@ -407,12 +413,21 @@ export default function Reservas() {
       observacoes: form.observacoes.trim() || null
     }
 
+    if (!reservaRequestKeyRef.current) {
+      reservaRequestKeyRef.current = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `reserva-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    }
+
     try {
-      await api.post('/reservas', payload)
+      await api.post('/reservas', payload, {
+        headers: { 'Idempotency-Key': reservaRequestKeyRef.current }
+      })
       toast.success('Reserva criada com sucesso!')
       await loadReservas()
       setShowForm(false)
       setForm({ cliente_id: '', quarto_numero: '', tipo_suite: 'LUXO', data_entrada: '', data_saida: '', valor_diaria: '', num_diarias: 1, valor_total: '', observacoes: '' })
+      reservaRequestKeyRef.current = null
     } catch (error) {
       const msg = formatErrorMessage(error)
       toast.error(`Erro: ${msg}`)
@@ -544,10 +559,55 @@ export default function Reservas() {
     }
   }
 
+  const abrirDesignacaoQuarto = async (reserva) => {
+    setReservaParaDesignar(reserva)
+    setQuartoParaDesignar('')
+    setQuartosParaDesignar([])
+    setShowDesignarQuartoModal(true)
+    setDesignacaoLoading(true)
+
+    try {
+      const res = await api.get(`/reservas/${reserva.id}/quartos-disponiveis`)
+      setQuartosParaDesignar(res.data?.quartos || [])
+    } catch (error) {
+      toast.error(formatErrorMessage(error) || 'Erro ao buscar quartos disponíveis')
+    } finally {
+      setDesignacaoLoading(false)
+    }
+  }
+
+  const designarQuarto = async () => {
+    if (!reservaParaDesignar || !quartoParaDesignar) {
+      toast.warning('Selecione um quarto disponível')
+      return
+    }
+
+    setDesignacaoLoading(true)
+    try {
+      await api.patch(`/reservas/${reservaParaDesignar.id}`, {
+        quarto_numero: quartoParaDesignar
+      })
+      toast.success('Quarto designado com sucesso!')
+      setShowDesignarQuartoModal(false)
+      setReservaParaDesignar(null)
+      await loadReservas()
+    } catch (error) {
+      toast.error(formatErrorMessage(error))
+    } finally {
+      setDesignacaoLoading(false)
+    }
+  }
+
   // Funções do Check-in robusto
   const validarCheckin = async (reserva) => {
     try {
       setLoading(true)
+
+      if (!reserva.quarto_numero) {
+        toast.info('Designe um quarto antes de realizar o check-in')
+        await abrirDesignacaoQuarto(reserva)
+        return
+      }
       
       // VALIDAÇÃO CRÍTICA: Check-in só pode acontecer se status == CHECKIN_LIBERADO
       if (reserva.status !== 'CHECKIN_LIBERADO' && reserva.status !== 'CONFIRMADA') {
@@ -758,15 +818,22 @@ export default function Reservas() {
     return !temPagamentoAprovado
   }
 
-  const temPagamentoEmAndamento = (reserva) => {
-    // Verificar se a reserva tem pagamentos e se algum está em andamento
-    if (!reserva.pagamentos || reserva.pagamentos.length === 0) {
-      return false
-    }
-    
-    return reserva.pagamentos.some(pg => 
-      ['PENDENTE', 'PROCESSANDO', 'AGUARDANDO_PAGAMENTO'].includes(pg.status)
-    )
+  const getPaymentStatus = (reserva) => {
+    if (reserva?.payment_status) return String(reserva.payment_status).toLowerCase()
+
+    const pagamentos = reserva?.pagamentos || []
+    const pagamentoAtual = pagamentos.reduce((atual, pagamento) => {
+      if (!atual) return pagamento
+      return Number(pagamento.id || 0) > Number(atual.id || 0) ? pagamento : atual
+    }, null)
+    const raw = String(pagamentoAtual?.status || 'PENDENTE').toUpperCase()
+
+    if (['PROCESSANDO', 'AGUARDANDO_PAGAMENTO'].includes(raw)) return 'processing'
+    if (['PAGO', 'APROVADO', 'CONFIRMADO', 'CAPTURED', 'AUTHORIZED'].includes(raw)) return 'paid'
+    if (['FALHOU', 'RECUSADO', 'NEGADO', 'FAILED'].includes(raw)) return 'failed'
+    if (['CANCELADO', 'CANCELLED'].includes(raw)) return 'cancelled'
+    if (['ESTORNADO', 'REFUNDED'].includes(raw)) return 'refunded'
+    return 'pending'
   }
 
   const podeCancelar = (reserva) => {
@@ -1014,7 +1081,7 @@ export default function Reservas() {
             </div>
             {validacaoCodigo && (
               <div className="mt-3 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
-                ✅ <strong>Reserva Válida:</strong> {validacaoCodigo.cliente_nome} - Quarto {validacaoCodigo.quarto_numero} - Status: {validacaoCodigo.status}
+                ✅ <strong>Reserva Válida:</strong> {validacaoCodigo.cliente_nome} - Quarto {validacaoCodigo.quarto_numero || 'a definir'} - Status: {validacaoCodigo.status}
               </div>
             )}
           </div>
@@ -1153,7 +1220,7 @@ export default function Reservas() {
                         <tr key={r.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm font-mono text-gray-900">{r.codigo_reserva}</td>
                           <td className="px-4 py-3 text-sm text-gray-900">{r.cliente_nome}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{r.quarto_numero} - {r.tipo_suite || 'LUXO'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{r.quarto_numero || 'A definir'} - {r.tipo_suite || 'LUXO'}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">
                             {r.checkin_previsto ? new Date(r.checkin_previsto).toLocaleDateString('pt-BR') : '-'}
                           </td>
@@ -1174,15 +1241,24 @@ export default function Reservas() {
                               >
                                 👁️ Detalhes
                               </button>
-                              {podePagar(r) && !temPagamentoEmAndamento(r) && (
+                              {!r.quarto_numero && (
+                                <button
+                                  onClick={() => abrirDesignacaoQuarto(r)}
+                                  className="text-xs px-2 py-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
+                                >
+                                  🛏️ Definir quarto
+                                </button>
+                              )}
+                              {podePagar(r) && getPaymentStatus(r) === 'pending' && (
                                 <button
                                   onClick={() => handlePagar(r)}
                                   className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                  title="Pagamento ainda não realizado"
                                 >
-                                  💳 Pagar
+                                  💳 Pagamento pendente
                                 </button>
                               )}
-                              {podePagar(r) && temPagamentoEmAndamento(r) && (
+                              {getPaymentStatus(r) === 'processing' && (
                                 <button
                                   disabled
                                   className="text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded cursor-not-allowed"
@@ -1190,6 +1266,24 @@ export default function Reservas() {
                                 >
                                   ⏳ Pagamento em andamento
                                 </button>
+                              )}
+                              {getPaymentStatus(r) === 'paid' && (
+                                <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
+                                  ✅ Pagamento confirmado
+                                </span>
+                              )}
+                              {podePagar(r) && ['failed', 'cancelled'].includes(getPaymentStatus(r)) && (
+                                <button
+                                  onClick={() => handlePagar(r)}
+                                  className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                >
+                                  ❌ Pagamento não aprovado
+                                </button>
+                              )}
+                              {getPaymentStatus(r) === 'refunded' && (
+                                <span className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded">
+                                  ↩️ Pagamento estornado
+                                </span>
                               )}
                               {podeCheckin(r) && !jaFezCheckin(r) && (
                                 <button
@@ -1208,7 +1302,7 @@ export default function Reservas() {
                                   ✅ Check-in feito
                                 </button>
                               )}
-                              {['CONFIRMADA', 'HOSPEDADO', 'CHECKIN_REALIZADO', 'CHECKOUT_REALIZADO', 'CHECKED_OUT'].includes(r.status) && (
+                              {(r.voucher_available || r.voucher?.codigo || ['CONFIRMADA', 'HOSPEDADO', 'CHECKIN_REALIZADO', 'CHECKOUT_REALIZADO', 'CHECKED_OUT'].includes(r.status)) && (
                                 <button
                                   onClick={() => handleVoucher(r)}
                                   className="text-xs px-2 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200"
@@ -1308,7 +1402,7 @@ export default function Reservas() {
                         <tr key={r.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm font-mono text-gray-900">{r.codigo_reserva}</td>
                           <td className="px-4 py-3 text-sm text-gray-900">{r.cliente_nome}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{r.quarto_numero} - {r.tipo_suite || 'LUXO'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{r.quarto_numero || 'A definir'} - {r.tipo_suite || 'LUXO'}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">
                             {r.checkin_previsto ? new Date(r.checkin_previsto).toLocaleDateString('pt-BR') : '-'}
                           </td>
@@ -1449,8 +1543,8 @@ export default function Reservas() {
               <input type="date" value={form.data_entrada} onChange={(e) => updateFormField('data_entrada', e.target.value)} className="p-2 border rounded" required />
               <input type="date" value={form.data_saida} onChange={(e) => updateFormField('data_saida', e.target.value)} className="p-2 border rounded" required />
 
-              <select value={form.quarto_numero} onChange={(e) => updateFormField('quarto_numero', e.target.value)} className="p-2 border rounded" required>
-                <option value="">Selecione o Quarto</option>
+              <select value={form.quarto_numero} onChange={(e) => updateFormField('quarto_numero', e.target.value)} className="p-2 border rounded">
+                <option value="">Quarto a definir (opcional)</option>
                 {quartosDisponiveis.map(q => <option key={q.numero} value={q.numero}>{q.numero}</option>)}
               </select>
               <div className="p-2 border rounded bg-gray-50">
@@ -1490,6 +1584,66 @@ export default function Reservas() {
         </div>
       )}
 
+      {showDesignarQuartoModal && reservaParaDesignar && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Definir quarto</h2>
+              <button
+                type="button"
+                onClick={() => setShowDesignarQuartoModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Fechar"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              {reservaParaDesignar.codigo_reserva} · {reservaParaDesignar.cliente_nome} · {reservaParaDesignar.tipo_suite}
+            </p>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="quarto-designacao">
+              Quarto disponível
+            </label>
+            <select
+              id="quarto-designacao"
+              value={quartoParaDesignar}
+              onChange={(e) => setQuartoParaDesignar(e.target.value)}
+              disabled={designacaoLoading}
+              className="w-full p-2 border rounded mb-2"
+            >
+              <option value="">Selecione o quarto</option>
+              {quartosParaDesignar.map((quarto) => (
+                <option key={quarto.numero} value={quarto.numero}>{quarto.numero}</option>
+              ))}
+            </select>
+
+            {!designacaoLoading && quartosParaDesignar.length === 0 && (
+              <p className="text-sm text-red-600 mb-3">Nenhum quarto disponível nessa categoria e período.</p>
+            )}
+
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                onClick={designarQuarto}
+                disabled={designacaoLoading || !quartoParaDesignar}
+                className="flex-1 bg-real-blue text-white py-2 rounded hover:bg-blue-800 disabled:opacity-50"
+              >
+                {designacaoLoading ? 'Carregando...' : 'Confirmar quarto'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDesignarQuartoModal(false)}
+                className="px-5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Check-in Robusto */}
       {showCheckinModal && selectedReserva && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -1505,7 +1659,7 @@ export default function Reservas() {
               <h3 className="font-semibold text-blue-800 mb-2">Reserva #{selectedReserva.codigo_reserva}</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div><strong>Cliente:</strong> {selectedReserva.cliente_nome}</div>
-                <div><strong>Quarto:</strong> {selectedReserva.quarto_numero}</div>
+                <div><strong>Quarto:</strong> {selectedReserva.quarto_numero || 'A definir'}</div>
                 <div><strong>Entrada:</strong> {new Date(selectedReserva.checkin_previsto).toLocaleDateString('pt-BR')}</div>
                 <div><strong>Saída:</strong> {new Date(selectedReserva.checkout_previsto).toLocaleDateString('pt-BR')}</div>
               </div>

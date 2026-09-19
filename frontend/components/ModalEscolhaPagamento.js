@@ -436,7 +436,8 @@ export default function ModalEscolhaPagamento({ reserva, onClose, onSuccess }) {
     if (!sessionIdAtual) return
     try {
       await api.post('/pagamentos/tef/cancelar', {
-        session_id: sessionIdAtual
+        session_id: sessionIdAtual,
+        reserva_id: reserva?.id
       }, { timeout: TEF_REQUEST_TIMEOUT_MS })
     } catch (err) {
       console.error('Erro ao cancelar sessao TEF:', err)

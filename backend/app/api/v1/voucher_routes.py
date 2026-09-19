@@ -26,6 +26,10 @@ from app.services.voucher_service import (
 from app.middleware.auth_middleware import get_current_active_user
 from app.core.security import User
 from app.repositories.hospedagem_repo import HospedagemRepository
+from app.utils.payment_status import (
+    normalizar_status_pagamento_publico,
+    pagamento_mais_recente,
+)
 
 router = APIRouter(prefix="/vouchers", tags=["vouchers"])
 
@@ -82,6 +86,12 @@ def _forma_pagamento_reserva(reserva) -> str:
     return "-"
 
 
+def _status_pagamento_reserva(reserva) -> tuple[str, str]:
+    pagamento = pagamento_mais_recente(getattr(reserva, "pagamentos", None) or [])
+    status_raw = getattr(pagamento, "statusPagamento", None) or "PENDENTE"
+    return normalizar_status_pagamento_publico(status_raw), status_raw
+
+
 def _email_contato(reserva) -> Optional[str]:
     return getattr(reserva, "emailContato", None) or getattr(getattr(reserva, "cliente", None), "email", None)
 
@@ -119,6 +129,8 @@ async def obter_voucher_por_reserva(
             detail="Voucher não encontrado para esta reserva"
         )
     
+    payment_status, payment_status_raw = _status_pagamento_reserva(voucher.reserva)
+
     return {
         "success": True,
         "data": {
@@ -138,6 +150,8 @@ async def obter_voucher_por_reserva(
                 "checkoutPrevisto": voucher.reserva.checkoutPrevisto,
                 "valorTotal": _valor_total_reserva(voucher.reserva),
                 "formaPagamento": _forma_pagamento_reserva(voucher.reserva),
+                "paymentStatus": payment_status,
+                "paymentStatusRaw": payment_status_raw,
                 "origem": getattr(voucher.reserva, "origem", None),
                 "responsavelNome": getattr(voucher.reserva, "responsavelNome", None),
                 "observacoes": getattr(voucher.reserva, "observacoes", None),
@@ -184,6 +198,8 @@ async def obter_voucher(codigo: str):
             detail=f"Voucher {codigo} não encontrado"
         )
     
+    payment_status, payment_status_raw = _status_pagamento_reserva(voucher.reserva)
+
     return {
         "success": True,
         "data": {
@@ -203,6 +219,8 @@ async def obter_voucher(codigo: str):
                 "checkoutPrevisto": voucher.reserva.checkoutPrevisto,
                 "valorTotal": _valor_total_reserva(voucher.reserva),
                 "formaPagamento": _forma_pagamento_reserva(voucher.reserva),
+                "paymentStatus": payment_status,
+                "paymentStatusRaw": payment_status_raw,
                 "origem": getattr(voucher.reserva, "origem", None),
                 "responsavelNome": getattr(voucher.reserva, "responsavelNome", None),
                 "observacoes": getattr(voucher.reserva, "observacoes", None),
@@ -461,6 +479,15 @@ async def gerar_pdf_voucher(codigo: str):
     tipo_suite = reserva.tipoSuite or "-"
     obs = getattr(reserva, "observacoes", None) or "Particular"
     valor = _valor_total_reserva(reserva)
+    payment_status, _ = _status_pagamento_reserva(reserva)
+    payment_status_label = {
+        "pending": "Pendente",
+        "processing": "Em andamento",
+        "paid": "Confirmado",
+        "failed": "Nao aprovado",
+        "cancelled": "Cancelado",
+        "refunded": "Estornado",
+    }.get(payment_status, "Pendente")
     valor_fmt = f"R${valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     def fmt_date_only(val):
@@ -550,12 +577,16 @@ async def gerar_pdf_voucher(codigo: str):
         Paragraph(f"<b>Obs:</b> {obs}", s_field),
         Paragraph("", s_field),
     ]
+    row_payment = [
+        Paragraph(f"<b>Forma de pagamento:</b> {_forma_pagamento_reserva(reserva)}", s_field),
+        Paragraph(f"<b>Pagamento:</b> {payment_status_label}", s_field),
+    ]
     row6 = [
         Paragraph(f"Check-in Por:                          Horario: {horario_checkin}", s_field),
         Paragraph("", s_field),
     ]
 
-    tbl = Table([row1, row2, row3, row4, row5, row6], colWidths=[col_left, col_right])
+    tbl = Table([row1, row2, row3, row4, row5, row_payment, row6], colWidths=[col_left, col_right])
     tbl.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),

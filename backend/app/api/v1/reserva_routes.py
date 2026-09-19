@@ -13,18 +13,19 @@ from app.middleware.auth_middleware import get_current_active_user, require_admi
 from app.core.security import User
 from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from app.core.cache import redis_lock
-from app.core.validators import ReservaValidator, QuartoValidator
+from app.core.validators import ReservaValidator
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
+from app.services.reserva_publica_confirmation_service import ReservaPublicaConfirmationService
 from typing import Optional
 from starlette.responses import JSONResponse
+from app.utils.json_utils import to_json_safe
 from datetime import datetime
 import base64
 import binascii
 import os
 
 router = APIRouter(prefix="/reservas", tags=["reservas"])
-
 # Dependency injection
 async def get_reserva_service() -> ReservaService:
     db = get_db()
@@ -185,47 +186,92 @@ async def criar_reserva(
         cached = await check_idempotency(idempotency_key)
         if cached:
             return JSONResponse(
-                content=cached["body"],
+                content=to_json_safe(cached["body"]),
                 status_code=cached["status_code"]
             )
     
     # CAMADA 3: Lock para evitar race condition
-    lock_key = f"quarto:{reserva.quarto_numero}"
+    # Reservas com ou sem quarto designado concorrem pela capacidade da suite.
+    tipo_suite_lock = getattr(reserva.tipo_suite, "value", reserva.tipo_suite)
+    lock_key = f"suite:{tipo_suite_lock}"
     
     try:
         async with redis_lock(lock_key, timeout=10):
-            # CAMADA 4: Validar disponibilidade do quarto
+            # O repositorio valida a capacidade da categoria e, quando
+            # informado, a disponibilidade do quarto especifico.
             db = get_db()
-            await QuartoValidator.validar_disponibilidade(
-                reserva.quarto_numero,
-                checkin_date,
-                checkout_date,
-                db
-            )
-            
-            # CAMADA 5: Criar reserva
             nova_reserva = await service.create(
                 reserva,
                 criado_por_funcionario_id=current_user.id,
+                notificar=False,
             )
+
+            valor_total = float(
+                nova_reserva.get("valor_total_com_desconto", nova_reserva.get("valor_total", 0.0)) or 0.0
+            )
+            fluxo = await ReservaPublicaConfirmationService(db).registrar_pagamento_pendente_e_voucher(
+                reserva_id=nova_reserva["id"],
+                valor_total=valor_total,
+            )
+            nova_reserva = await service.get_by_id(nova_reserva["id"])
+
+            reserva_model = await db.reserva.find_unique(where={"id": nova_reserva["id"]})
+            if reserva_model:
+                await NotificationService.notificar_nova_reserva(db, reserva_model)
             
             result = {
                 "success": True,
                 "data": nova_reserva,
+                "pagamento": {
+                    "status": fluxo["pagamento"]["status"],
+                    "payment_status": "pending",
+                    "situacao": "NAO_PAGO",
+                    "valor": valor_total,
+                },
+                "voucher": {
+                    "codigo": fluxo["voucher"]["codigo"],
+                    "status": fluxo["voucher"]["status"],
+                    "url": f"/voucher/{fluxo['voucher']['codigo']}",
+                },
                 "message": "Reserva criada com sucesso"
             }
-            
+            result_json = to_json_safe(result)
             # Cachear resultado
             if idempotency_key:
-                await store_idempotency_result(idempotency_key, result, status_code=201)
-            
-            return JSONResponse(content=result, status_code=201)
+                await store_idempotency_result(idempotency_key, result_json, status_code=201)
+            return JSONResponse(content=result_json, status_code=201)
             
     except TimeoutError:
         raise HTTPException(
             status_code=409,
             detail="Outro processo está criando reserva para este quarto. Tente novamente."
         )
+
+@router.get("/{reserva_id}/quartos-disponiveis")
+async def listar_quartos_para_designacao(
+    reserva_id: int,
+    service: ReservaService = Depends(get_reserva_service),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Lista quartos livres para designar a uma reserva ainda sem quarto."""
+    reserva = await service.get_by_id(reserva_id)
+    from app.services.disponibilidade_service import DisponibilidadeService
+
+    checkin = reserva["checkin_previsto"]
+    checkout = reserva["checkout_previsto"]
+    if isinstance(checkin, str):
+        checkin = datetime.fromisoformat(checkin)
+    if isinstance(checkout, str):
+        checkout = datetime.fromisoformat(checkout)
+
+    quartos = await DisponibilidadeService(get_db()).listar_quartos_disponiveis(
+        checkin,
+        checkout,
+        reserva["tipo_suite"],
+        reserva_id_excluir=reserva_id,
+    )
+    return {"success": True, "quartos": quartos}
+
 
 @router.get("/{reserva_id}", response_model=ReservaResponse)
 async def obter_reserva(

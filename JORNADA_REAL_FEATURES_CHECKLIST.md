@@ -1,5 +1,13 @@
 # Jornada Real - Checklist de Funcionalidades
 
+**Atualizacao executiva 2026-09-18 - reserva por categoria sem quarto obrigatorio (JR-08/JR-11):** hospede e recepcao agora podem criar a reserva sem preencher ou receber automaticamente um numero de quarto; a recepcao pode designa-lo depois, antes do check-in. A migration `036` torna `quarto_id`/`quarto_numero` opcionais, e a disponibilidade passa a descontar reservas sem quarto da capacidade da categoria para impedir sobrevenda. Backend: ✅. Frontend: ✅. WhatsApp: sem alteracao de contrato (exibe `N/A` enquanto o quarto estiver a definir). Validado: `16 passed` na regressao focada, schema Prisma valido e build de producao do frontend; regressao backend ampla: `138 passed` e `1 failed` por fixture preexistente de `FakeDbCashApproval` sem `funcionario`, fora deste fluxo.
+
+**Atualizacao executiva 2026-09-18 - criacao operacional de reserva (JR-11):** corrigido o `500` apos `POST /reservas`: a reserva era gravada, mas a resposta continha `datetime` nao serializado. A rota agora converte o resultado para JSON antes de responder e de cachear a chave de idempotencia; o modal envia `Idempotency-Key` estavel para impedir duplicidade em retry. Backend: ✅. Frontend: ✅. WhatsApp: sem alteracao. Validado: `24 passed` na regressao focada e build de producao do frontend.
+
+**Atualizacao executiva 2026-09-18 - estados Reserva/Pagamento/Voucher (JR-11):** corrigida a mistura visual e contratual entre reserva e pagamento. Uma nova reserva permanece `PENDENTE` enquanto o pagamento esta `PENDENTE`; somente um pagamento aprovado promove a reserva para `CONFIRMADA`. A API devolve `reservation_status` e `payment_status` separadamente (`pending`, `processing`, `paid`, `failed`, `cancelled`, `refunded`), e `PROCESSANDO` so e persistido depois que uma transacao real e aberta. O voucher segue disponivel como identificacao da reserva pendente. A migration `035` repara reservas confirmadas sem qualquer pagamento aprovado. Backend: ✅. Frontend: ✅. WhatsApp: sem alteracao. Validado: `21 passed` na regressao focada e build de producao do frontend.
+
+**Atualizacao executiva 2026-09-18 - reserva pendente com voucher/JR-11:** depois de validar disponibilidade, o sistema cria a reserva e o pagamento com status `PENDENTE` (`NAO_PAGO` na resposta), cria a hospedagem inicial e emite o voucher na mesma transacao. O voucher nao confirma a reserva; a confirmacao ocorre somente apos aprovacao do pagamento. A resposta retorna o codigo/link do voucher e `/reservar` o apresenta imediatamente ao cliente.
+
 **Atualizacao executiva 2026-07-18 - pagamento operacional/JR-10:** o modal de pagamento da recepcao agora oferece exclusivamente `Pagamento (TEF)` e remove os caminhos legados de PIX, Cielo e balcao/upload de comprovante. O fluxo separado de check-in em dinheiro permanece ativo no `CheckinCashApprovalPanel`, usando `POST /checkins/request-cash-approval` e a aprovacao via Twilio ja implementada. Backend e WhatsApp: sem alteracao de contrato. Frontend: ✅ build de producao validado com `npx next build`.
 
 **Atualizacao executiva 2026-07-18 - JR-02 credito no checkout:** corrigida a normalizacao da categoria da suite antes de consultar/calcular a regra de Pontos R. Cadastros operacionais como `LUXO 2º`, `LUXO 3º`, `LUXO 4º EC` e rotulos como `Suite Master` agora convergem para `LUXO`/`MASTER`, sem alterar as regras de `DUPLA` e `REAL`; o valor com desconto/TEF nao e usado como autoridade para conceder pontos. Backend: ✅ codigo e regressao focada. Frontend e WhatsApp: sem alteracao. Validado: `21 passed` em `test_programa_pontos_service.py` + `test_reserva_logic_guards.py`, incluindo as quatro categorias e variantes operacionais. `test_tef_idempotency.py` nao coletou no ambiente Windows por `ImportError` pre-existente de `redis_lock` em `app.core.cache`.
@@ -31,7 +39,7 @@ Roadmap completo com 11 funcionalidades críticas para produção.
 | 5️⃣ | Msg Pós Check-out | 🟡 Média | Baixa | ✅ | N/A | ✅ | ✅ 1/1 | 1d |
 | 6️⃣ | Som Check-out | 🟡 Média | Baixa | ✅ | ✅ | N/A | ✅ 2/2 | 1d |
 | 7️⃣ | Invalidar Códigos | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 5/5 | 2d |
-| 8️⃣ | Remover Suites Reservadas | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 3/3 | 2d |
+| 8️⃣ | Remover Suites Reservadas | 🔴 Alta | Média | ✅ | ✅ | N/A | ✅ 5/5 | 2d |
 | 9️⃣ | Gerador Cupons | 🟡 Média | Alta | ✅ | ✅ | N/A | ✅ 3/3 | 4-5d |
 | 🔟 | Confirmação Check-in Admin | 🟡 Média | Média | ✅ | ✅ | ✅ | ✅ 4/4 | 2-3d |
 | 1️⃣1️⃣ | Autenticar Cadastro | 🔴 Alta | Média | ✅ | ✅ | ✅ | ✅ 6/6 | 2d |
@@ -490,17 +498,20 @@ Na página de reservas, suites já reservadas não aparecem como disponíveis.
   - Vê apenas: 203 (pois 201 e 202 estão ocupados nesse período)
 
 ### Backend Necessário
-**Status Backend:** ✅ Completo — regra de disponibilidade existe, alias público `/availability` foi exposto e migration adiciona exclusion constraint para impedir sobreposição de reservas por quarto.
+**Status Backend:** ✅ Completo — regra de disponibilidade existe, alias público `/availability` foi exposto, a migration `016` impede sobreposição por quarto e a migration `036` permite reservar pela categoria sem designar quarto. Reservas sem quarto consomem a capacidade da categoria.
 
 - [x] ✅ Endpoint exato `GET /availability?checkin=YYYY-MM-DD&checkout=YYYY-MM-DD`; também aceita ISO 8601 e filtro `suite_type`
 - [x] ✅ Query de sobreposição existe no `DisponibilidadeService` e migration `016_reservas_exclusion_disponibilidade.sql` adiciona exclusion constraint
 - [x] ✅ Retorna apenas quartos SEM reserva naquele período
+- [x] ✅ Reserva sem quarto designado reduz a quantidade disponível da categoria sem preencher automaticamente `quarto_numero`
+- [x] ✅ `GET /reservas/{id}/quartos-disponiveis` lista opções para designação posterior sem contar a própria reserva
 
 ### Frontend Necessário
-**Status Frontend:** ✅ Implementado — `/reservar` chama `GET /public/quartos/disponiveis?data_checkin=...&data_checkout=...` com polling de 10s; mostra apenas quartos disponíveis para o período selecionado.
+**Status Frontend:** ✅ Implementado — `/reservar` chama `GET /public/quartos/disponiveis?data_checkin=...&data_checkout=...` com polling de 10s e permite ao hóspede escolher somente a categoria; o modal da recepção mantém a designação de quarto opcional.
 
 - [x] ✅ `/reservar` ao buscar disponibilidade chama `/public/quartos/disponiveis` com datas; mostra apenas quartos livres no período
 - [x] ✅ Polling de disponibilidade em tempo real (10s interval enquanto na etapa de seleção)
+- [x] ✅ Hóspede não recebe número automático; recepção pode deixar “Quarto a definir” e designá-lo posteriormente na lista de reservas
 
 ### Testes
 ```bash
@@ -515,6 +526,8 @@ GET /availability?checkin=2026-06-16&checkout=2026-06-18
 GET /availability?checkin=2026-06-14&checkout=2026-06-15
 → [ { room_id: "201", ... }, { room_id: "202", ... }, { room_id: "203", ... } ]
 ```
+
+**Resultado testes:** ✅ 5/5 em `test_disponibilidade_service.py`; regressão focada JR-08/JR-11 com `16 passed`, schema Prisma válido e build Next.js concluído.
 
 **Prioridade:** 🔴 ALTA | **Complexidade:** Média | **Est:** 2 dias
 
@@ -741,16 +754,19 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
 9. Se correto: libera reserva (customer_id já vinculado)
 
 ### Backend Necessário
-**Status Backend:** ✅ Completo — consulta/criação pública de cliente, CPF com dígito verificador, OTP WhatsApp, expiração, tentativas, rate limit, auditoria, token de sessão e trava de reserva pública por token estão implementados.
+**Status Backend:** ✅ Completo — consulta/criação pública de cliente, CPF com dígito verificador, OTP WhatsApp, expiração, tentativas, rate limit, auditoria, token de sessão e trava de reserva pública por token estão implementados. Após validar a disponibilidade da categoria, a reserva pode permanecer sem quarto designado; reserva e pagamento ficam `PENDENTE`, o voucher é emitido de forma atômica e a reserva somente vira `CONFIRMADA` após pagamento aprovado.
 
 - [x] ✅ Endpoint `GET /customers/{cpf}` com validação de CPF e existência
 - [x] ✅ Endpoint `POST /customers/create` para novo cadastro público com validação antifraude existente
 - [x] ✅ Endpoint `POST /auth/otp/generate` → gera OTP, persiste hash e envia via WhatsApp/Twilio
 - [x] ✅ Endpoint `POST /auth/otp/validate` → valida OTP e retorna token com escopo `jornada_reserva`
 - [x] ✅ Endpoint `POST /public/reservas` exige `customer_auth_token` válido e CPF correspondente
+- [x] ✅ `POST /public/reservas` mantém a reserva `PENDENTE`, cria pagamento TEF `PENDENTE`, hospedagem `NAO_INICIADA` e voucher na mesma transação
+- [x] ✅ `POST /public/reservas` aceita `quarto_numero` ausente/nulo e exige designação de quarto somente antes do check-in
+- [x] ✅ API separa `reservation_status` de `payment_status`; abertura de sessão TEF altera `pending` para `processing`, e finalização reutiliza o mesmo registro financeiro
 
 ### Frontend Necessário
-**Status Frontend:** ✅ Completo — `/reservar` consulta CPF, cria cadastro quando necessário, envia/valida OTP e bloqueia avanço sem token válido.
+**Status Frontend:** ✅ Completo — `/reservar` consulta CPF, cria cadastro quando necessário, envia/valida OTP e bloqueia avanço sem token válido. O hóspede escolhe apenas a categoria, sem preenchimento automático de quarto. Ao concluir, exibe o código e o link do voucher ao cliente, informando que o pagamento está pendente.
 
 - [x] `/reservar` adiciona seção de autenticação no início do passo de dados:
   ```
@@ -770,6 +786,9 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
   - CPF: formato correto (###.###.###-##)
   - CPF válido (algoritmo de validação)
   - OTP: 6 dígitos
+- [x] Confirmação da reserva mostra voucher e acesso direto a `/voucher/{codigo}`
+- [x] Tabela administrativa usa `payment_status` real e diferencia pendente, em andamento, confirmado, não aprovado, cancelado e estornado
+- [x] Voucher web/PDF mostra a situação financeira sem exigir pagamento confirmado para existir
 
 ### WhatsApp Necessário
 - [x] ✅ Template:
@@ -778,6 +797,7 @@ Ao fazer reserva via site da Jornada Real, cliente deve se autenticar (validar C
   Válido por 5 minutos.
   Não compartilhe com ninguém!
   ```
+- [x] ✅ Notificação existente de nova reserva é enviada após criação da reserva pendente, do pagamento pendente e do voucher
 
 ### Segurança
 - [x] ✅ OTP válido por 5 minutos
@@ -818,6 +838,17 @@ PYTHONPATH=$PWD pytest tests -q
 
 cd frontend && npm run build
 → Compiled successfully
+
+# Fluxo reserva pendente / pagamento pendente / voucher
+PYTHONPATH=$PWD pytest tests/test_reserva_publica_confirmation_service.py tests/test_reserva_logic_guards.py -q
+→ 5 passed
+
+cd frontend && NODE_ENV=production npx next build
+→ Compiled successfully
+
+# Contrato separado e regressao TEF/status/voucher
+PYTHONPATH=$PWD pytest tests/test_tef_idempotency.py tests/test_payment_status_contract.py tests/test_reserva_publica_confirmation_service.py tests/test_reserva_logic_guards.py -q
+→ 21 passed
 ```
 
 **Prioridade:** 🔴 ALTA | **Complexidade:** Média | **Est:** 2 dias

@@ -189,10 +189,14 @@ export default function VoucherViewPage() {
                   <p className="text-sm text-gray-600 mb-1">Tipo Suíte</p>
                   <p className="font-semibold text-gray-800">{voucher.reserva.tipoSuite}</p>
                 </div>
-                <div className="bg-gray-50 p-4 rounded">
-                  <p className="text-sm text-gray-600 mb-1">Quarto</p>
-                  <p className="font-semibold text-gray-800">{voucher.reserva.quartoNumero}</p>
-                </div>
+                        {/* <div className="bg-gray-50 p-4 rounded">
+                          <p className="text-sm text-gray-600 mb-1">Quarto</p>
+                          <p className="font-semibold text-gray-800">{voucher.reserva.quartoNumero}</p>
+                        </div> codigo comentado por que o cliente nao precisa 
+                        saber o quarto que ele está...
+                        
+                        */}
+
                 <div className="bg-gray-50 p-4 rounded">
                   <p className="text-sm text-gray-600 mb-1">Check-in</p>
                   <p className="font-semibold text-gray-800">

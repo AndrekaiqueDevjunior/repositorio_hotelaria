@@ -23,9 +23,8 @@ export const useReservationForm = () => {
     }
   }
 
-  const selecionarQuarto = (tipo, quarto) => {
+  const selecionarQuarto = (tipo) => {
     setQuartoSelecionado({
-      numero: quarto.numero,
       tipo: tipo.tipo,
       preco_diaria: tipo.preco_diaria,
       preco_total: tipo.preco_total

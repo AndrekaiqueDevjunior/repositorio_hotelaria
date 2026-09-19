@@ -1,5 +1,6 @@
 ﻿import axios from 'axios'
 import { toast } from 'react-toastify'
+import { instalarDemo } from './demo-mock'
 
 const baseURL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
 
@@ -134,3 +135,10 @@ export function invalidateCache() {
     window.dispatchEvent(new Event('hotel:invalidate-cache'))
   }
 }
+
+/*
+ * Modo demonstração: intercepta as chamadas do fluxo de reserva e devolve
+ * dados fictícios. Fica inerte em produção e sem `?demo=1` — ver as travas
+ * em lib/demo-mock.js.
+ */
+instalarDemo(api)

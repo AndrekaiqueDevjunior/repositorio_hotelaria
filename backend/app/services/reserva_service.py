@@ -51,12 +51,18 @@ class ReservaService:
             order_by=order_by
         )
     
-    async def create(self, dados: ReservaCreate, criado_por_funcionario_id: int = None) -> Dict[str, Any]:
+    async def create(
+        self,
+        dados: ReservaCreate,
+        criado_por_funcionario_id: int = None,
+        notificar: bool = True,
+    ) -> Dict[str, Any]:
         """Criar nova reserva com validações"""
         try:
             # Criar reserva (ja notifica internamente: dashboard + email + WhatsApp hotel/cliente)
             reserva = await self.reserva_repo.create(
                 dados,
+                notificar=notificar,
                 criado_por_funcionario_id=criado_por_funcionario_id,
             )
             return reserva

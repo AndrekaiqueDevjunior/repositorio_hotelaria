@@ -194,8 +194,8 @@ export default function VoucherPage() {
             </div>
             <h2 className="text-3xl font-bold text-blue-900 mb-2">Hotel Real</h2>
             <p className="text-gray-600">Cabo Frio - Sistema de Gestão</p>
-            <p className="text-sm text-gray-500 mt-2">📍 Av. do Mar, 1234 - Cabo Frio, RJ</p>
-            <p className="text-sm text-gray-500">📞 (22) 1234-5678 | 📧 contato@hotelreal.com.br</p>
+            <p className="text-sm text-gray-500 mt-2">📍 Rua enfermeiro Ricardo Sanches 22 - Cabo Frio, RJ</p>
+            <p className="text-sm text-gray-500">📞 (22) 2648-5900 | 📧 Contato@hotelrealcabofrio.com.br</p>
           </div>
 
           {/* Código do Voucher - CENTRALIZADO E DESTACADO */}
@@ -232,10 +232,10 @@ export default function VoucherPage() {
                 <p className="text-sm text-gray-600 mb-1">Tipo Suíte</p>
                 <p className="font-semibold text-gray-800">{voucher.reserva.tipoSuite}</p>
               </div>
-              <div className="bg-gray-50 p-4 rounded">
+                { /*<div className="bg-gray-50 p-4 rounded">
                 <p className="text-sm text-gray-600 mb-1">Quarto</p>
                 <p className="font-semibold text-gray-800">{voucher.reserva.quartoNumero}</p>
-              </div>
+              </div>*/}
               <div className="bg-gray-50 p-4 rounded">
                 <p className="text-sm text-gray-600 mb-1">Check-in</p>
                 <p className="font-semibold text-gray-800">
@@ -252,6 +252,19 @@ export default function VoucherPage() {
                 <p className="text-sm text-gray-600 mb-1">Valor Total</p>
                 <p className="font-semibold text-green-600 text-xl">
                   R$ {Number(voucher.reserva.valorTotal || 0).toFixed(2)}
+                </p>
+              </div>
+              <div className="bg-amber-50 p-4 rounded md:col-span-2">
+                <p className="text-sm text-gray-600 mb-1">Pagamento</p>
+                <p className="font-semibold text-amber-700">
+                  {{
+                    pending: 'Pendente',
+                    processing: 'Em andamento',
+                    paid: 'Confirmado',
+                    failed: 'Não aprovado',
+                    cancelled: 'Cancelado',
+                    refunded: 'Estornado'
+                  }[voucher.reserva.paymentStatus] || 'Pendente'}
                 </p>
               </div>
             </div>

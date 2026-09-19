@@ -346,7 +346,11 @@ async def cancelar_fluxo_tef(
     session_id = payload.get("session_id")
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id e obrigatorio")
-    return await service.cancelar_fluxo_tef(session_id=str(session_id))
+    reserva_id = payload.get("reserva_id")
+    return await service.cancelar_fluxo_tef(
+        session_id=str(session_id),
+        reserva_id=int(reserva_id) if reserva_id else None,
+    )
 
 @router.delete("/tef/sessao", response_model=dict)
 async def limpar_sessao_tef(

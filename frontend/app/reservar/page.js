@@ -6,7 +6,8 @@ import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 
 import { api } from '../../lib/api'
-import GoldParticles from '@/components/GoldParticles'
+import '../jornada-real.css'
+import LuzPonteiro from '@/components/jornada/LuzPonteiro'
 
 import Header from './components/Header'
 import Footer from './components/Footer'
@@ -29,6 +30,7 @@ export default function Reservar() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [step, setStep] = useState(1)
+
 
   // Hooks customizados
   const reservation = useReservationForm()
@@ -106,7 +108,7 @@ export default function Reservar() {
   // Carregar tabela de pontuação
   useEffect(() => {
     let isMounted = true
-    api.get('/jornada/regras')
+    api.get('/jornada/regras', { silentError: true })
       .then((response) => {
         if (isMounted) setPontuacaoPorSuite(response.data?.pontuacao_por_suite || [])
       })
@@ -149,7 +151,10 @@ export default function Reservar() {
         params: {
           data_checkin: reservation.searchData.data_checkin,
           data_checkout: reservation.searchData.data_checkout
-        }
+        },
+        // silencia o toast automático no polling de fundo (a cada 10s); a
+        // busca explícita (clique no botão) continua avisando o hóspede
+        silentError: silent,
       })
 
       const data = response.data
@@ -384,7 +389,6 @@ export default function Reservar() {
         documento: cpfLimpo,
         email: guest.hospedeData.email,
         telefone: telefoneLimpo,
-        quarto_numero: reservation.quartoSelecionado.numero,
         tipo_suite: reservation.quartoSelecionado.tipo,
         data_checkin: reservation.searchData.data_checkin,
         data_checkout: reservation.searchData.data_checkout,
@@ -412,7 +416,7 @@ export default function Reservar() {
 
       if (data.success) {
         setReservaConfirmada(data)
-        toast.success('🎉 Reserva confirmada com sucesso!')
+        toast.success('🎉 Reserva criada. Confirmação pendente de pagamento.')
         setStep(5)
       } else {
         const errorMessage = data.detail || 'Erro ao criar reserva'
@@ -461,19 +465,13 @@ export default function Reservar() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#050403] text-white">
-      <div className="absolute inset-0">
-        <div className="absolute inset-0 bg-[#050403]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(218,166,55,0.18),transparent_22rem),radial-gradient(circle_at_12%_34%,rgba(157,91,8,0.22),transparent_18rem),radial-gradient(circle_at_88%_28%,rgba(246,198,55,0.11),transparent_16rem),radial-gradient(circle_at_50%_82%,rgba(92,36,145,0.12),transparent_18rem)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.16)_0%,rgba(5,4,3,0.86)_44%,#050403_100%)]" />
-      </div>
-
-      <GoldParticles />
+    <div className="jr jr-reservar-pagina" style={{ display: 'flex', flexDirection: 'column', minHeight: '100svh' }}>
+      <LuzPonteiro densidade={2} />
 
       <Header />
       <ProgressIndicator currentStep={step} />
 
-      <main className="relative z-30 mx-auto w-full max-w-[820px] flex-1 px-4 pb-12 sm:px-8">
+      <main className="jr-shell jr-shell--estreito jr-reservar__cena">
         {step === 1 && (
           <StepDatas
             searchData={reservation.searchData}
@@ -489,9 +487,9 @@ export default function Reservar() {
             searchData={reservation.searchData}
             tiposDisponiveis={reservation.tiposDisponiveis}
             numDiarias={reservation.numDiarias}
-            onSelecionarQuarto={(tipo, quarto) => {
+            onSelecionarQuarto={(tipo) => {
               coupon.reset()
-              reservation.selecionarQuarto(tipo, quarto)
+              reservation.selecionarQuarto(tipo)
               setStep(3)
             }}
             onVoltar={() => setStep(1)}
@@ -502,6 +500,7 @@ export default function Reservar() {
           <StepDados
             hospedeData={guest.hospedeData}
             onUpdateField={guest.updateField}
+            onUpdateOtpCode={auth.updateOtpCode}
             quartoSelecionado={reservation.quartoSelecionado}
             numDiarias={reservation.numDiarias}
             customerAuth={auth.customerAuth}

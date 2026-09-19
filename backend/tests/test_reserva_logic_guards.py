@@ -26,7 +26,7 @@ class _FakeQuartoTable:
     async def find_unique(self, where):
         numero = where["numero"]
         if numero == "202A":
-            return SimpleNamespace(id=77, numero=numero, status="LIVRE")
+            return SimpleNamespace(id=77, numero=numero, tipoSuite="LUXO", status="LIVRE")
         return None
 
 

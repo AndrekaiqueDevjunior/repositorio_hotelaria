@@ -58,6 +58,7 @@ class PagamentoResponse(BaseModel):
     cliente_email: Optional[str] = None
     cielo_payment_id: Optional[str] = None
     status: str
+    payment_status: Optional[str] = "pending"
     valor: float
     metodo: str
     parcelas: Optional[int] = None

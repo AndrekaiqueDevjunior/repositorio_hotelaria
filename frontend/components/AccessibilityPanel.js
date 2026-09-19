@@ -266,7 +266,12 @@ const AccessibilityManager = ({ children }) => {
   return (
     <>
       {children}
-      <AccessibilityButton onClick={() => setIsPanelOpen(true)} />
+      {/*
+        Botão flutuante removido a pedido: o círculo azul flutuava sobre
+        todas as telas e destoava da marca. As preferências já salvas
+        continuam sendo aplicadas no carregamento (ver applySettings acima),
+        então quem ativou algo não perde o ajuste.
+      */}
       <AccessibilityPanel
         isOpen={isPanelOpen}
         onClose={() => setIsPanelOpen(false)}

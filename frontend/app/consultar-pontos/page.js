@@ -1,45 +1,46 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import {
-  ArrowRight,
-  Bell,
-  Coffee,
-  Crown,
-  Gift,
-  Home,
-  Leaf,
-  Menu,
-  Star,
-  TrendingUp,
-  User,
-} from 'lucide-react'
-import GoldParticles from '@/components/GoldParticles'
+import { ArrowRight, Crown, Gift, Star, Ticket } from 'lucide-react'
+import '../jornada-real.css'
+import Reveal from '@/components/jornada/Reveal'
+import LuzPonteiro from '@/components/jornada/LuzPonteiro'
+import BotaoSom from '@/components/jornada/BotaoSom'
+import JornadaNav from '@/components/jornada/JornadaNav'
+import { CantoMoldura, Fleurao } from '@/components/jornada/Ornamentos'
 import { api } from '@/lib/api'
+import { NIVEIS_JORNADA_REAL } from '@/lib/jornada-config'
 
+// Usado só como escala de exibição antes da API responder — o mínimo do
+// último nível em lib/jornada-config.js, não um número solto na tela.
+const NIVEL_MAXIMO_MIN = NIVEIS_JORNADA_REAL[NIVEIS_JORNADA_REAL.length - 1].min
+
+// Fallback de exibi\u00e7\u00e3o para quando a API ainda n\u00e3o respondeu ou est\u00e1 fora
+// do ar em ambientes de preview \u2014 evita a vitrine aparecer vazia. Quando a
+// API responde, ela sempre vence: ver normalizeReward abaixo.
 const rewardDefaults = [
   {
     name: 'Tecnologia Real',
     points: 90,
     image: '/images/premios/tecnologia-real.png',
     badge: 'Mais disputado',
-    footer: '+Prêmio mais disputado',
+    footer: '+Pr\u00eamio mais disputado',
     slug: 'tecnologia-real',
   },
   {
     name: 'Rituais do Real',
     points: 35,
     image: '/images/premios/rituais-do-real.png',
-    footer: 'Transforme sua rotina em experiência',
+    footer: 'Transforme sua rotina em experi\u00eancia',
     slug: 'rituais-do-real',
   },
   {
     name: 'O Retorno do Sonho',
     points: 25,
     image: '/images/premios/o-retorno-do-sonho.png',
-    badge: 'Último restante!',
-    footer: '1 diária com hidro + champanhe cortesia',
+    footer: '1 di\u00e1ria com hidro + champanhe cortesia',
     slug: 'o-retorno-do-sonho',
   },
 ]
@@ -130,7 +131,7 @@ const normalizeLoyaltyData = (data) => {
     current_level: data?.current_level || programa?.nivel,
     current_level_name: data?.current_level_name || programa?.nivel?.nome,
     next_level: data?.next_level || barraNivel?.proximo_nivel,
-    next_level_points: firstNumber(data?.next_level_points, barraNivel?.meta, 90),
+    next_level_points: firstNumber(data?.next_level_points, barraNivel?.meta, NIVEL_MAXIMO_MIN),
     missing_to_next_level: firstNumber(data?.missing_to_next_level, barraNivel?.faltam_pontos),
     level_progress: firstNumber(data?.level_progress, barraNivel?.percentual),
     next_reward: data?.next_reward || programa?.proximo_premio,
@@ -148,8 +149,8 @@ const fallbackLoyaltyData = normalizeLoyaltyData({
   customer_name: 'Hóspede Real',
   redeemable_points: 0,
   lifetime_points: 0,
-  next_level_points: 90,
-  missing_to_next_level: 90,
+  next_level_points: NIVEL_MAXIMO_MIN,
+  missing_to_next_level: NIVEL_MAXIMO_MIN,
   level_progress: 0,
   reward_goal_points: 0,
   missing_to_next_reward: 0,
@@ -166,17 +167,24 @@ const normalizeReward = (premio) => {
     name: premio.nome || defaults.name || 'Prêmio Real',
     points: premio.preco_em_pontos ?? premio.preco_em_rp ?? defaults.points ?? 0,
     image: resolveImageUrl(premio.imagem_url || premio.imagemUrl) || defaults.image || '',
+    badge: premio.badge || premio.destaque || defaults.badge || null,
     footer: premio.descricao || defaults.footer || 'Prêmio exclusivo da Jornada Real',
     slug,
   }
 }
 
-const navItems = [
-  { icon: Home, label: 'Início', href: '/' },
-  { icon: TrendingUp, label: 'Minha Jornada', href: '/consultar-pontos' },
-  { icon: Gift, label: 'Prêmios', href: '/resgate_dos_premios' },
-  { icon: User, label: 'Perfil', href: '/entrar-jornada-real' },
-]
+/*
+ * Nome, faixa e objeto vêm todos de lib/jornada-config.js: a chave, o cetro
+ * e a coroa são os mesmos recortes que a home usa em "A escada da corte",
+ * a pedido do hotel, para as duas telas contarem a mesma história. Antes
+ * daqui saíam fotos de suíte com um ícone Lucide por cima.
+ */
+const niveisMapa = NIVEIS_JORNADA_REAL.map((nivel) => ({
+  chave: nivel.chave,
+  nome: nivel.nome,
+  faixa: nivel.faixa,
+  objeto: nivel.objeto,
+}))
 
 export default function ConsultarPontos() {
   const router = useRouter()
@@ -255,13 +263,14 @@ export default function ConsultarPontos() {
   const levelPageUrl = useMemo(() => {
     return withCpfParam('/nivel_jornada_real', cpf)
   }, [cpf])
+  const nivelAtualChave = slugify(currentLevelName || 'essencia')
 
   useEffect(() => {
     let isMounted = true
 
     const loadRewards = async () => {
       try {
-        const response = await api.get('/premios')
+        const response = await api.get('/premios', { silentError: true })
         const premios = Array.isArray(response.data) ? response.data : []
 
         if (isMounted) {
@@ -290,7 +299,6 @@ export default function ConsultarPontos() {
 
     const loadLoyalty = async () => {
       if (!cpf) {
-        // Redireciona para a tela de entrada de CPF
         router.push('/consultar')
         return
       }
@@ -333,1131 +341,248 @@ export default function ConsultarPontos() {
     }
   }, [cpf])
 
-  const rewards = apiRewards
+  const rewards = apiRewards.length ? apiRewards : rewardDefaults
+  const proximoPremio = rewards.length
+    ? [...rewards].sort((a, b) => a.points - b.points).find((item) => item.points > currentPoints) || rewards[0]
+    : null
 
   return (
-    <main className="points-page">
-      <GoldParticles />
+    <main className="jr jr-pontos-pagina">
+      <LuzPonteiro densidade={2} />
 
-      <section className="points-shell">
-        <header className="points-header">
-          <button className="round-action" type="button" aria-label="Abrir menu">
-            <Menu size={24} strokeWidth={1.8} />
-          </button>
-
-          <img
-            className="points-logo"
-            src="/images/logo-jornada-real.png"
-            alt="Hotel Real Cabo Frio"
-          />
-
-          <button className="round-action bell-action" type="button" aria-label="Notificações">
-            <Bell size={23} strokeWidth={1.8} />
-            <span />
-          </button>
-        </header>
-
-        {isLoadingLoyalty && (
-          <section className="loading-indicator">
-            <p>Carregando seus dados da Jornada Real...</p>
-          </section>
-        )}
-
-        {loyaltyError && !isLoadingLoyalty && cpf && (
-          <section className="error-indicator">
-            <p>{loyaltyError}</p>
-            <button type="button" onClick={() => router.push('/consultar')}>
-              Voltar e tentar novamente
-            </button>
-          </section>
-        )}
-
-        {loyaltyData && (
-          <>
-        <section className="welcome-card">
-          <div>
-            <p>Você está quase lá 👑</p>
-            <h1>
-              {customerName} <Crown size={18} strokeWidth={1.6} />
-            </h1>
-            <span>
-              Você está evoluindo na Jornada Real
-              <br />
-              e conquistando experiências únicas!
-            </span>
+      <header className="jr-barra">
+        <div className="jr-shell jr-barra__interno">
+          <Link href="/" className="jr-barra__marca" aria-label="Jornada Real — Hotel Real Cabo Frio">
+            <img src="/images/logo-jornada-real.png" alt="Jornada Real" />
+          </Link>
+          <div className="jr-barra__acoes">
+            <BotaoSom />
           </div>
+        </div>
+      </header>
 
-          <aside className="current-points-card">
-            <strong>Pontos atuais</strong>
-            <div>
-              <Crown size={32} strokeWidth={1.5} />
-              <span>{currentPoints}</span>
-            </div>
-            <small>pontos</small>
-          </aside>
-        </section>
-
-        <section className="level-card card">
-          <h2>
-            <Star size={17} fill="currentColor" />
-            Seu progresso de nível
-            <Star size={17} fill="currentColor" />
-          </h2>
-
-          {hasBonusAtivo && (
-            <p className="level-bonus-badge">
-              🎉 Nível {currentLevelName}: seus pontos de resgate valem <strong>{currentMultiplier}x</strong> em cada reserva
-            </p>
+      <section className="jr-cena jr-pontos" aria-label="Minha Jornada">
+        <div className="jr-shell">
+          {isLoadingLoyalty && (
+            <p className="jr-lede jr-pontos__estado">Carregando seus dados da Jornada Real...</p>
           )}
 
-          <div className="level-map">
-            <article>
-              <div className="level-medal essence">
-                <Leaf size={26} strokeWidth={1.7} />
-              </div>
-              <h3>Essência</h3>
-              <p>0 a 50 pontos</p>
-            </article>
-
-            <article>
-              <div className="level-medal experience">
-                <Star size={26} fill="currentColor" strokeWidth={1.4} />
-              </div>
-              <h3>Experiência</h3>
-              <p>50 a 90 pontos</p>
-            </article>
-
-            <article>
-              <div className="level-medal real">
-                <Crown size={28} strokeWidth={1.7} />
-              </div>
-              <h3>Real</h3>
-              <p>90+ pontos</p>
-            </article>
-          </div>
-
-          <div className="level-line" aria-hidden="true">
-            <span />
-          </div>
-
-          <div className="level-progress">
-            <div className="level-fill" style={{ width: `${levelProgress}%` }} />
-            <div className="level-marker" style={{ left: `${levelProgress}%` }}>
-              <Star size={16} fill="currentColor" />
+          {loyaltyError && !isLoadingLoyalty && cpf && (
+            <div className="jr-pontos__erro">
+              <p className="jr-texto">{loyaltyError}</p>
+              <button type="button" className="jr-btn jr-btn--contorno" onClick={() => router.push('/consultar')}>
+                Voltar e tentar novamente
+              </button>
             </div>
-          </div>
+          )}
 
-          <div className="level-summary">
-            <Star size={25} fill="currentColor" />
-            <p>
-              <strong>{lifetimePoints}</strong> / {nextLevelPoints} pontos
-              <span>{levelProgressText}</span>
-            </p>
-          </div>
+          {loyaltyData && (
+            <>
+              {/* ---------------------------------------------- boas-vindas */}
+              <Reveal className="jr-pontos__boasvindas">
+                <div>
+                  <span className="jr-sobrescrito">Você está quase lá</span>
+                  <h1 className="jr-pontos__nome jr-ouro-metal">
+                    {customerName}
+                    <Crown size={22} strokeWidth={1.6} aria-hidden="true" />
+                  </h1>
+                  <p className="jr-lede">
+                    Você está evoluindo na Jornada Real e conquistando experiências únicas.
+                  </p>
+                </div>
 
-          <button
-            type="button"
-            className="level-page-button"
-            onClick={() => router.push(levelPageUrl)}
-          >
-            <span>Ver tela de níveis</span>
-            <img className="jr-button-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
-            <ArrowRight size={18} strokeWidth={1.9} />
-          </button>
-        </section>
+                <div className="jr-nota jr-pontos__saldo">
+                  <CantoMoldura className="jr-nota__canto jr-nota__canto--se" tamanho={30} />
+                  <CantoMoldura className="jr-nota__canto jr-nota__canto--sd" tamanho={30} rotacao={90} />
+                  <CantoMoldura className="jr-nota__canto jr-nota__canto--id" tamanho={30} rotacao={180} />
+                  <CantoMoldura className="jr-nota__canto jr-nota__canto--ie" tamanho={30} rotacao={270} />
+                  <Crown size={30} strokeWidth={1.5} aria-hidden="true" />
+                  <span className="jr-nota__valor jr-ouro-metal">{currentPoints}</span>
+                  <hr className="jr-nota__fio" />
+                  <span className="jr-nota__rotulo">Pontos atuais</span>
+                </div>
+              </Reveal>
 
-        <section className="reward-progress card">
-          <h2>
-            <Crown size={18} />
-            Seu progresso de prêmios
-            <Crown size={18} />
-          </h2>
+              {/* -------------------------------------- progresso de nível e prêmios */}
+              <div className="jr-pontos__grade">
+              <Reveal delay={80} className="jr-painel">
+                <h2 className="jr-painel__titulo">
+                  <Star size={17} fill="currentColor" aria-hidden="true" />
+                  Seu progresso de nível
+                  <Star size={17} fill="currentColor" aria-hidden="true" />
+                </h2>
 
-          <div className="reward-progress-row">
-            <div className="reward-bar">
-              <span style={{ width: `${rewardProgress}%` }} />
-              <i style={{ left: `${rewardProgress}%` }} />
-            </div>
+                {hasBonusAtivo && (
+                  <p className="jr-painel__bonus">
+                    Nível {currentLevelName}: seus pontos de resgate valem <strong>{currentMultiplier}x</strong> em cada reserva
+                  </p>
+                )}
 
-            <aside>
-              <Crown size={36} strokeWidth={1.6} />
-              <strong>{rewardSummary}</strong>
-              <small>{rewardSummaryLabel}</small>
-            </aside>
-          </div>
+                <ol className="jr-pontos__niveis">
+                  {niveisMapa.map((nivel) => (
+                    <li key={nivel.chave} className="jr-pontos__nivel" data-atual={nivel.chave === nivelAtualChave ? 'sim' : 'nao'}>
+                      {/* palco do objeto, no mesmo desenho da home: halo atrás, sombra de contato embaixo */}
+                      <div className="jr-pontos__nivel-palco">
+                        <span className="jr-pontos__nivel-foco" aria-hidden="true" />
+                        <span className="jr-pontos__nivel-chao" aria-hidden="true" />
+                        <img
+                          src={nivel.objeto}
+                          alt=""
+                          aria-hidden="true"
+                          data-objeto={nivel.chave}
+                          className="jr-pontos__nivel-objeto"
+                          loading="lazy"
+                        />
+                      </div>
+                      <span className="jr-pontos__nivel-nome">{nivel.nome}</span>
+                      <span className="jr-pontos__nivel-faixa">{nivel.faixa}</span>
+                    </li>
+                  ))}
+                </ol>
 
-          <p>{rewardProgressText}</p>
+                <div className="jr-barra-progresso">
+                  <span className="jr-barra-progresso__preenchido" style={{ width: `${levelProgress}%` }} />
+                  <span className="jr-barra-progresso__marcador" style={{ left: `${levelProgress}%` }}>
+                    <Star size={13} fill="currentColor" aria-hidden="true" />
+                  </span>
+                </div>
 
-          <button
-            type="button"
-            className="invite-friends-button"
-            onClick={() => router.push(withCpfParam('/meu-cupom', cpf))}
-          >
-            <span>
-              <Gift size={18} strokeWidth={1.8} />
-              Convidar amigos — Meu Cupom
-            </span>
-            <ArrowRight size={18} strokeWidth={1.9} />
-          </button>
-        </section>
+                <p className="jr-painel__resumo">
+                  <strong>{lifetimePoints}</strong> / {nextLevelPoints} pontos
+                  <span>{levelProgressText}</span>
+                </p>
 
-        <section className="exclusive-section">
-          <h2>
-            <Crown size={20} />
-            Prêmios exclusivos
-            <Crown size={20} />
-          </h2>
-          <p>Escolha seu próximo objetivo e transforme sua estadia em conquistas.</p>
+                <Link href={levelPageUrl} className="jr-btn jr-btn--contorno">
+                  <span>Ver tela de níveis</span>
+                  <ArrowRight size={18} strokeWidth={1.9} />
+                </Link>
+              </Reveal>
 
-          <div className="reward-grid">
-            {rewards.map((reward) => (
-              <article
-                className="reward-card"
-                key={reward.slug || reward.name}
-                onClick={() => router.push(withCpfParam(`/resgate_dos_premios?premio=${reward.slug}`, cpf))}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    router.push(withCpfParam(`/resgate_dos_premios?premio=${reward.slug}`, cpf))
-                  }
-                }}
-              >
-                {reward.badge && <span className="reward-badge">{reward.badge}</span>}
-                {reward.image ? (
-                  <img src={reward.image} alt={reward.name} />
-                ) : (
-                  <div className="reward-image-empty">
-                    <Gift size={28} strokeWidth={1.6} />
-                    <span>
-                      {isLoadingRewards ? 'Carregando imagem' : 'Imagem não cadastrada'}
+              {/* ------------------------------------------- progresso de prêmios */}
+              <Reveal delay={140} className="jr-painel">
+                <h2 className="jr-painel__titulo">
+                  <Crown size={18} aria-hidden="true" />
+                  Seu progresso de prêmios
+                  <Crown size={18} aria-hidden="true" />
+                </h2>
+
+                <div className="jr-painel__premio-linha">
+                  <div className="jr-barra-progresso">
+                    <span className="jr-barra-progresso__preenchido" style={{ width: `${rewardProgress}%` }} />
+                    <span className="jr-barra-progresso__marcador" style={{ left: `${rewardProgress}%` }}>
+                      <Crown size={12} fill="currentColor" aria-hidden="true" />
                     </span>
                   </div>
-                )}
-                <div>
-                  <h3>{reward.name}</h3>
-                  <p>
-                    <Crown size={17} strokeWidth={1.7} />
-                    <strong>{reward.points}</strong> pontos
-                  {reward.slug === 'tecnologia-real' && <span className="points-tag">• Mais disputado</span>}
-                  </p>
-                  <small>{reward.footer}</small>
+
+                  <div className="jr-painel__premio-resumo">
+                    <strong>{rewardSummary}</strong>
+                    <small>{rewardSummaryLabel}</small>
+                  </div>
                 </div>
-              </article>
-            ))}
-          </div>
 
-          <button
-            type="button"
-            className="all-rewards"
-            onClick={() => router.push(withCpfParam('/resgate_dos_premios', cpf))}
-          >
-            <span>
-              <Coffee size={19} strokeWidth={1.8} />
-              Escolher meu prêmio
-            </span>
-            <img className="jr-button-crest all-rewards-crest" src="/images/brasao-hotel-real-transparente.png?v=4" alt="" aria-hidden="true" />
-            <ArrowRight size={19} strokeWidth={1.9} />
-          </button>
-        </section>
-          </>
-        )}
+                <p className="jr-painel__texto">{rewardProgressText}</p>
 
-        <nav className="bottom-nav" aria-label="Navegação principal">
-          {navItems.map((item, index) => {
-            const Icon = item.icon
-            return (
-              <button
-                type="button"
-                className={index === 0 ? 'active' : ''}
-                key={item.label}
-                onClick={() => router.push(
-                  ['Minha Jornada', 'Prêmios'].includes(item.label)
-                    ? withCpfParam(item.href, cpf)
-                    : item.href
+                {proximoPremio && (
+                  <Link
+                    href={withCpfParam(`/resgate_dos_premios?premio=${proximoPremio.slug}`, cpf)}
+                    className="jr-painel__proximo"
+                  >
+                    {proximoPremio.image ? (
+                      <img src={proximoPremio.image} alt="" loading="lazy" />
+                    ) : (
+                      <span className="jr-painel__proximo-semfoto" aria-hidden="true">
+                        <Gift size={20} strokeWidth={1.7} />
+                      </span>
+                    )}
+                    <span className="jr-painel__proximo-texto">
+                      <small>Seu próximo prêmio</small>
+                      <strong>{proximoPremio.name}</strong>
+                    </span>
+                    <span className="jr-painel__proximo-pontos">
+                      <Crown size={13} strokeWidth={1.8} aria-hidden="true" />
+                      {proximoPremio.points}
+                    </span>
+                  </Link>
                 )}
-              >
-                <Icon size={26} strokeWidth={1.8} />
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
-        </nav>
+
+                <Link href={withCpfParam('/meu-cupom', cpf)} className="jr-btn">
+                  <Gift size={18} strokeWidth={1.8} />
+                  <span>Convidar amigos — Meu Cupom</span>
+                  <ArrowRight size={18} strokeWidth={1.9} />
+                </Link>
+
+                {/* os códigos já resgatados moram no fim da tela de prêmios:
+                    sem este atalho, o hóspede não descobre onde consultá-los */}
+                <Link
+                  href={withCpfParam('/resgate_dos_premios#meus-resgates', cpf)}
+                  className="jr-painel__link-secundario"
+                >
+                  <Ticket size={15} strokeWidth={1.9} aria-hidden="true" />
+                  Ver meus prêmios já resgatados
+                </Link>
+              </Reveal>
+              </div>
+
+              {/* -------------------------------------------------- prêmios em destaque */}
+              <Reveal delay={200} className="jr-cena__cabeca jr-pontos__premios-cabeca">
+                <h2 className="jr-cena__titulo jr-ouro-metal">Prêmios exclusivos</h2>
+                <Fleurao largura={260} />
+                <p className="jr-lede">Escolha seu próximo objetivo e transforme sua estadia em conquistas.</p>
+              </Reveal>
+
+              {!isLoadingRewards && rewards.length === 0 && (
+                <p className="jr-lede jr-resgate__vazio-catalogo">
+                  O catálogo está sendo preparado. Volte em breve para escolher o seu.
+                </p>
+              )}
+
+              <ol className="jr-premios-mini">
+                {rewards.map((reward, indice) => (
+                  <Reveal as="li" key={reward.slug || reward.name} delay={indice * 80}>
+                    <Link
+                      href={withCpfParam(`/resgate_dos_premios?premio=${reward.slug}`, cpf)}
+                      className="jr-premio-mini"
+                    >
+                      {reward.badge && <span className="jr-premio-mini__selo">{reward.badge}</span>}
+                      {reward.image ? (
+                        <img src={reward.image} alt={reward.name} loading="lazy" />
+                      ) : (
+                        <div className="jr-premio-mini__vazio">
+                          <Gift size={26} strokeWidth={1.6} aria-hidden="true" />
+                          <span>{isLoadingRewards ? 'Carregando imagem' : 'Imagem não cadastrada'}</span>
+                        </div>
+                      )}
+                      <div className="jr-premio-mini__corpo">
+                        <h3>{reward.name}</h3>
+                        <p className="jr-premio-mini__pontos">
+                          <Crown size={15} strokeWidth={1.7} aria-hidden="true" />
+                          <strong>{reward.points}</strong> pontos
+                          {reward.badge && <span className="jr-premio-mini__tag">• {reward.badge}</span>}
+                        </p>
+                        <small>{reward.footer}</small>
+                      </div>
+                    </Link>
+                  </Reveal>
+                ))}
+              </ol>
+
+              <div className="jr-pontos__acao">
+                <Link href={withCpfParam('/resgate_dos_premios', cpf)} className="jr-btn">
+                  <span>Escolher meu prêmio</span>
+                  <ArrowRight size={19} strokeWidth={1.9} />
+                </Link>
+              </div>
+            </>
+          )}
+        </div>
       </section>
 
-      <style jsx global>{`
-        .points-page {
-          --gold: #f6c637;
-          --gold-soft: #ffe08a;
-          --amber: #c57a0d;
-          --purple: #a65aff;
-          min-height: 100svh;
-          overflow-x: hidden;
-          color: #fff3dd;
-          background:
-            radial-gradient(circle at 50% 0%, rgba(142, 83, 10, 0.16), transparent 24rem),
-            radial-gradient(circle at 50% 68%, rgba(111, 50, 160, 0.12), transparent 18rem),
-            #020302;
-          font-family: 'Playfair Display', serif;
-        }
-
-        body:has(.points-page) button[aria-label^=Abrir][aria-label*=configura],
-        body:has(.points-page) nextjs-portal {
-          display: none;
-        }
-
-        .points-page::before {
-          content: '';
-          position: fixed;
-          inset: 0;
-          z-index: 0;
-          pointer-events: none;
-          background:
-            radial-gradient(circle at 0% 68%, rgba(246, 198, 55, 0.2) 0 1px, transparent 2px),
-            radial-gradient(circle at 100% 78%, rgba(246, 198, 55, 0.16) 0 1px, transparent 2px);
-          background-size: 17px 17px, 19px 19px;
-          opacity: 0.4;
-        }
-
-        .points-shell {
-          position: relative;
-          z-index: 30;
-          width: min(100% - 12px, 430px);
-          margin: 0 auto;
-          padding: 8px 0 10px;
-        }
-
-        .points-header {
-          display: grid;
-          grid-template-columns: 42px 1fr 42px;
-          align-items: start;
-          min-height: 72px;
-        }
-
-        .round-action {
-          position: relative;
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          color: var(--gold);
-          background: rgba(0, 0, 0, 0.38);
-          border: 1.2px solid rgba(246, 198, 55, 0.48);
-          border-radius: 50%;
-          box-shadow: inset 0 0 12px rgba(246, 198, 55, 0.06);
-          cursor: pointer;
-        }
-
-        .bell-action {
-          justify-self: end;
-        }
-
-        .bell-action span {
-          position: absolute;
-          top: 3px;
-          right: 3px;
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: var(--gold);
-        }
-
-        .points-logo {
-          width: clamp(210px, 61vw, 255px);
-          justify-self: center;
-          filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.86));
-        }
-
-        .loading-indicator,
-        .error-indicator {
-          margin: 10px 0;
-          padding: 16px;
-          color: #fff5df;
-          border: 1.2px solid rgba(168, 99, 10, 0.72);
-          border-radius: 8px;
-          background:
-            linear-gradient(180deg, rgba(255, 219, 117, 0.05), rgba(0, 0, 0, 0.78)),
-            rgba(5, 5, 4, 0.82);
-          box-shadow:
-            0 0 20px rgba(246, 198, 55, 0.12),
-            inset 0 0 24px rgba(246, 198, 55, 0.04);
-          text-align: center;
-        }
-
-        .loading-indicator p,
-        .error-indicator p {
-          margin: 0;
-          font-size: 0.88rem;
-          line-height: 1.35;
-        }
-
-        .error-indicator button {
-          min-height: 38px;
-          margin-top: 12px;
-          padding: 0 16px;
-          color: #160d04;
-          border: 1px solid #ffe799;
-          border-radius: 8px;
-          background: linear-gradient(180deg, #ffe08a, #d9981b 60%, #a75f05);
-          font-family: 'Cinzel', serif;
-          font-size: 0.72rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          cursor: pointer;
-        }
-
-        .card,
-        .welcome-card,
-        .bottom-nav {
-          border: 1.2px solid rgba(168, 99, 10, 0.72);
-          background:
-            linear-gradient(180deg, rgba(255, 219, 117, 0.04), rgba(0, 0, 0, 0.78)),
-            rgba(5, 5, 4, 0.78);
-          box-shadow:
-            0 0 20px rgba(246, 198, 55, 0.12),
-            inset 0 0 24px rgba(246, 198, 55, 0.04);
-        }
-
-        .welcome-card {
-          display: grid;
-          grid-template-columns: 1fr 130px;
-          gap: 16px;
-          align-items: stretch;
-          padding: 16px;
-          border-radius: 12px;
-        }
-
-        .welcome-card p {
-          margin: 0 0 4px;
-          font-size: 0.82rem;
-          color: #fff7e9;
-        }
-
-        .welcome-card h1 {
-          display: flex;
-          align-items: center;
-          gap: 7px;
-          margin: 0 0 12px;
-          color: var(--gold);
-          font-family: 'Cinzel', serif;
-          font-size: 1.25rem;
-          line-height: 1.1;
-          text-transform: uppercase;
-        }
-
-        .welcome-card span {
-          display: block;
-          color: #fff4dc;
-          font-size: 0.8rem;
-          line-height: 1.32;
-        }
-
-        .current-points-card {
-          min-height: 110px;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          gap: 6px;
-          padding: 14px 12px;
-          border: 1px solid rgba(246, 198, 55, 0.62);
-          border-radius: 14px;
-          background:
-            radial-gradient(circle at 50% 26%, rgba(246, 198, 55, 0.12), transparent 45%),
-            rgba(9, 7, 5, 0.76);
-        }
-
-        .current-points-card strong {
-          color: #fff7e9;
-          font-family: 'Cinzel', serif;
-          font-size: 0.62rem;
-          text-transform: uppercase;
-        }
-
-        .current-points-card div {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          margin-top: 8px;
-          color: var(--gold);
-        }
-
-        .current-points-card div span {
-          color: #fff8ee;
-          font-family: 'Cinzel', serif;
-          font-size: 2.35rem;
-          font-weight: 700;
-          line-height: 1;
-        }
-
-        .current-points-card small {
-          color: var(--gold);
-          font-size: 0.96rem;
-        }
-
-        .card {
-          margin-top: 14px;
-          padding: 14px 14px 16px;
-          border-radius: 12px;
-        }
-
-        .card h2,
-        .exclusive-section h2 {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          margin: 0;
-          color: var(--gold);
-          font-family: 'Cinzel', serif;
-          font-size: clamp(1rem, 4.2vw, 1.18rem);
-          text-align: center;
-          text-transform: uppercase;
-        }
-
-        .level-map {
-          position: relative;
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 8px;
-          margin-top: 16px;
-        }
-
-        .level-map::before {
-          content: '';
-          position: absolute;
-          top: 31px;
-          left: 16%;
-          right: 16%;
-          height: 3px;
-          background: linear-gradient(90deg, var(--gold), var(--purple), var(--gold));
-          box-shadow: 0 0 12px rgba(166, 90, 255, 0.5);
-        }
-
-        .level-map article {
-          position: relative;
-          z-index: 2;
-          text-align: center;
-        }
-
-        .level-medal {
-          width: 62px;
-          height: 62px;
-          display: grid;
-          place-items: center;
-          margin: 0 auto 7px;
-          border-radius: 50%;
-          border: 2px solid var(--gold);
-          color: var(--gold);
-          background: radial-gradient(circle at 35% 28%, rgba(255, 238, 170, 0.18), rgba(72, 44, 8, 0.78));
-          box-shadow: 0 0 18px rgba(246, 198, 55, 0.25);
-        }
-
-        .level-medal.experience {
-          border-color: #c17bff;
-          color: #dfb4ff;
-          background: radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.2), rgba(88, 44, 122, 0.82));
-          box-shadow: 0 0 20px rgba(166, 90, 255, 0.42);
-        }
-
-        .level-map h3 {
-          margin: 0 0 3px;
-          color: var(--gold);
-          font-family: 'Cinzel', serif;
-          font-size: 0.76rem;
-          text-transform: uppercase;
-        }
-
-        .level-map article:nth-child(2) h3 {
-          color: #c17bff;
-        }
-
-        .level-map p {
-          margin: 0;
-          color: #fff4df;
-          font-size: 0.68rem;
-        }
-
-        .level-line {
-          height: 1px;
-          margin: 12px 24px 8px;
-          background: linear-gradient(90deg, var(--gold), var(--purple), var(--gold));
-          opacity: 0.8;
-        }
-
-        .level-progress {
-          position: relative;
-          height: 13px;
-          margin: 0 12px;
-          border: 1px solid rgba(246, 198, 55, 0.72);
-          border-radius: 999px;
-          background: rgba(5, 4, 3, 0.88);
-          box-shadow: inset 0 0 10px rgba(246, 198, 55, 0.08);
-        }
-
-        .level-fill {
-          height: 100%;
-          border-radius: 999px;
-          background: linear-gradient(90deg, #7a3bd6, #ce8cff, #e3b15b);
-          box-shadow: 0 0 12px rgba(166, 90, 255, 0.55);
-        }
-
-        .level-marker {
-          position: absolute;
-          top: 50%;
-          width: 24px;
-          height: 24px;
-          display: grid;
-          place-items: center;
-          transform: translate(-50%, -50%);
-          color: #fff7df;
-          background: linear-gradient(180deg, #ffe38a, #b76b08);
-          border-radius: 50%;
-          box-shadow: 0 0 12px rgba(246, 198, 55, 0.4);
-        }
-
-        .level-bonus-badge {
-          width: min(340px, 90vw);
-          margin: 4px auto 0;
-          padding: 8px 14px;
-          text-align: center;
-          font-size: 0.9rem;
-          color: #fff4df;
-          border: 1px solid rgba(246, 198, 55, 0.62);
-          border-radius: 10px;
-          background: rgba(183, 107, 8, 0.22);
-        }
-
-        .level-bonus-badge strong {
-          color: #ffe38a;
-        }
-
-        .level-summary {
-          width: min(280px, 85vw);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 14px;
-          margin: 16px auto 0;
-          padding: 12px 16px;
-          color: #fff4df;
-          border: 1px solid rgba(246, 198, 55, 0.62);
-          border-radius: 12px;
-          background: rgba(8, 7, 5, 0.78);
-        }
-
-        .level-summary svg {
-          color: #c17bff;
-        }
-
-        .level-summary p {
-          margin: 0;
-          font-size: 1rem;
-          line-height: 1.2;
-        }
-
-        .level-summary strong {
-          color: #c17bff;
-          font-family: 'Cinzel', serif;
-          font-size: 1.35rem;
-        }
-
-        .level-summary span {
-          display: block;
-          font-size: 0.72rem;
-        }
-
-        .level-page-button {
-          width: min(100%, 292px);
-          min-height: 42px;
-          display: grid;
-          grid-template-columns: 1fr 32px 18px;
-          align-items: center;
-          gap: 8px;
-          margin: 12px auto 0;
-          padding: 0 12px 0 18px;
-          color: #160d04;
-          border: 1px solid #ffe799;
-          border-radius: 10px;
-          background: linear-gradient(180deg, #ffe08a, #d9981b 60%, #a75f05);
-          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
-          font-family: 'Cinzel', serif;
-          font-size: 0.78rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          cursor: pointer;
-        }
-
-        .level-page-button span {
-          text-align: center;
-        }
-
-        .reward-progress {
-          padding-bottom: 10px;
-        }
-
-        .reward-progress-row {
-          display: grid;
-          grid-template-columns: 1fr 88px;
-          gap: 12px;
-          align-items: center;
-          margin-top: 13px;
-        }
-
-        .reward-bar {
-          position: relative;
-          height: 13px;
-          border: 1px solid rgba(166, 94, 13, 0.74);
-          border-radius: 999px;
-          background: #050403;
-          overflow: visible;
-        }
-
-        .reward-bar span {
-          display: block;
-          height: 100%;
-          border-radius: 999px;
-          background: linear-gradient(90deg, #ffe17c, #d58d18);
-          box-shadow: 0 0 12px rgba(246, 198, 55, 0.35);
-        }
-
-        .reward-bar i {
-          position: absolute;
-          top: 50%;
-          width: 18px;
-          height: 18px;
-          transform: translate(-50%, -50%);
-          border-radius: 50%;
-          background: linear-gradient(180deg, #fff0a7, #d69016);
-          box-shadow: 0 0 8px rgba(246, 198, 55, 0.4);
-        }
-
-        .reward-progress aside {
-          min-height: 70px;
-          display: grid;
-          grid-template-columns: 32px 1fr;
-          align-items: center;
-          column-gap: 7px;
-          padding: 8px;
-          color: var(--gold);
-          border: 1px solid rgba(246, 198, 55, 0.52);
-          border-radius: 10px;
-          background: rgba(8, 7, 5, 0.78);
-        }
-
-        .reward-progress aside strong {
-          color: var(--gold);
-          font-family: 'Cinzel', serif;
-          font-size: 1.4rem;
-          line-height: 0.9;
-        }
-
-        .reward-progress aside small {
-          grid-column: 2;
-          color: #fff3dd;
-          font-size: 0.58rem;
-          line-height: 1.1;
-        }
-
-        .reward-progress > p {
-          margin: 4px 0 0;
-          color: #fff3dd;
-          font-size: 0.74rem;
-        }
-
-        .invite-friends-button {
-          width: 100%;
-          min-height: 42px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          margin-top: 12px;
-          padding: 0 14px;
-          color: var(--gold);
-          border: 1px solid rgba(246, 198, 55, 0.58);
-          border-radius: 8px;
-          background: rgba(7, 6, 4, 0.84);
-          font-family: 'Cinzel', serif;
-          font-size: 0.72rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          cursor: pointer;
-        }
-
-        .invite-friends-button span {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-        }
-
-        .exclusive-section {
-          margin-top: 12px;
-        }
-
-        .exclusive-section > p {
-          margin: 3px 0 10px;
-          color: #fff3dd;
-          font-size: 0.83rem;
-          text-align: center;
-        }
-
-        .reward-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 8px;
-        }
-
-        .reward-card {
-          position: relative;
-          overflow: hidden;
-          min-height: 235px;
-          border: 1.2px solid var(--gold);
-          border-radius: 10px;
-          background:
-            radial-gradient(circle at 50% 18%, rgba(246, 198, 55, 0.12), transparent 42%),
-            rgba(7, 6, 4, 0.88);
-          box-shadow: 0 0 14px rgba(246, 198, 55, 0.14);
-          cursor: pointer;
-        }
-
-        .reward-badge {
-          position: absolute;
-          top: 0;
-          left: 0;
-          z-index: 2;
-          padding: 4px 7px;
-          color: #110b03;
-          background: linear-gradient(180deg, #ffe589, #d18a12);
-          border-bottom-right-radius: 8px;
-          font-family: 'Cinzel', serif;
-          font-size: 0.55rem;
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-
-        .reward-card img {
-          width: 100%;
-          height: 135px;
-          display: block;
-          object-fit: cover;
-          filter: saturate(1.04) contrast(1.08);
-        }
-
-        .reward-card:first-child img,
-        .reward-card:nth-child(2) img {
-          object-fit: contain;
-          padding: 8px;
-          background:
-            radial-gradient(circle at 50% 42%, rgba(246, 198, 55, 0.2), transparent 58%),
-            #050403;
-        }
-
-        .reward-image-empty {
-          height: 135px;
-          display: grid;
-          place-items: center;
-          gap: 7px;
-          padding: 14px;
-          color: var(--gold);
-          background:
-            radial-gradient(circle at 50% 42%, rgba(246, 198, 55, 0.2), transparent 58%),
-            #050403;
-          text-align: center;
-        }
-
-        .reward-image-empty span {
-          max-width: 95px;
-          color: #fff0d2;
-          font-size: 0.62rem;
-          line-height: 1.15;
-        }
-
-        .reward-card > div {
-          padding: 8px;
-        }
-
-        .reward-card h3 {
-          min-height: 30px;
-          margin: 0 0 5px;
-          color: var(--gold);
-          font-family: 'Cinzel', serif;
-          font-size: 0.74rem;
-          line-height: 1.12;
-          text-transform: uppercase;
-        }
-
-        .reward-card p {
-          display: flex;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 4px;
-          margin: 0;
-          color: #fff4df;
-          font-size: 0.88rem;
-        }
-
-        .reward-card p svg {
-          color: var(--gold);
-        }
-
-        .reward-card p strong {
-          color: #fff4df;
-          font-family: 'Cinzel', serif;
-          font-size: 1.08rem;
-        }
-
-        .points-tag {
-          color: var(--gold);
-          font-size: 0.64rem;
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-
-        .reward-card small {
-          display: block;
-          margin-top: 5px;
-          color: #fff4df;
-          font-size: 0.62rem;
-          line-height: 1.22;
-        }
-
-        .all-rewards {
-          width: 100%;
-          min-height: 42px;
-          display: grid;
-          grid-template-columns: 34px 1fr 34px 19px;
-          align-items: center;
-          column-gap: 8px;
-          margin-top: 10px;
-          padding: 0 15px;
-          color: var(--gold);
-          border: 1px solid rgba(246, 198, 55, 0.58);
-          border-radius: 8px;
-          background: rgba(7, 6, 4, 0.84);
-          font-family: 'Cinzel', serif;
-          font-size: 0.78rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          cursor: pointer;
-        }
-
-        .all-rewards span {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          grid-column: 1 / 3;
-        }
-
-        .all-rewards-crest {
-          justify-self: end;
-        }
-
-        .bottom-nav {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          min-height: 62px;
-          margin-top: 10px;
-          border-radius: 8px;
-        }
-
-        .bottom-nav button {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 3px;
-          color: rgba(255, 243, 221, 0.64);
-          background: transparent;
-          border: 0;
-          font-family: 'Cinzel', serif;
-          font-size: 0.55rem;
-          text-transform: uppercase;
-          cursor: pointer;
-        }
-
-        .bottom-nav button.active {
-          color: var(--gold);
-        }
-
-        .bottom-nav button.active svg {
-          fill: var(--gold);
-          filter: drop-shadow(0 0 8px rgba(246, 198, 55, 0.5));
-        }
-
-        @media (max-width: 370px) {
-          .points-shell {
-            width: min(100% - 8px, 430px);
-          }
-
-          .welcome-card {
-            grid-template-columns: 1fr 106px;
-            padding: 12px;
-          }
-
-          .current-points-card div span {
-            font-size: 2.05rem;
-          }
-
-          .reward-card {
-            min-height: 222px;
-          }
-
-          .reward-card img {
-            height: 122px;
-          }
-        }
-
-        @media (min-width: 900px) {
-          .points-page {
-            background:
-              radial-gradient(circle at 18% 12%, rgba(142, 83, 10, 0.18), transparent 26rem),
-              radial-gradient(circle at 82% 24%, rgba(111, 50, 160, 0.16), transparent 24rem),
-              radial-gradient(circle at 50% 88%, rgba(246, 198, 55, 0.08), transparent 28rem),
-              #020302;
-          }
-
-          .points-shell {
-            width: min(1180px, calc(100% - 64px));
-            display: grid;
-            grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.45fr);
-            gap: 18px;
-            padding: 20px 0 24px;
-          }
-
-          .points-header,
-          .loading-indicator,
-          .error-indicator,
-          .exclusive-section,
-          .bottom-nav {
-            grid-column: 1 / -1;
-          }
-
-          .points-header {
-            min-height: 92px;
-            align-items: center;
-          }
-
-          .points-logo {
-            width: clamp(250px, 22vw, 330px);
-          }
-
-          .welcome-card {
-            grid-column: 1;
-            align-self: start;
-            min-height: 190px;
-            grid-template-columns: minmax(0, 1fr) 148px;
-            gap: 16px;
-            padding: 22px;
-            border-radius: 12px;
-          }
-
-          .welcome-card h1 {
-            font-size: 1.65rem;
-          }
-
-          .welcome-card span {
-            font-size: 0.95rem;
-          }
-
-          .current-points-card {
-            min-height: 136px;
-          }
-
-          .level-card {
-            grid-column: 2;
-            grid-row: 2 / span 2;
-            margin-top: 0;
-            padding: 22px;
-            border-radius: 12px;
-          }
-
-          .reward-progress {
-            grid-column: 1;
-            margin-top: 0;
-            padding: 18px;
-            border-radius: 12px;
-          }
-
-          .card h2,
-          .exclusive-section h2 {
-            font-size: 1.35rem;
-          }
-
-          .level-map {
-            gap: 18px;
-            margin-top: 24px;
-          }
-
-          .level-medal {
-            width: 76px;
-            height: 76px;
-          }
-
-          .level-map h3 {
-            font-size: 0.9rem;
-          }
-
-          .level-map p {
-            font-size: 0.78rem;
-          }
-
-          .level-summary {
-            width: min(100%, 380px);
-            margin-top: 20px;
-          }
-
-          .exclusive-section {
-            margin-top: 0;
-          }
-
-          .exclusive-section > p {
-            margin: 6px 0 16px;
-            font-size: 0.98rem;
-          }
-
-          .reward-grid {
-            gap: 16px;
-          }
-
-          .reward-card {
-            min-height: 330px;
-            border-radius: 14px;
-          }
-
-          .reward-card img,
-          .reward-image-empty {
-            height: 198px;
-          }
-
-          .reward-card > div {
-            padding: 14px;
-          }
-
-          .reward-card h3 {
-            min-height: auto;
-            font-size: 1rem;
-          }
-
-          .reward-card small {
-            font-size: 0.78rem;
-          }
-
-          .all-rewards {
-            width: min(420px, 100%);
-            justify-self: center;
-            margin: 16px auto 0;
-          }
-
-          .bottom-nav {
-            min-height: 70px;
-            margin-top: 0;
-            border-radius: 14px;
-          }
-        }
-      `}</style>
+      <JornadaNav atual="/consultar-pontos" cpf={cpf} />
     </main>
   )
 }
+
+
+
+
+

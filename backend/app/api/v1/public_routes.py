@@ -20,6 +20,7 @@ from app.services.consulta_publica_service import ConsultaPublicaService
 from app.services.cupom_service import CupomService
 from app.services.notification_service import NotificationService
 from app.services.otp_service import OtpService
+from app.services.reserva_publica_confirmation_service import ReservaPublicaConfirmationService
 from app.middleware.rate_limit import rate_limit_strict
 from app.middleware.idempotency import check_idempotency, store_idempotency_result
 from app.core.cache import redis_lock
@@ -36,7 +37,7 @@ class ReservaPublicaCreate(BaseModel):
     documento: str
     email: EmailStr
     telefone: str
-    quarto_numero: str
+    quarto_numero: Optional[str] = None
     tipo_suite: str
     data_checkin: str
     data_checkout: str
@@ -252,6 +253,8 @@ async def consultar_reserva_publica(codigo: str):
             "reserva": {
                 "codigo": reserva["codigo_reserva"],
                 "status": reserva["status"],
+                "reservation_status": reserva.get("reservation_status", reserva["status"]),
+                "payment_status": reserva.get("payment_status", "pending"),
                 "cliente_nome": reserva.get("cliente_nome"),
                 "quarto_numero": reserva.get("quarto_numero"),
                 "tipo_suite": reserva.get("tipo_suite"),
@@ -267,6 +270,8 @@ async def consultar_reserva_publica(codigo: str):
                     reserva.get("valor_total_com_desconto", reserva.get("valor_total", 0.0)) or 0.0
                 ),
                 "cupom_uso": reserva.get("cupom_uso"),
+                "voucher": reserva.get("voucher"),
+                "voucher_available": reserva.get("voucher_available", False),
                 "data_criacao": reserva.get("created_at")
             },
             "instrucoes": {
@@ -646,17 +651,6 @@ async def criar_reserva_publica(
         checkin_dt = to_utc(checkin_local)
         checkout_dt = to_utc(checkout_local)
 
-        from app.services.disponibilidade_service import DisponibilidadeService
-        disponibilidade_service = DisponibilidadeService(db)
-        disponibilidade = await disponibilidade_service.verificar_disponibilidade(
-            reserva_data.quarto_numero,
-            checkin_dt,
-            checkout_dt,
-            None
-        )
-        if not disponibilidade.get("disponivel"):
-            raise HTTPException(status_code=400, detail="Quarto não disponível para o período solicitado")
-
         valor_diaria = await _obter_tarifa_diaria(db, reserva_data.tipo_suite, checkin_date.date())
 
         num_diarias = (checkout_date.date() - checkin_date.date()).days
@@ -682,7 +676,9 @@ async def criar_reserva_publica(
             if not validacao_cupom.get("valido"):
                 raise HTTPException(status_code=400, detail=validacao_cupom.get("mensagem") or "Cupom inválido")
 
-        async with redis_lock(f"quarto:{reserva_data.quarto_numero}", timeout=10):
+        # O lock por categoria protege a ultima vaga mesmo quando nenhum
+        # quarto fisico foi designado durante a reserva.
+        async with redis_lock(f"suite:{tipo_suite.value}", timeout=10):
             reserva_criada = await reserva_repo.create(
                 ReservaCreate(
                     cliente_id=cliente["id"],
@@ -699,7 +695,9 @@ async def criar_reserva_publica(
                     telefone_contato=telefone_limpo,
                     email_contato=reserva_data.email
                 ),
-                notificar=not bool(cupom_codigo)
+                # A notificacao deve sair apenas depois que a reserva estiver
+                # pendente, com a cobranca pendente e o voucher emitido.
+                notificar=False,
             )
 
         if cupom_codigo:
@@ -713,17 +711,29 @@ async def criar_reserva_publica(
                 raise
 
             reserva_criada = await reserva_repo.get_by_id(reserva_criada["id"])
-            reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
-            if reserva_model:
-                # O alerta WhatsApp para o admin ja acontece dentro de
-                # notificar_nova_reserva (garantido para todo caller).
-                await NotificationService.notificar_nova_reserva(db, reserva_model)
+
+        valor_total_devido = float(
+            reserva_criada.get("valor_total_com_desconto", reserva_criada.get("valor_total", 0.0)) or 0.0
+        )
+        fluxo = await ReservaPublicaConfirmationService(db).registrar_pagamento_pendente_e_voucher(
+            reserva_id=reserva_criada["id"],
+            valor_total=valor_total_devido,
+        )
+        reserva_criada = await reserva_repo.get_by_id(reserva_criada["id"])
+
+        reserva_model = await db.reserva.find_unique(where={"id": reserva_criada["id"]})
+        if reserva_model:
+            # O alerta WhatsApp para o admin ja acontece dentro de
+            # notificar_nova_reserva (garantido para todo caller).
+            await NotificationService.notificar_nova_reserva(db, reserva_model)
 
         resultado = {
             "success": True,
             "reserva": {
                 "codigo": reserva_criada["codigo_reserva"],
                 "status": reserva_criada["status"],
+                "reservation_status": reserva_criada.get("reservation_status", reserva_criada["status"]),
+                "payment_status": reserva_criada.get("payment_status", "pending"),
                 "cliente": cliente.get("nome_completo"),
                 "quarto": reserva_criada.get("quarto_numero"),
                 "tipo_suite": reserva_criada.get("tipo_suite"),
@@ -737,6 +747,17 @@ async def criar_reserva_publica(
                     reserva_criada.get("valor_total_com_desconto", reserva_criada.get("valor_total", 0.0)) or 0.0
                 ),
                 "cupom_uso": reserva_criada.get("cupom_uso"),
+            },
+            "pagamento": {
+                "status": fluxo["pagamento"]["status"],
+                "payment_status": "pending",
+                "situacao": "NAO_PAGO",
+                "valor": valor_total_devido,
+            },
+            "voucher": {
+                "codigo": fluxo["voucher"]["codigo"],
+                "status": fluxo["voucher"]["status"],
+                "url": f"/voucher/{fluxo['voucher']['codigo']}",
             },
             "instrucoes": {
                 "checkin_horario": "12:00",
